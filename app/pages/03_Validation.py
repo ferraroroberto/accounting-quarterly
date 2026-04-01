@@ -75,7 +75,7 @@ for row in comparison_rows:
 df_comp = pd.DataFrame(comparison_rows)
 st.dataframe(
     df_comp,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
         "Expected": st.column_config.NumberColumn(format="€ %.2f"),
@@ -114,7 +114,7 @@ for region_key, region_label in region_labels.items():
 df_regional = pd.DataFrame(regional_rows)
 st.dataframe(
     df_regional,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
         "Expected €": st.column_config.NumberColumn(format="€ %.2f"),
@@ -127,7 +127,7 @@ if result.discrepancies:
     st.markdown("---")
     st.subheader("⚠️ Discrepancies Detail")
     df_disc = pd.DataFrame(result.discrepancies)
-    st.dataframe(df_disc, use_container_width=True, hide_index=True)
+    st.dataframe(df_disc, width="stretch", hide_index=True)
 
 if result.unclassified_ids:
     st.markdown("---")
@@ -144,7 +144,7 @@ if result.unclassified_ids:
                 "Amount €": p.converted_amount,
                 "Currency": p.currency.upper(),
             })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 st.markdown("---")
 st.subheader("📝 Full Validation Report")

@@ -96,7 +96,7 @@ if valid_quarters:
     df_summary = pd.DataFrame(table_rows)
     st.dataframe(
         df_summary,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Coaching €": st.column_config.NumberColumn(format="€ %.2f"),

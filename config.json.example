@@ -31,6 +31,11 @@
     "coaching_luma_payment_type": "registration",
     "empty_description_default": "COACHING"
   },
+  "geographic_rules": {
+    "eur_default": "SPAIN",
+    "eur_newsletter_default": "EU_NOT_SPAIN",
+    "non_eur_default": "OUTSIDE_EU"
+  },
   "geographic_overrides": {
     "client name as it appears in description": "EU_NOT_SPAIN",
     "another client name": "OUTSIDE_EU",

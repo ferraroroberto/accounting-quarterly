@@ -78,14 +78,24 @@ def _match_geo_override(
 def classify_geography(
     payment: Payment,
     cfg: Optional[dict] = None,
+    activity_type: Optional[str] = None,
 ) -> tuple[GeoRegion, str]:
-    """Return (GeoRegion, rule_description)."""
+    """Return (GeoRegion, rule_description).
+
+    Logic (in priority order):
+    1. Non-EUR currency → non_eur_default (OUTSIDE_EU)
+    2. EUR + explicit override (email or name) → override region
+    3. EUR + NEWSLETTER activity → eur_newsletter_default (EU_NOT_SPAIN)
+    4. EUR + other activity → eur_default (SPAIN)
+    """
     cfg = cfg or load_config()
     geo_overrides = cfg.get("geographic_overrides", {})
     email_overrides = cfg.get("email_overrides", {})
+    geo_rules = cfg.get("geographic_rules", {})
 
     if payment.currency != "eur":
-        return "OUTSIDE_EU", f"non_eur_currency:{payment.currency}"
+        non_eur_default: GeoRegion = geo_rules.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
+        return non_eur_default, f"non_eur_currency:{payment.currency}"
 
     override = _match_geo_override(
         payment.description,
@@ -98,7 +108,12 @@ def classify_geography(
         region: GeoRegion = region_str  # type: ignore[assignment]
         return region, rule
 
-    return "SPAIN", "eur_default_spain"
+    if activity_type == "NEWSLETTER":
+        eur_newsletter_default: GeoRegion = geo_rules.get("eur_newsletter_default", "EU_NOT_SPAIN")  # type: ignore[assignment]
+        return eur_newsletter_default, "eur_newsletter_default"
+
+    eur_default: GeoRegion = geo_rules.get("eur_default", "SPAIN")  # type: ignore[assignment]
+    return eur_default, "eur_default"
 
 
 def classify_payment(payment: Payment, cfg: Optional[dict] = None) -> ClassifiedPayment:
@@ -110,7 +125,7 @@ def classify_payment(payment: Payment, cfg: Optional[dict] = None) -> Classified
         payment.payment_type_meta,
         cfg,
     )
-    geo, geo_rule = classify_geography(payment, cfg)
+    geo, geo_rule = classify_geography(payment, cfg, activity_type=activity)
 
     classified = ClassifiedPayment(
         **payment.model_dump(),

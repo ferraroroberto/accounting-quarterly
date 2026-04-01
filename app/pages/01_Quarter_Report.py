@@ -113,7 +113,7 @@ for tab, geo_key in zip(tabs, geo_tab_keys):
 
             st.dataframe(
                 data_rows,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Month": st.column_config.TextColumn("Month"),

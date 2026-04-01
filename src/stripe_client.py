@@ -95,11 +95,11 @@ def fetch_charges(
 
 
 def test_connection(api_key: Optional[str] = None) -> tuple[bool, str]:
-    """Test Stripe API connectivity. Returns (success, message)."""
+    """Verify the key can list charges (same API as fetch_charges, not Account.retrieve)."""
     try:
         stripe = _get_stripe()
         stripe.api_key = api_key or get_stripe_api_key()
-        account = stripe.Account.retrieve()
-        return True, f"Connected: {account.get('email', 'unknown')}"
+        stripe.Charge.list(limit=1)
+        return True, "Connected: key can list charges."
     except Exception as exc:
         return False, str(exc)

@@ -83,7 +83,7 @@ df = pd.DataFrame(rows)
 
 st.dataframe(
     df,
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     column_config={
         "Amount €": st.column_config.NumberColumn(format="%.2f"),
@@ -135,4 +135,4 @@ with c2:
     st.markdown("**Known Geographic Overrides:**")
     ov_rows = [{"Key": k, "Region": v} for k, v in list(geo_ov.items())[:20]]
     if ov_rows:
-        st.dataframe(pd.DataFrame(ov_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(ov_rows), width="stretch", hide_index=True)

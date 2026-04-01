@@ -1,0 +1,24 @@
+# ── Temporary analysis scripts and raw CSV exports ────────────────────────────
+/tmp
+
+# ── Python byte-code cache ─────────────────────────────────────────────────────
+__pycache__
+*.pyc
+
+# ── Runtime logs (keep folder structure via .gitkeep) ─────────────────────────
+/logs/*
+!/logs/.gitkeep
+
+# ── Data folders – ignore all files, keep folder structure via .gitkeep ───────
+/data/raw/*
+!/data/raw/.gitkeep
+
+/data/processed/*
+!/data/processed/.gitkeep
+
+/data/cache/*
+!/data/cache/.gitkeep
+
+# ── Secrets and local configuration ───────────────────────────────────────────
+.env
+config.json

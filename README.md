@@ -109,7 +109,6 @@ Override keys in `config.json`:
 
 ## Historical Validation
 
-
 **Newsletter regional split:** EUR newsletter subscriptions (`Subscription update/creation`) carry no customer email or billing-country metadata in the Stripe CSV export. They are classified as **EU (not Spain)** by default (`eur_newsletter_default`). Individual exceptions can be added via `geographic_overrides` or `email_overrides` in `config.json`, or through the **Geographic Rules** tab in the dashboard.
 
 ---

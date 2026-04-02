@@ -1,10 +1,10 @@
-"""Shared data-loading utilities for Streamlit pages (with caching)."""
+"""Shared data-loading utilities for Streamlit tabs (with caching)."""
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent.parent
+ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -14,9 +14,10 @@ from typing import Optional
 import streamlit as st
 
 from src.classifier import classify_batch
-from src.config import load_config, reload_config, save_config
+from src.config import load_config
 from src.csv_importer import merge_csv_files, parse_stripe_csv
 from src.models import ClassifiedPayment, Payment
+from src.rules_engine import load_rules
 
 
 QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
@@ -65,15 +66,10 @@ def load_payments_for_period(
 
 @st.cache_data(ttl=300, show_spinner=False)
 def classify_payments(payments_tuple: tuple) -> list[ClassifiedPayment]:
-    """Classify a tuple of payments (hashable for caching).
-
-    Payments are serialised to JSON strings by the caller so they are
-    hashable for st.cache_data. We deserialise them back here before
-    passing to classify_batch which expects Payment objects.
-    """
+    """Classify a tuple of payments (hashable for caching)."""
     payments = [Payment.model_validate_json(p) for p in payments_tuple]
-    cfg = load_config()
-    classified, _ = classify_batch(payments, cfg)
+    rules = load_rules()
+    classified, _ = classify_batch(payments, rules)
     return classified
 
 

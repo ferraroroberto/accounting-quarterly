@@ -21,6 +21,7 @@ class Payment(BaseModel):
     payment_type_meta: Optional[str] = None
     event_api_id_meta: Optional[str] = None
     email_meta: Optional[str] = None
+    card_country: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -126,27 +127,3 @@ class MonthlyAggregation(BaseModel):
         return date(self.year, self.month, 1).strftime("%b %Y")
 
 
-class ValidationResult(BaseModel):
-    period_start: str
-    period_end: str
-    total_transactions: int
-    classification_errors: int
-    geo_errors: int
-    coaching_actual: float
-    newsletter_actual: float
-    illustrations_actual: float
-    coaching_fee_actual: float
-    newsletter_fee_actual: float
-    illustrations_fee_actual: float
-    total_income_actual: float
-    total_fee_actual: float
-    coaching_expected: float
-    newsletter_expected: float
-    illustrations_expected: float
-    total_income_expected: float
-    total_fee_expected: float
-    regional_actual: dict
-    regional_expected: dict
-    passed: bool
-    discrepancies: list[dict]
-    unclassified_ids: list[str]

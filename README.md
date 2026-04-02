@@ -10,13 +10,23 @@ Automated Stripe payment classification and quarterly reporting system. Classifi
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate      # Windows
-# source .venv/bin/activate  # macOS/Linux
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
 
 pip install -r requirements.txt
 ```
 
-### 2. Place CSV exports
+### 2. Configure
+
+Copy the example files and edit them:
+
+```bash
+cp config.json.example config.json
+cp classification_rules.json classification_rules.json  # already included
+cp .env.example .env  # add your Stripe API key
+```
+
+### 3. Place CSV exports (or use Stripe API)
 
 Copy your Stripe CSV exports to:
 ```
@@ -24,13 +34,12 @@ data/raw/unified_payments_all_old.csv   # older export (with Currency column)
 data/raw/unified_payments_all.csv       # newer export (without Currency column)
 ```
 
-Or update the paths in `config.json → csv_paths`.
+Or configure the Stripe API key to fetch data directly.
 
-### 3. Launch the dashboard
+### 4. Launch the dashboard
 
 ```bash
-cd E:\automation\accounting-quarterly
-.venv\Scripts\streamlit run app/streamlit_app.py
+streamlit run app/streamlit_app.py
 ```
 
 ---
@@ -38,101 +47,126 @@ cd E:\automation\accounting-quarterly
 ## Project Structure
 
 ```
-├── config.json                # All settings, classification rules, client overrides
+├── config.json                    # App settings (git-ignored, use config.json.example)
+├── classification_rules.json      # Activity and geographic classification rules (editable)
 ├── requirements.txt
-├── src/
-│   ├── models.py              # Pydantic data models (Payment, ClassifiedPayment, …)
-│   ├── config.py              # Load/save config.json
-│   ├── csv_importer.py        # CSV parsing, amount normalisation, deduplication
-│   ├── classifier.py          # Activity and geographic classification logic
-│   ├── aggregator.py          # Monthly/quarterly aggregations and totals
-│   ├── validator.py           # Historical validation against known_totals
-│   ├── excel_exporter.py      # Multi-sheet Excel report generation
-│   ├── stripe_client.py       # Stripe API wrapper (optional live data)
-│   ├── logger.py              # Rotating file logger
-│   └── exceptions.py          # Custom exception classes
-├── app/
-│   ├── streamlit_app.py       # Streamlit entry point
-│   ├── components/
-│   │   └── data_loader.py     # Cached data loading helpers
-│   └── pages/
-│       ├── 01_Quarter_Report.py      # Quarterly summary + Excel export
-│       ├── 02_Transaction_Browser.py # Browse/filter transactions + overrides
-│       ├── 03_Validation.py          # Historical validation runner
-│       ├── 04_Configuration.py       # API keys, overrides, patterns, geographic rules
-│       └── 05_History.py             # Trend charts across all quarters
+├── src/                           # Core business logic
+│   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
+│   ├── config.py                  # Load/save config.json
+│   ├── rules_engine.py            # Load/save classification_rules.json
+│   ├── classifier.py              # Activity and geographic classification (reads from rules JSON)
+│   ├── csv_importer.py            # CSV parsing, amount normalisation, deduplication
+│   ├── aggregator.py              # Monthly/quarterly aggregations and totals
+│   ├── excel_exporter.py          # Multi-sheet Excel report generation
+│   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
+│   ├── database.py                # SQLite database for persistent transaction storage
+│   ├── logger.py                  # Rotating file logger
+│   └── exceptions.py              # Custom exception classes
+├── app/                           # Streamlit dashboard (flat structure, no subfolders)
+│   ├── streamlit_app.py           # Entry point with horizontal tabs
+│   ├── data_loader.py             # Cached data loading helpers
+│   ├── quarter_report.py          # Quarterly summary + Excel export
+│   ├── transaction_browser.py     # Browse/filter transactions + overrides
+│   ├── history.py                 # Timeline charts across all quarters
+│   ├── configuration.py           # Classification rules editor, API keys, settings
+│   └── invoice_upload.py          # Invoice upload scaffold for accounting partner
+├── tests/                         # Pytest test suite
+│   ├── conftest.py                # Shared fixtures
+│   ├── test_classifier.py         # Classification engine tests
+│   ├── test_models.py             # Data model tests
+│   ├── test_database.py           # SQLite database tests
+│   ├── test_rules_engine.py       # Rules JSON load/save tests
+│   └── test_aggregator.py         # Aggregation logic tests
 ├── data/
-│   ├── raw/                   # CSV source files (git-ignored)
-│   ├── processed/             # Generated reports and validation output
-│   └── cache/                 # Temporary processing cache
-└── logs/                      # Rotating daily log files
+│   ├── raw/                       # CSV source files (git-ignored)
+│   ├── processed/                 # Generated reports
+│   ├── invoices/in/               # Invoices received (PDFs)
+│   └── invoices/out/              # Invoices produced (PDFs)
+└── logs/                          # Rotating daily log files
 ```
 
 ---
 
 ## Classification Logic
 
+Classification rules are defined in `classification_rules.json` and can be edited directly or through the Configuration tab in the dashboard.
+
 ### Activity type
 
 Rules are evaluated in priority order; the first match wins.
 
-| Priority | Pattern | Activity |
-|----------|---------|----------|
+| Priority | Match Type | Activity |
+|----------|-----------|----------|
 | 1 | Empty / null description | COACHING |
 | 2 | Luma `registration` payment type | COACHING |
-| 3 | `charge for` in description | ILLUSTRATIONS |
-| 4 | `subscription` in description | NEWSLETTER |
-| 5 | `calendly`, `coach`, `discovery session`, `consulting`, `virtual meetings` | COACHING |
-| 6 | No pattern matched | UNKNOWN |
-
-Keywords for each category are configurable in `config.json → classification_patterns`.
+| 3 | Description contains illustration keywords | ILLUSTRATIONS |
+| 4 | Description contains newsletter keywords | NEWSLETTER |
+| 5 | Description contains coaching keywords | COACHING |
+| - | No pattern matched | UNKNOWN |
 
 ### Geographic region
-
-Rules are evaluated in priority order; the first match wins.
 
 | Priority | Condition | Region |
 |----------|-----------|--------|
 | 1 | Currency is **not EUR** | OUTSIDE_EU |
-| 2 | EUR + explicit name/email match in overrides | Per override |
+| 2 | EUR + explicit name/email override | Per override |
 | 3 | EUR + activity is **NEWSLETTER** | EU_NOT_SPAIN |
 | 4 | EUR + any other activity | SPAIN |
 
-Newsletter payments in EUR lack customer email/country metadata in Stripe CSV exports, so they cannot be attributed to a specific person. By convention they are classified as EU (not Spain) since the newsletter audience is international.
+Newsletter payments in EUR lack customer email/country metadata in Stripe CSV exports. By convention they are classified as EU (not Spain). Individual exceptions can be added via overrides.
 
-Override keys in `config.json`:
-- `geographic_rules` — configures the three default regions (`eur_default`, `eur_newsletter_default`, `non_eur_default`)
-- `email_overrides` — maps exact email addresses to `SPAIN / EU_NOT_SPAIN / OUTSIDE_EU`
-- `geographic_overrides` — maps description substrings (or email patterns) to regions; always takes priority over defaults
+### Card issuing country
+
+When using the Stripe API, the card issuing country (`charge.payment_method_details.card.country`) is extracted automatically. This provides ISO country codes (ES, DE, US, etc.) that can improve geographic classification accuracy beyond currency-based heuristics.
 
 ---
 
 ## Historical Validation
 
-**Newsletter regional split:** EUR newsletter subscriptions (`Subscription update/creation`) carry no customer email or billing-country metadata in the Stripe CSV export. They are classified as **EU (not Spain)** by default (`eur_newsletter_default`). Individual exceptions can be added via `geographic_overrides` or `email_overrides` in `config.json`, or through the **Geographic Rules** tab in the dashboard.
+The classification system was validated against historical known totals covering the period from July 2023 to December 2025. All computed totals matched the original manual Excel files, confirming the accuracy of the automated classification rules.
 
 ---
 
-## Stripe API (optional)
+## Database
 
-Set `STRIPE_API_KEY` in a `.env` file at the project root (see `.env.example`):
+Transaction data is stored in a SQLite database (`data/accounting.db`) for persistent storage and incremental loading:
+
+- New transactions from CSV or Stripe API are inserted automatically
+- Changed transactions (amount or fee updates) are detected and updated
+- Invoice upload history is tracked to avoid duplicate uploads
+- Date-range queries support efficient filtering
+
+---
+
+## Stripe API
+
+Set `STRIPE_API_KEY` in a `.env` file at the project root:
 
 ```
 STRIPE_API_KEY=sk_live_...
 ```
 
-The dashboard will offer to fetch live charges from the API instead of CSV when a key is configured.
+Required permissions for restricted keys (`rk_live_...`):
+- **Read charges** — transaction data, amounts, descriptions, card country
+- **Read balance transactions** — fee details
 
-If you use a **restricted key** (`rk_live_...`), turn on **Read charges** for that key in the [Stripe API keys](https://dashboard.stripe.com/apikeys) editor. The app calls `Charge.list`; without charge read, Stripe returns an error mentioning `rak_charge_read`.
+The dashboard includes a permission checker to verify which API resources are accessible.
 
 ---
 
-## Generating Reports Manually
+## Running Tests
 
 ```bash
-# Run full validation and save report + Excel
-python tmp/generate_report.py
-
-# Generate Q-specific Excel
-python tmp/test_q1_2026.py
+pytest tests/ -v
 ```
+
+---
+
+## Invoice Upload
+
+The Invoice Upload tab provides a scaffold for uploading invoice PDFs to an accounting partner's system:
+
+- **Invoices In** (`data/invoices/in/`): received invoices
+- **Invoices Out** (`data/invoices/out/`): produced invoices
+- Tracks which files have been uploaded to avoid duplicates
+- API connection is a placeholder — configure `accounting_api` in `config.json` when ready

@@ -251,6 +251,56 @@ def upsert_classified(payments: list[ClassifiedPayment],
         conn.close()
 
 
+def load_classified_payments(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    db_path: Optional[str | Path] = None,
+) -> list[ClassifiedPayment]:
+    """Load payments with their stored classification from the database.
+
+    Use this when you want to display already-classified data without running
+    the classifier again. Classification columns default to UNKNOWN / empty
+    string for rows that were never classified.
+    """
+    conn = _get_connection(db_path)
+    try:
+        query = "SELECT * FROM transactions WHERE 1=1"
+        params: list = []
+        if start_date:
+            query += " AND created_date >= ?"
+            params.append(start_date.isoformat())
+        if end_date:
+            query += " AND created_date <= ?"
+            params.append(end_date.isoformat())
+        query += " ORDER BY created_date"
+
+        rows = conn.execute(query, params).fetchall()
+        payments = []
+        for row in rows:
+            payments.append(ClassifiedPayment(
+                id=row["id"],
+                created_date=datetime.fromisoformat(row["created_date"]),
+                converted_amount=row["converted_amount"],
+                converted_amount_refunded=row["converted_amount_refunded"],
+                description=row["description"],
+                fee=row["fee"],
+                currency=row["currency"],
+                payment_type_meta=row["payment_type_meta"],
+                event_api_id_meta=row["event_api_id_meta"],
+                email_meta=row["email_meta"],
+                card_country=row["card_country"],
+                amount_original=row["amount_original"],
+                fx_rate=row["fx_rate"],
+                activity_type=row["activity_type"] or "UNKNOWN",
+                geo_region=row["geo_region"] or "UNKNOWN",
+                classification_rule=row["classification_rule"] or "",
+                geo_rule=row["geo_rule"] or "",
+            ))
+        return payments
+    finally:
+        conn.close()
+
+
 def load_payments(start_date: Optional[datetime] = None,
                   end_date: Optional[datetime] = None,
                   db_path: Optional[str | Path] = None) -> list[Payment]:

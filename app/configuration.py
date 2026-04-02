@@ -11,8 +11,8 @@ import streamlit as st
 ROOT = Path(__file__).parent.parent
 
 from app.data_loader import invalidate_cache
-from src.config import load_config, reload_config, save_config
-from src.rules_engine import load_rules, reload_rules, save_rules
+from src.config import load_config
+from src.rules_engine import load_rules, save_rules
 from src.stripe_client import check_permissions, test_connection
 
 
@@ -267,39 +267,6 @@ geographic classification instead of manual overrides.
 
     # --- App Settings ---
     with config_tabs[3]:
-        st.subheader("App Settings")
-        app_cfg = cfg.get("app", {})
-
-        c1, c2 = st.columns(2)
-        input_mode = c1.selectbox(
-            "Input mode",
-            ["api"],
-            index=0,
-            key="app_input_mode",
-            help="This app is configured to always load transactions from the Stripe API.",
-        )
-        st.caption("CSV paths are kept for backwards compatibility but are not used in API mode.")
-        csv_path_old = st.text_input(
-            "CSV path (legacy, not used)",
-            app_cfg.get("csv_path", "tmp/unified_payments_all_old.csv"),
-            key="app_csv_old",
-        )
-        csv_path_new = st.text_input(
-            "CSV path new (legacy, not used)",
-            app_cfg.get("csv_path_new", "tmp/unified_payments_all.csv"),
-            key="app_csv_new",
-        )
-
-        if st.button("Save App Settings", type="primary", key="save_app"):
-            cfg["app"]["input_mode"] = input_mode
-            cfg["app"]["csv_path"] = csv_path_old
-            cfg["app"]["csv_path_new"] = csv_path_new
-            save_config(cfg)
-            invalidate_cache()
-            reload_config()
-            st.success("Settings saved")
-
-        st.markdown("---")
         st.subheader("Cache")
         if st.button("Clear Cache", key="clear_cache"):
             invalidate_cache()

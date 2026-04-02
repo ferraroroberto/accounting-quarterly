@@ -8,9 +8,8 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.config import load_config
 from src.database import init_db
-from src.fx_rates import get_rate_count, get_stored_date_range, init_fx_table
+from src.fx_rates import get_rate_count, init_fx_table
 
 # Initialise database and FX table on startup
 init_db()
@@ -32,8 +31,6 @@ with st.sidebar:
         "generates Excel reports, and tracks invoice uploads."
     )
     st.markdown("---")
-    cfg = load_config()
-    app_cfg = cfg.get("app", {})
     st.markdown("**Data source:** `API`")
     st.caption("Stripe transactions are loaded live from the Stripe API.")
     fx_count = get_rate_count()
@@ -58,10 +55,9 @@ with tab_welcome:
 
     st.markdown(
         "This dashboard automates the classification and reporting of Stripe "
-        "payments for quarterly accounting. Transactions are loaded from "
-        "**Stripe CSV exports** or the **Stripe API**, classified by activity "
-        "type and geographic region, converted to EUR using ECB exchange rates, "
-        "and aggregated into reports."
+        "payments for quarterly accounting. Transactions are fetched from the "
+        "**Stripe API**, classified by activity type and geographic region, "
+        "converted to EUR using ECB exchange rates, and aggregated into reports."
     )
 
     st.markdown("---")
@@ -103,8 +99,7 @@ with tab_welcome:
          "conversion calculator. Rates are stored locally for offline use."),
         ("Configuration",
          "Edit classification rules (activity keywords, geographic defaults, "
-         "client overrides), manage the Stripe API key, and adjust app "
-         "settings like CSV paths and input mode."),
+         "client overrides), manage the Stripe API key, and clear the cache."),
         ("Invoice Upload",
          "Upload invoice PDFs to your accounting partner. Scans the "
          "`invoices/in` and `invoices/out` directories, tracks which files "

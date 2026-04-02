@@ -16,6 +16,7 @@ import streamlit as st
 from src.classifier import classify_batch
 from src.config import load_config
 from src.csv_importer import merge_csv_files, parse_stripe_csv
+from src.fx_rates import convert_to_eur, init_fx_table
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
 
@@ -64,6 +65,29 @@ def load_payments_for_period(
     return []
 
 
+def apply_fx_conversion(payments: list[Payment]) -> list[Payment]:
+    """Convert non-EUR payments to EUR using stored FX rates."""
+    init_fx_table()
+    converted = []
+    for p in payments:
+        if p.currency != "eur" and p.fx_rate is None:
+            tx_date = p.created_date.date()
+            amount_eur, rate = convert_to_eur(p.converted_amount, p.currency, tx_date)
+            fee_eur, _ = convert_to_eur(p.fee, p.currency, tx_date)
+            refund_eur, _ = convert_to_eur(p.converted_amount_refunded, p.currency, tx_date)
+            p = p.model_copy(update={
+                "amount_original": p.converted_amount,
+                "converted_amount": amount_eur,
+                "converted_amount_refunded": refund_eur,
+                "fee": fee_eur,
+                "fx_rate": rate,
+            })
+        elif p.currency == "eur" and p.fx_rate is None:
+            p = p.model_copy(update={"fx_rate": 1.0})
+        converted.append(p)
+    return converted
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def classify_payments(payments_tuple: tuple) -> list[ClassifiedPayment]:
     """Classify a tuple of payments (hashable for caching)."""
@@ -92,6 +116,7 @@ def get_classified_for_period(
             end_date = datetime(year, 12, 31, 23, 59, 59)
 
     payments = load_payments_for_period(csv_old, csv_new, start_date, end_date)
+    payments = apply_fx_conversion(payments)
     classified = classify_payments(tuple(p.model_dump_json() for p in payments))
     return classified
 

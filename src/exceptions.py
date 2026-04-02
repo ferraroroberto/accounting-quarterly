@@ -6,10 +6,6 @@ class ClassificationError(StripeAutomationError):
     """Raised when a transaction cannot be classified."""
 
 
-class ValidationError(StripeAutomationError):
-    """Raised when validation of classified data fails."""
-
-
 class CSVParseError(StripeAutomationError):
     """Raised when CSV parsing fails."""
 

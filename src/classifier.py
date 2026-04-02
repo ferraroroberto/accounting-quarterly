@@ -1,11 +1,11 @@
+"""Activity and geographic classification using rules from classification_rules.json."""
 from __future__ import annotations
 
-import re
 from typing import Optional
 
-from src.config import load_config
 from src.logger import get_logger
 from src.models import ActivityType, ClassifiedPayment, GeoRegion, Payment
+from src.rules_engine import load_rules
 
 log = get_logger(__name__)
 
@@ -18,31 +18,32 @@ MONTH_LABELS = {
 def classify_activity(
     description: str,
     payment_type_meta: Optional[str] = None,
-    cfg: Optional[dict] = None,
+    rules: Optional[dict] = None,
 ) -> tuple[ActivityType, str]:
-    """Return (ActivityType, rule_description)."""
-    cfg = cfg or load_config()
-    patterns = cfg.get("classification_patterns", {})
+    """Return (ActivityType, rule_description) using rules from JSON."""
+    rules = rules or load_rules()
+    activity_rules = sorted(rules.get("activity_rules", []), key=lambda r: r.get("priority", 99))
     desc_lower = (description or "").strip().lower()
 
-    if not desc_lower:
-        return "COACHING", "empty_description_default"
+    for rule in activity_rules:
+        match_type = rule.get("match_type", "")
+        activity: ActivityType = rule.get("activity_type", "UNKNOWN")  # type: ignore[assignment]
+        rule_name = rule.get("name", "unknown_rule")
 
-    luma_type = patterns.get("coaching_luma_payment_type", "registration")
-    if payment_type_meta and payment_type_meta.lower() == luma_type:
-        return "COACHING", f"luma_registration:{payment_type_meta}"
+        if match_type == "empty_description":
+            if not desc_lower:
+                return activity, rule_name
 
-    for keyword in patterns.get("illustrations", []):
-        if keyword.lower() in desc_lower:
-            return "ILLUSTRATIONS", f"illustrations_pattern:{keyword}"
+        elif match_type == "payment_type":
+            match_value = rule.get("match_value", "").lower()
+            if payment_type_meta and payment_type_meta.lower() == match_value:
+                return activity, f"{rule_name}:{payment_type_meta}"
 
-    for keyword in patterns.get("newsletter", []):
-        if keyword.lower() in desc_lower:
-            return "NEWSLETTER", f"newsletter_pattern:{keyword}"
-
-    for keyword in patterns.get("coaching", []):
-        if keyword.lower() in desc_lower:
-            return "COACHING", f"coaching_pattern:{keyword}"
+        elif match_type == "description_contains":
+            keywords = rule.get("keywords", [])
+            for keyword in keywords:
+                if keyword.lower() in desc_lower:
+                    return activity, f"{rule_name}:{keyword}"
 
     return "UNKNOWN", "no_pattern_matched"
 
@@ -77,24 +78,18 @@ def _match_geo_override(
 
 def classify_geography(
     payment: Payment,
-    cfg: Optional[dict] = None,
+    rules: Optional[dict] = None,
     activity_type: Optional[str] = None,
 ) -> tuple[GeoRegion, str]:
-    """Return (GeoRegion, rule_description).
-
-    Logic (in priority order):
-    1. Non-EUR currency → non_eur_default (OUTSIDE_EU)
-    2. EUR + explicit override (email or name) → override region
-    3. EUR + NEWSLETTER activity → eur_newsletter_default (EU_NOT_SPAIN)
-    4. EUR + other activity → eur_default (SPAIN)
-    """
-    cfg = cfg or load_config()
-    geo_overrides = cfg.get("geographic_overrides", {})
-    email_overrides = cfg.get("email_overrides", {})
-    geo_rules = cfg.get("geographic_rules", {})
+    """Return (GeoRegion, rule_description) using rules from JSON."""
+    rules = rules or load_rules()
+    geo_rules = rules.get("geographic_rules", {})
+    defaults = geo_rules.get("defaults", {})
+    geo_overrides = geo_rules.get("geographic_overrides", {})
+    email_overrides = geo_rules.get("email_overrides", {})
 
     if payment.currency != "eur":
-        non_eur_default: GeoRegion = geo_rules.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
+        non_eur_default: GeoRegion = defaults.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
         return non_eur_default, f"non_eur_currency:{payment.currency}"
 
     override = _match_geo_override(
@@ -109,23 +104,23 @@ def classify_geography(
         return region, rule
 
     if activity_type == "NEWSLETTER":
-        eur_newsletter_default: GeoRegion = geo_rules.get("eur_newsletter_default", "EU_NOT_SPAIN")  # type: ignore[assignment]
+        eur_newsletter_default: GeoRegion = defaults.get("eur_newsletter_default", "EU_NOT_SPAIN")  # type: ignore[assignment]
         return eur_newsletter_default, "eur_newsletter_default"
 
-    eur_default: GeoRegion = geo_rules.get("eur_default", "SPAIN")  # type: ignore[assignment]
+    eur_default: GeoRegion = defaults.get("eur_default", "SPAIN")  # type: ignore[assignment]
     return eur_default, "eur_default"
 
 
-def classify_payment(payment: Payment, cfg: Optional[dict] = None) -> ClassifiedPayment:
+def classify_payment(payment: Payment, rules: Optional[dict] = None) -> ClassifiedPayment:
     """Apply full classification (activity + geography) to a Payment."""
-    cfg = cfg or load_config()
+    rules = rules or load_rules()
 
     activity, act_rule = classify_activity(
         payment.description,
         payment.payment_type_meta,
-        cfg,
+        rules,
     )
-    geo, geo_rule = classify_geography(payment, cfg, activity_type=activity)
+    geo, geo_rule = classify_geography(payment, rules, activity_type=activity)
 
     classified = ClassifiedPayment(
         **payment.model_dump(),
@@ -150,15 +145,15 @@ def classify_payment(payment: Payment, cfg: Optional[dict] = None) -> Classified
 
 def classify_batch(
     payments: list[Payment],
-    cfg: Optional[dict] = None,
+    rules: Optional[dict] = None,
 ) -> tuple[list[ClassifiedPayment], list[str]]:
     """Classify a list of payments. Returns (classified_list, error_ids)."""
-    cfg = cfg or load_config()
+    rules = rules or load_rules()
     classified = []
     error_ids = []
 
     for p in payments:
-        cp = classify_payment(p, cfg)
+        cp = classify_payment(p, rules)
         classified.append(cp)
         if not cp.activity_valid or not cp.geo_valid:
             error_ids.append(p.id)

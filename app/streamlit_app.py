@@ -1,4 +1,4 @@
-"""Main Streamlit entry point for Stripe Automation Dashboard."""
+"""Main Streamlit entry point - tab-based layout."""
 import sys
 from pathlib import Path
 
@@ -8,37 +8,54 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
+from src.database import init_db
+
+# Initialise database on startup
+init_db()
+
 st.set_page_config(
-    page_title="Stripe Automation Dashboard",
-    page_icon="💳",
+    page_title="Stripe Accounting Dashboard",
+    page_icon="S",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.sidebar.title("💳 Stripe Dashboard")
-st.sidebar.markdown("---")
+# --- Sidebar: project description only ---
+with st.sidebar:
+    st.title("Stripe Accounting")
+    st.markdown(
+        "Automated payment classification and quarterly reporting. "
+        "Classifies Stripe payments by activity type and geographic region, "
+        "generates Excel reports, and tracks invoice uploads."
+    )
+    st.caption("v2.0")
 
-pages = {
-    "📊 Quarter Report": "pages/01_Quarter_Report.py",
-    "🔍 Transaction Browser": "pages/02_Transaction_Browser.py",
-    "✅ Validation": "pages/03_Validation.py",
-    "⚙️ Configuration": "pages/04_Configuration.py",
-    "📈 History": "pages/05_History.py",
-}
+# --- Main content: horizontal tabs ---
+tab_report, tab_browser, tab_history, tab_config, tab_invoices = st.tabs([
+    "Quarter Report",
+    "Transaction Browser",
+    "History & Charts",
+    "Configuration",
+    "Invoice Upload",
+])
 
-st.title("💳 Stripe Automation Dashboard")
-st.markdown(
-    """
-    Welcome! Use the sidebar to navigate between sections:
+from app.quarter_report import render as render_quarter_report
+from app.transaction_browser import render as render_transaction_browser
+from app.history import render as render_history
+from app.configuration import render as render_configuration
+from app.invoice_upload import render as render_invoice_upload
 
-    | Page | Purpose |
-    |------|---------|
-    | **📊 Quarter Report** | View and export quarterly income summaries |
-    | **🔍 Transaction Browser** | Search, filter and manually override classifications |
-    | **✅ Validation** | Compare against historical known totals |
-    | **⚙️ Configuration** | Manage API keys and client mappings |
-    | **📈 History** | Timeline view of all quarters |
-    """
-)
+with tab_report:
+    render_quarter_report()
 
-st.info("👈 Select a page from the sidebar to get started.")
+with tab_browser:
+    render_transaction_browser()
+
+with tab_history:
+    render_history()
+
+with tab_config:
+    render_configuration()
+
+with tab_invoices:
+    render_invoice_upload()

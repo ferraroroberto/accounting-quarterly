@@ -1302,4 +1302,148 @@ User files with AEAT / sends package to gestor
 
 ---
 
+## Appendix A: Should You Replace Your Gestor?
+
+### A.1 What You Actually Pay For
+
+At €90/month (€1,080/year), your accounting manager is most likely doing the following:
+
+| Task | Frequency | Time cost (theirs) | Complexity |
+|---|---|---|---|
+| Modelo 303 — IVA trimestral | 4×/year | ~30 min | Low |
+| Modelo 130 — IRPF advance | 4×/year | ~20 min | Low |
+| Modelo 390 — IVA annual summary | 1×/year | ~15 min | Very low |
+| Modelo 347 — large operations | 1×/year | ~20 min | Low |
+| Modelo 349 — intra-EU (if applicable) | 4×/year | ~15 min | Low |
+| OSS return (if applicable) | 4×/year | ~20 min | Medium |
+| Modelo 100 — Declaración de la Renta | 1×/year | ~2–3h | **Medium–High** |
+| Social Security quota review | 1×/year | ~20 min | Low |
+| Ad-hoc advice / queries | Ongoing | Variable | Variable |
+
+**Honest estimate of total active work per year: 12–18 hours.** At €1,080/year that is €60–90/hour — a fair rate, but not remarkable. After two years, they have templates and your data dialled in, so the marginal effort on their end is shrinking while the price stays fixed. Your read of "easy money" is probably correct.
+
+---
+
+### A.2 Complexity Assessment by Filing
+
+#### Quarterly filings — **Low complexity, safely DIY with this system**
+
+**Modelo 303 (IVA):**
+The logic is: (IVA collected from Spain clients) − (IVA paid on deductible expenses) = amount to pay. With the invoice OCR pipeline (Feature 12) and expense tracking (Feature 1), this system can compute every box and the only human task is reviewing and submitting via the AEAT Sede Electrónica website. Filing takes 10 minutes once the numbers are ready. **Verdict: fully replaceable by this system.**
+
+**Modelo 130 (IRPF advance):**
+Also mechanical: 20% of (income YTD − deductible expenses YTD − retenciones already paid). The only non-trivial part is deciding which expenses are deductible and at what percentage (e.g. home office, phone). Once that policy is fixed, computation is trivial. **Verdict: fully replaceable by this system after a one-time decision on expense deductibility.**
+
+**Modelo 349 (intra-EU B2B):**
+Just a list of EU clients and amounts. Only applies if you do B2B invoicing to EU companies (coaching or illustrations for a business, not individuals). May not even apply to you if all EU revenue is B2C newsletter/coaching to individuals. **Verdict: trivial, fully replaceable.**
+
+**OSS return:**
+This one has a catch. The calculation is straightforward (country × rate × amount), and this system handles it. But the OSS filing must be submitted through a specific AEAT portal (the "Ventanilla Única" / One Stop Shop system), separate from the standard Sede Electrónica. The first time you do it you need to register and understand the portal. After that it is a 15-minute exercise per quarter. **Verdict: replaceable, but requires a one-time learning investment.**
+
+#### Annual filings — **Mixed; one is genuinely complex**
+
+**Modelo 390 (IVA annual summary):**
+Just the sum of your four Modelo 303s. Pure arithmetic. **Verdict: trivially replaceable.**
+
+**Modelo 347 (large operations with same party):**
+Only relevant if you have a Spanish client or supplier with whom you transact > €3,005/year. Likely only a handful at most in your case. **Verdict: replaceable.**
+
+**Modelo 100 — Declaración de la Renta:**
+This is the one that earns the gestor their fee. It is not complicated in the mechanical sense — the AEAT Renta WEB tool pre-fills most data from what employers and payers have reported on your behalf. The complexity is in knowing *what deductions to claim and whether you are entitled to them*:
+
+- Home office deduction (proportional m², electricity, internet): legitimate but requires consistent criteria year to year
+- Equipment and depreciation: laptops, cameras, tablets — AEAT allows accelerated depreciation in simplified regime
+- Professional development costs: courses, books, conferences
+- Health insurance premium deduction (autónomos can deduct their own and family's health insurance as a business expense)
+- Pension plan contributions (reduces taxable base, significant at higher income levels)
+- Mutual fund, bank account, or rental income from prior years
+- Any personal deductions: mortgage for habitual residence (if pre-2013), donations, family deductions
+
+If your financial life outside of freelancing is simple (no investments, no property, no family deductions), the Renta is manageable on your own using Renta WEB. If there is any complexity, one professional review per year is worth it just for peace of mind. **Verdict: DIY is viable for a simple profile; consider a €150–200 one-time annual review instead of a monthly retainer.**
+
+---
+
+### A.3 The Real Risk: What Can Go Wrong
+
+Filing your own taxes in Spain carries these concrete risks:
+
+| Risk | Likelihood (your profile) | Consequence | Mitigation |
+|---|---|---|---|
+| IVA arithmetic error in 303 | Very low — system computes it | Small surcharge (recargo) 5–20% if self-corrected promptly | System double-checks; audit trail |
+| Wrong VAT treatment on EU invoice | Medium — EU B2B vs B2C distinction is easy to get wrong | Potential back-payment + interest | System flags EU invoices without NIF-IVA for manual review |
+| Missing OSS registration | N/A if already registered | Fines per country | One-time registration task |
+| Missing deductible expense | Medium — gestor likely knows tricks you don't | Lost money, not a fine | Document your expense policy once, stick to it |
+| Renta error | Low if profile is simple | Requête + interest (not criminal unless fraudulent intent) | Use Renta WEB pre-filled data; verify with one-off professional review |
+| Late filing | Medium — easy to forget | Surcharge 5% (< 3 months late), 10% (3–6 months), 15% (6–12 months), 20% + interest (> 12 months) | **System's tax calendar (Feature 11) and email alerts (Feature 4) eliminate this risk** |
+
+The Spanish AEAT is not aggressive toward autónomos with simple income profiles who file on time. Errors on 303/130 that you self-correct before being notified carry a minimal 5% surcharge. The risk profile here is genuinely low.
+
+---
+
+### A.4 What the Gestor Might Know That You Currently Don't
+
+Before leaving, extract this information in a single conversation:
+
+1. **Which expenses are you currently deducting and at what %?** (Home office, phone, transport, professional development)
+2. **Am I registered for OSS, and have I been filing it?** (If you have EU newsletter subscribers)
+3. **What is my current IRPF retention rate on invoices — 7% or 15%?** (Depends on start date; 7% only for first 3 years from first professional billing)
+4. **Are there any open inspections, pending responses, or outstanding balances with AEAT?**
+5. **What is my Social Security contribution base and how was it set?** (The 2023 reform links it to projected income; may need adjustment)
+6. **Have you been filing Modelo 349?** (If so, with which clients?)
+7. **Get PDF copies of every filed model for the last two years.** Store these in the system.
+
+This conversation is worth more than several months of fees. Do it before you cancel.
+
+---
+
+### A.5 The Transition Plan
+
+A practical, low-risk path to independence:
+
+**Phase 1 — Shadow your gestor for one quarter (now → Q2 2026)**
+Do not cancel yet. Implement Features 1, 11, and 12 (expenses, tax engine, invoice OCR). For Q1 2026 filings (due April 20), compute everything yourself in parallel with what the gestor files. Compare every box. This validates the system against a known-correct baseline.
+
+**Phase 2 — File Q2 2026 independently (July 2026)**
+File Modelo 303 and 130 yourself. Have the gestor on standby but do not engage them for these two models. This is the lowest-risk quarterly filing because you have one full cycle of system validation behind you.
+
+**Phase 3 — Cancel the retainer after Renta 2025 is filed (June 2026)**
+Let the gestor file Renta 2025 (filed May–June 2026, covering the 2025 tax year). This is the last high-complexity filing they will handle for you. After it is filed and confirmed, cancel the monthly service.
+
+**Phase 4 — Annual gestor review only (from 2027)**
+Pay a gestor €150–250 once a year in May–June to review and file the Renta. Handle all quarterly filings yourself. This gives you professional coverage on the one filing where it actually adds value, at roughly **15–20% of your current annual cost**.
+
+**Net annual saving: ~€850–900/year.**
+
+---
+
+### A.6 Effort Estimate to Build the Relevant Features
+
+Assuming you implement only the features needed to go fully independent:
+
+| Feature | What it replaces | Estimated build time | Priority |
+|---|---|---|---|
+| Feature 1 — Expense Tracking | Manual expense spreadsheet | 1–2 days | Essential |
+| Feature 11 — Tax Engine | Gestor's quarterly computations | 2–3 days | Essential |
+| Feature 12 — Invoice OCR | IntegraLOOP + manual data entry | 3–4 days | Essential |
+| Feature 4 — Email Alerts | Gestor's deadline reminders | 0.5 days | High |
+| Feature 8 — Audit Trail | Gestor's records | 0.5 days | High |
+
+**Total: approximately 7–10 days of focused development** to reach full independence on quarterly filings. The Renta you still review with a professional for ~€200/year.
+
+At €1,080/year in savings, the development investment pays back within the first year of operation, even if you only build 3–4 features. Every subsequent year is pure saving.
+
+---
+
+### A.7 Recommendation
+
+> **Do it.** The quarterly filings are genuinely mechanical. Your income is from Stripe (already tracked), your activities are well-defined, and you have two years of clean baseline data in the system. The gestor's value proposition has eroded to the point where you are paying for reassurance more than expertise.
+
+The one smart hedge: **keep a gestor relationship for the Renta only**, at a fixed annual fee. Not a monthly retainer — a per-filing engagement. Most gestores will accept this arrangement.
+
+Build Features 1, 11, and 12 first, in that order. Run one quarter in shadow mode. Then cancel.
+
+The learning investment is real but bounded. The documentation produced by building this system will be more accurate and more tailored to your situation than anything a generic gestor provides — and you will understand your own tax position more deeply than most freelancers ever do.
+
+---
+
 *Generated by Claude Code on 2026-04-02*

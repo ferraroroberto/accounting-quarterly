@@ -352,11 +352,44 @@ def get_latest_transaction_date(db_path: Optional[str | Path] = None) -> Optiona
         conn.close()
 
 
+def get_transaction_date_bounds(
+    db_path: Optional[str | Path] = None,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Return (min_created_date, max_created_date) from transactions."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT MIN(created_date) AS min_date, MAX(created_date) AS max_date FROM transactions"
+        ).fetchone()
+        if not row:
+            return None, None
+        min_dt = datetime.fromisoformat(row["min_date"]) if row["min_date"] else None
+        max_dt = datetime.fromisoformat(row["max_date"]) if row["max_date"] else None
+        return min_dt, max_dt
+    finally:
+        conn.close()
+
+
 def get_transaction_count_db(db_path: Optional[str | Path] = None) -> int:
     conn = _get_connection(db_path)
     try:
         row = conn.execute("SELECT COUNT(*) as cnt FROM transactions").fetchone()
         return row["cnt"]
+    finally:
+        conn.close()
+
+
+def get_latest_stripe_sync_at(db_path: Optional[str | Path] = None) -> Optional[datetime]:
+    """Get the latest DB load timestamp for rows sourced from Stripe API."""
+    conn = _get_connection(db_path)
+    try:
+        _ensure_transactions_schema(conn)
+        row = conn.execute(
+            "SELECT MAX(loaded_at) AS max_loaded_at FROM transactions WHERE source = 'api'"
+        ).fetchone()
+        if row and row["max_loaded_at"]:
+            return datetime.fromisoformat(row["max_loaded_at"])
+        return None
     finally:
         conn.close()
 

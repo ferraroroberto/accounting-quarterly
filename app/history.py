@@ -121,8 +121,12 @@ def render():
     # --- Stacked Area Chart: Income by Activity ---
     st.subheader("Income by Activity Type")
 
-    sorted_labels = sorted(valid_quarters.keys())
-    sorted_data = [valid_quarters[l] for l in sorted_labels]
+    chronological = sorted(
+        valid_quarters.items(),
+        key=lambda kv: (kv[1].get("year", 0), kv[1].get("quarter", 0)),
+    )
+    sorted_labels = [label for label, _ in chronological]
+    sorted_data = [data for _, data in chronological]
 
     fig_activity = go.Figure()
     fig_activity.add_trace(go.Scatter(
@@ -171,9 +175,9 @@ def render():
 
     fig_geo = go.Figure()
     for region_key, region_label, color in [
-        ("SPAIN", "Spain", "#FF6B6B"),
-        ("EU_NOT_SPAIN", "EU (not Spain)", "#4ECDC4"),
-        ("OUTSIDE_EU", "Outside EU", "#45B7D1"),
+        ("SPAIN", "Spain", "#2D4A7A"),
+        ("EU_NOT_SPAIN", "EU (not Spain)", "#5B8DBE"),
+        ("OUTSIDE_EU", "Outside EU", "#9CB8D8"),
     ]:
         incomes = [d["regional"].get(region_key, {}).get("total_income", 0) for d in sorted_data]
         fig_geo.add_trace(go.Scatter(

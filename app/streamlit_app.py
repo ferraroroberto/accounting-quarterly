@@ -8,8 +8,8 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.database import init_db
-from src.fx_rates import get_rate_count, init_fx_table
+from src.database import get_latest_stripe_sync_at, get_transaction_count_db, init_db
+from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
 
 # Initialise database and FX table on startup
 init_db()
@@ -33,9 +33,17 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Data source:** `API`")
     st.caption("Stripe transactions are loaded live from the Stripe API.")
+    tx_count = get_transaction_count_db()
+    st.caption(f"Transactions stored: {tx_count}")
+    stripe_last_sync = get_latest_stripe_sync_at()
+    stripe_last_sync_text = stripe_last_sync.strftime("%Y-%m-%d %H:%M") if stripe_last_sync else "n/a"
+    st.caption(f"Stripe last update: {stripe_last_sync_text}")
+
     fx_count = get_rate_count()
     st.caption(f"FX rates stored: {fx_count}")
-    st.caption("v2.1")
+    fx_last_sync = get_latest_fx_sync_at()
+    fx_last_update_text = fx_last_sync.strftime("%Y-%m-%d %H:%M:%S") if fx_last_sync else "n/a"
+    st.caption(f"FX last update: {fx_last_update_text}")
 
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,

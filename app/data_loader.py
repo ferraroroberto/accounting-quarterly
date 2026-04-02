@@ -19,6 +19,8 @@ from src.csv_importer import merge_csv_files, parse_stripe_csv
 from src.fx_rates import convert_to_eur, init_fx_table
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
+from src.database import load_payments, upsert_classified, upsert_payments
+from src.stripe_client import fetch_charges
 
 
 QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
@@ -65,6 +67,23 @@ def load_payments_for_period(
     return []
 
 
+def load_payments_for_period_api(
+    start_date: datetime,
+    end_date: datetime,
+    *,
+    force_refresh_token: Optional[str] = None,
+) -> list[Payment]:
+    """Load payments from Stripe API.
+
+    This function is intentionally not Streamlit-cached. Pass a unique
+    `force_refresh_token` (e.g. an ISO timestamp) to make the call-site intent explicit
+    when you want to guarantee a fresh API fetch.
+    """
+
+    _ = force_refresh_token  # explicit cache-busting token (not used directly here)
+    return fetch_charges(start_date, end_date)
+
+
 def apply_fx_conversion(payments: list[Payment]) -> list[Payment]:
     """Convert non-EUR payments to EUR using stored FX rates."""
     init_fx_table()
@@ -102,11 +121,14 @@ def get_classified_for_period(
     quarter: Optional[int],
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
+    *,
+    input_mode: Optional[str] = None,
+    force_refresh_token: Optional[str] = None,
 ) -> list[ClassifiedPayment]:
     cfg = load_config()
     app_cfg = cfg.get("app", {})
-    csv_old = app_cfg.get("csv_path", "tmp/unified_payments_all_old.csv")
-    csv_new = app_cfg.get("csv_path_new", "tmp/unified_payments_all.csv")
+    cfg_mode = (app_cfg.get("input_mode") or "api").lower()
+    mode = (input_mode or cfg_mode or "api").lower()
 
     if start_date is None or end_date is None:
         if quarter:
@@ -115,9 +137,25 @@ def get_classified_for_period(
             start_date = datetime(year, 1, 1)
             end_date = datetime(year, 12, 31, 23, 59, 59)
 
-    payments = load_payments_for_period(csv_old, csv_new, start_date, end_date)
-    payments = apply_fx_conversion(payments)
+    if mode == "db":
+        payments = load_payments(start_date, end_date)
+        payments = apply_fx_conversion(payments)
+    else:
+        payments = load_payments_for_period_api(
+            start_date,
+            end_date,
+            force_refresh_token=force_refresh_token,
+        )
+        payments = apply_fx_conversion(payments)
+        upsert_payments(payments, source="api")
+
     classified = classify_payments(tuple(p.model_dump_json() for p in payments))
+    # Persist classification back to DB (best-effort).
+    try:
+        upsert_classified(classified)
+    except Exception:
+        # UI can still function even if DB update fails (e.g. readonly file)
+        pass
     return classified
 
 

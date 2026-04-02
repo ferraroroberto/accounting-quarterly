@@ -10,10 +10,7 @@ Automated Stripe payment classification and quarterly reporting system. Classifi
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-# .venv\Scripts\activate   # Windows
-
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ### 2. Configure
@@ -22,24 +19,21 @@ Copy the example files and edit them:
 
 ```bash
 cp config.json.example config.json
-cp classification_rules.json classification_rules.json  # already included
-cp .env.example .env  # add your Stripe API key
+cp classification_rules.json.example classification_rules.json
+cp .env.example .env  # add your Stripe API key (and optional Accounting API settings)
 ```
 
-### 3. Place CSV exports (or use Stripe API)
+### 3. Load transactions (Stripe API; CSV is legacy)
 
-Copy your Stripe CSV exports to:
-```
-data/raw/unified_payments_all_old.csv   # older export (with Currency column)
-data/raw/unified_payments_all.csv       # newer export (without Currency column)
-```
+This app is configured to load transactions from the **Stripe API** by default.
+Set `STRIPE_API_KEY` in `.env` and use the dashboard.
 
-Or configure the Stripe API key to fetch data directly.
+CSV paths in `config.json` are kept for backwards compatibility but are not used in API mode.
 
 ### 4. Launch the dashboard
 
 ```bash
-streamlit run app/streamlit_app.py
+.\.venv\Scripts\python.exe -m streamlit run app/streamlit_app.py
 ```
 
 ---
@@ -47,10 +41,9 @@ streamlit run app/streamlit_app.py
 ## Data Flow
 
 ```
-Stripe CSV exports  ──or──  Stripe API (live charges)
-        │                           │
-        └───────────┬───────────────┘
-                    ▼
+Stripe API (live charges)
+          │
+          ▼
           Parse & deduplicate
                     │
                     ▼
@@ -65,10 +58,10 @@ Stripe CSV exports  ──or──  Stripe API (live charges)
        Aggregate, display, export
 ```
 
-**Where data is loaded from:** The app reads Stripe transaction data from CSV
-files in `data/raw/` (configured in `config.json`). Non-EUR amounts (GBP, USD,
-CHF) are automatically converted to EUR using ECB exchange rates stored in the
-local SQLite database (`data/accounting.db`). If a rate is missing for a
+**Where data is loaded from:** The app fetches Stripe transaction data from the
+Stripe API (configured via `STRIPE_API_KEY` in `.env`). Non-EUR amounts (GBP,
+USD, CHF) are automatically converted to EUR using ECB exchange rates stored in
+the local SQLite database (`data/accounting.db`). If a rate is missing for a
 transaction date, the system fetches it from the Frankfurter API or falls back
 to the most recent available rate.
 
@@ -78,7 +71,8 @@ to the most recent available rate.
 
 ```
 ├── config.json                    # App settings (git-ignored, use config.json.example)
-├── classification_rules.json      # Activity and geographic classification rules (editable)
+├── classification_rules.json      # Classification rules (git-ignored, copy from classification_rules.json.example)
+├── classification_rules.json.example
 ├── requirements.txt
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
@@ -91,6 +85,7 @@ to the most recent available rate.
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
 │   ├── database.py                # SQLite database for transactions, FX rates, upload log
+│   ├── accounting_api_client.py    # IntegraLOOP/BILOOP Accounting API client
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard (flat structure, no subfolders)
@@ -101,7 +96,7 @@ to the most recent available rate.
 │   ├── history.py                 # Timeline charts across all quarters
 │   ├── currency.py                # FX rate management, charts, and conversion tool
 │   ├── configuration.py           # Classification rules editor, API keys, settings
-│   └── invoice_upload.py          # Invoice upload scaffold for accounting partner
+│   └── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py         # Classification engine tests
@@ -159,7 +154,7 @@ When using the Stripe API, the card issuing country (`charge.payment_method_deta
 
 Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using daily exchange rates from the European Central Bank (ECB).
 
-**Source:** [Frankfurter API](https://frankfurter.dev) - free, open-source, based on ECB reference rates. No API key required.
+**Source:** [Frankfurter API](https://www.frankfurter.app) - free, open-source, based on ECB reference rates. No API key required.
 
 **How it works:**
 
@@ -217,16 +212,37 @@ The dashboard includes a permission checker to verify which API resources are ac
 ## Running Tests
 
 ```bash
-pytest tests/ -v
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
 ---
 
 ## Invoice Upload
 
-The Invoice Upload tab provides a scaffold for uploading invoice PDFs to an accounting partner's system:
+The Invoice Upload tab supports uploading invoice PDFs to the accounting partner API (IntegraLOOP/BILOOP).
 
 - **Invoices In** (`data/invoices/in/`): received invoices
 - **Invoices Out** (`data/invoices/out/`): produced invoices
 - Tracks which files have been uploaded to avoid duplicates
-- API connection is a placeholder — configure `accounting_api` in `config.json` when ready
+
+Enable it in `config.json`:
+
+```json
+{
+  "accounting_api": {
+    "company_id": "YOUR_COMPANY_ID",
+    "enabled": true
+  }
+}
+```
+
+Then set the Accounting API settings in `.env`:
+
+```
+ACCOUNTING_BASE_URL=https://api.example.com
+ACCOUNTING_SUBSCRIPTION_KEY=your_subscription_key_here
+ACCOUNTING_TOKEN=your_token_here
+# OR (optional) user/pass to fetch a 2h token via /api-global/v1/token
+ACCOUNTING_USER=your_user_here
+ACCOUNTING_PASSWORD=your_password_here
+```

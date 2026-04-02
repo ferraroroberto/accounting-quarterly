@@ -12,10 +12,31 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-FRANKFURTER_BASE = "https://api.frankfurter.dev"
+FRANKFURTER_BASES = [
+    # Official Frankfurter API endpoint (ECB-based).
+    "https://api.frankfurter.app",
+    # Legacy/alternative endpoint kept as a fallback.
+    "https://api.frankfurter.dev",
+]
 SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF"]
 
 _DB_PATH = Path(__file__).parent.parent / "data" / "accounting.db"
+
+
+def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30) -> requests.Response:
+    last_exc: Exception | None = None
+    for base in FRANKFURTER_BASES:
+        url = f"{base}/{path.lstrip('/')}"
+        try:
+            resp = requests.get(url, params=params, timeout=timeout_s)
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:
+            last_exc = exc
+            log.warning("⚠️ FX fetch failed via %s: %s", base, exc)
+            continue
+    assert last_exc is not None
+    raise last_exc
 
 
 def _get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
@@ -59,13 +80,12 @@ def fetch_rates_range(
     currencies = currencies or SUPPORTED_CURRENCIES
     to_param = ",".join(currencies)
 
-    url = f"{FRANKFURTER_BASE}/{start_date.isoformat()}..{end_date.isoformat()}"
+    path = f"{start_date.isoformat()}..{end_date.isoformat()}"
     params = {"from": "EUR", "to": to_param}
 
     log.info("ℹ️ Fetching FX rates from %s to %s for %s", start_date, end_date, to_param)
 
-    resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
+    resp = _get_with_fallback(path, params=params, timeout_s=30)
     data = resp.json()
 
     return data.get("rates", {})
@@ -82,11 +102,10 @@ def fetch_single_date(
     currencies = currencies or SUPPORTED_CURRENCIES
     to_param = ",".join(currencies)
 
-    url = f"{FRANKFURTER_BASE}/{rate_date.isoformat()}"
+    path = rate_date.isoformat()
     params = {"from": "EUR", "to": to_param}
 
-    resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
+    resp = _get_with_fallback(path, params=params, timeout_s=30)
     data = resp.json()
 
     return data.get("rates", {})

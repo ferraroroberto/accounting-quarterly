@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -24,6 +24,13 @@ class Payment(BaseModel):
     card_country: Optional[str] = None
     amount_original: Optional[float] = None
     fx_rate: Optional[float] = None
+    # Traceability fields (raw source snapshots / key Stripe IDs)
+    stripe_customer_id: Optional[str] = None
+    stripe_payment_intent_id: Optional[str] = None
+    stripe_balance_transaction_id: Optional[str] = None
+    stripe_invoice_id: Optional[str] = None
+    raw_source: Optional[dict[str, Any]] = None
+    raw_source_type: Optional[str] = None  # "stripe_api" | "stripe_csv" | etc.
 
     @field_validator("currency", mode="before")
     @classmethod

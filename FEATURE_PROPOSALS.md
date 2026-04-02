@@ -848,4 +848,458 @@ Specific known limitations to flag:
 
 ---
 
+### Feature 12: LLM Invoice OCR — Structured Extraction, Document Tracking & One-Click Tax Filing
+
+**Rationale:** The existing system uploads invoice files to an external accounting platform (IntegraLOOP/BILOOP) as a black box. This feature replaces that dependency with a local pipeline: invoices (PDF or image) are processed via Claude's multimodal API, structured data is extracted and stored in SQLite, and the resulting records are linked directly to the tax engine (Feature 11). The outcome is a fully self-contained system where every tax box in every quarterly filing is traceable back to a source document — with one-click report generation and filing readiness.
+
+---
+
+#### 12.1 Scope
+
+This feature handles **both directions** of invoicing:
+
+| Direction | Spanish term | Examples |
+|---|---|---|
+| **Emitted** | Facturas emitidas | Invoices you issue to coaching clients, newsletter subscribers, illustration commissioners |
+| **Received** | Facturas recibidas | Software subscriptions, contractor payments, professional services you purchase |
+
+And **all geographic regimes** relevant to a Spain-based autónomo:
+
+| Regime | Applies when | VAT on emitted | VAT on received |
+|---|---|---|---|
+| **Domestic (Spain)** | Both parties in Spain | 21% IVA repercutido | 21% IVA soportado (deductible) |
+| **Intra-EU B2B** | EU client/supplier with valid NIF-IVA | 0% — reverse charge (buyer self-assesses) | Reverse charge — you self-assess as both collected and deductible |
+| **Intra-EU B2C (OSS)** | EU individual (no NIF-IVA) | Buyer country VAT rate (via OSS) | N/A — individuals don't issue invoices |
+| **Extra-EU** | Non-EU client/supplier | 0% — export exempt | 0% — import, customs handles |
+| **IRPF retention** | Spain B2B professional services | Client withholds 15% (7% in first 3 years) from your invoice | You withhold 15% from contractor's invoice |
+
+---
+
+#### 12.2 LLM OCR Pipeline
+
+**Entry point:** `src/invoice_ocr.py`
+
+**Input:** A file path to a PDF or image (JPG, PNG, TIFF). PDFs are converted page-by-page to images using `pdf2image` before passing to the LLM.
+
+**LLM call:** Claude multimodal API (`claude-sonnet-4-6` for cost efficiency, `claude-opus-4-6` for ambiguous documents). The invoice image is base64-encoded and sent with a structured extraction prompt.
+
+**System prompt (stored as a constant in `src/invoice_ocr.py`):**
+
+```
+You are a specialist in Spanish and EU tax documents. Extract all relevant fields from the invoice image provided and return ONLY a valid JSON object. Do not include explanations or markdown — pure JSON only.
+
+Follow these rules strictly:
+- All monetary amounts must be converted to float (e.g. "1.234,56 €" → 1234.56)
+- Dates must be ISO format: YYYY-MM-DD
+- country must be ISO-2 code (ES, DE, FR, US, etc.)
+- vat_treatment must be one of: IVA_ES_21 | IVA_EU_B2B | IVA_EU_B2C_OSS | IVA_EXPORT | REVERSE_CHARGE_RECEIVED | EXEMPT | UNKNOWN
+- If a field is not present in the document, use null
+- confidence_score is your estimate (0.0–1.0) of how complete and accurate the extraction is
+- If you see the word "retención" or "IRPF", extract the rate and amount into irpf fields
+- For reverse charge invoices received from EU suppliers, set vat_self_assessed: true
+```
+
+**Expected JSON response schema:**
+
+```json
+{
+  "invoice_number": "2025-A-047",
+  "invoice_date": "2025-03-15",
+  "due_date": "2025-04-15",
+
+  "issuer": {
+    "name": "Acme Coaching SL",
+    "nif_cif_vat": "B12345678",
+    "address": "Calle Mayor 1, Madrid",
+    "country": "ES",
+    "email": "billing@acme.es"
+  },
+
+  "recipient": {
+    "name": "Roberto Ferraro",
+    "nif_cif_vat": "X1234567Z",
+    "address": "Barcelona, Spain",
+    "country": "ES",
+    "email": null
+  },
+
+  "line_items": [
+    {
+      "description": "Sesión de coaching individual — marzo 2025",
+      "quantity": 1,
+      "unit_price": 200.00,
+      "total": 200.00
+    }
+  ],
+
+  "base_imponible": 200.00,
+  "currency": "EUR",
+  "amount_original": null,
+  "fx_rate": null,
+
+  "vat_rate": 0.21,
+  "vat_amount": 42.00,
+  "vat_treatment": "IVA_ES_21",
+  "vat_self_assessed": false,
+
+  "irpf_retention_rate": 0.15,
+  "irpf_retention_amount": 30.00,
+
+  "total_gross": 242.00,
+  "total_net_payable": 212.00,
+
+  "document_language": "es",
+  "confidence_score": 0.96,
+  "extraction_notes": "Clear scan. IRPF retention visible at bottom of document."
+}
+```
+
+**Post-processing in `invoice_ocr.py`:**
+1. Validate JSON against a Pydantic model (`ExtractedInvoice`)
+2. If `confidence_score < 0.75`, flag for mandatory human review
+3. Convert `amount_original` to EUR using existing `src/fx_rates.py` if currency ≠ EUR
+4. Infer `direction` (EMITTED vs RECEIVED) from whether the autónomo's NIF appears as issuer or recipient — configurable via `config.json tax.nif`
+5. Compute `quarter` and `year` from `invoice_date`
+6. Compute document SHA-256 hash for deduplication
+
+---
+
+#### 12.3 Database Table: `processed_invoices`
+
+```sql
+CREATE TABLE IF NOT EXISTS processed_invoices (
+    -- Identity
+    id                      TEXT PRIMARY KEY,       -- UUID generated on insert
+    doc_hash                TEXT UNIQUE NOT NULL,   -- SHA-256 of file bytes (dedup key)
+    filename                TEXT NOT NULL,
+    file_path               TEXT NOT NULL,
+    direction               TEXT NOT NULL,          -- EMITTED | RECEIVED
+
+    -- LLM extraction metadata
+    processed_at            TEXT NOT NULL,          -- ISO datetime
+    llm_model               TEXT NOT NULL,          -- model ID used
+    confidence_score        REAL,                   -- 0.0–1.0
+    raw_llm_response        TEXT,                   -- full JSON string (audit)
+    extraction_notes        TEXT,                   -- LLM's own notes
+
+    -- Invoice identity
+    invoice_number          TEXT,
+    invoice_date            TEXT,                   -- YYYY-MM-DD
+    due_date                TEXT,
+
+    -- Parties
+    issuer_name             TEXT,
+    issuer_nif              TEXT,
+    issuer_country          TEXT,                   -- ISO-2
+    recipient_name          TEXT,
+    recipient_nif           TEXT,
+    recipient_country       TEXT,                   -- ISO-2
+
+    -- Amounts (always EUR after conversion)
+    base_imponible_eur      REAL,
+    vat_rate                REAL,
+    vat_amount_eur          REAL,
+    vat_self_assessed       INTEGER DEFAULT 0,      -- 1 = reverse charge received
+    irpf_retention_rate     REAL,
+    irpf_retention_eur      REAL,
+    total_gross_eur         REAL,
+    total_net_payable_eur   REAL,
+    currency_original       TEXT,
+    fx_rate                 REAL,
+
+    -- Tax classification
+    vat_treatment           TEXT,
+    -- IVA_ES_21 | IVA_EU_B2B | IVA_EU_B2C_OSS | IVA_EXPORT
+    -- REVERSE_CHARGE_RECEIVED | EXEMPT | UNKNOWN
+
+    -- Linkage to existing system
+    activity_type           TEXT,                   -- COACHING | NEWSLETTER | ILLUSTRATIONS | SHARED | OTHER
+    year                    INTEGER,
+    quarter                 INTEGER,
+    linked_transaction_id   TEXT,                   -- FK → transactions.id (Stripe match, nullable)
+
+    -- Workflow status
+    status                  TEXT DEFAULT 'EXTRACTED',
+    -- EXTRACTED → REVIEWED → CONFIRMED → FILED
+
+    review_notes            TEXT,
+    manually_corrected      INTEGER DEFAULT 0,      -- 1 = user edited extracted data
+    corrections_json        TEXT,                   -- JSON diff of manual changes
+
+    -- Timestamps
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+
+CREATE INDEX idx_proc_inv_quarter  ON processed_invoices(year, quarter);
+CREATE INDEX idx_proc_inv_direction ON processed_invoices(direction);
+CREATE INDEX idx_proc_inv_status   ON processed_invoices(status);
+CREATE INDEX idx_proc_inv_vat      ON processed_invoices(vat_treatment);
+```
+
+---
+
+#### 12.4 Tax Linkage: How Processed Invoices Feed Feature 11
+
+The tax engine (`src/tax_engine.py`) must query `processed_invoices` in addition to `transactions` when computing each model. The mapping is:
+
+**Modelo 303 (IVA trimestral):**
+
+| Invoice field | → | 303 box |
+|---|---|---|
+| Emitted, `IVA_ES_21`, `vat_amount_eur` | Box 03 | IVA repercutido |
+| Emitted, `IVA_ES_21`, `base_imponible_eur` | Box 01 | Base imponible interior |
+| Emitted, `IVA_EU_B2B`, `base_imponible_eur` | Box 10 | Entregas intracom. exentas (informative) |
+| Received, `vat_amount_eur` (Spain suppliers) | Box 28 | IVA soportado deducible |
+| Received, `vat_self_assessed = 1`, `vat_amount_eur` | Box 11+12 | Adquisiciones intracom. (both collected and deductible — net zero if fully deductible) |
+
+**Modelo 130 (IRPF trimestral):**
+
+| Invoice field | → | 130 box |
+|---|---|---|
+| Emitted, `base_imponible_eur` cumulative YTD | Box 01 | Ingresos computables |
+| Received, `base_imponible_eur` cumulative YTD | Box 02 | Gastos deducibles |
+| Emitted, `irpf_retention_eur` cumulative YTD | Box 07 | Retenciones soportadas |
+
+**Modelo 347 (annual, operations > €3,005.06):**
+- Group `processed_invoices` by counterparty NIF (issuer or recipient depending on direction)
+- Sum `base_imponible_eur` per counterparty per year
+- Report all where total > €3,005.06
+
+**Modelo 349 (intra-EU operations):**
+- All emitted invoices with `vat_treatment = IVA_EU_B2B` grouped by `recipient_nif`
+
+**OSS Return:**
+- All emitted invoices with `vat_treatment = IVA_EU_B2C_OSS` grouped by `recipient_country`
+- Plus existing Stripe transactions already classified as `OSS_EU` (from Feature 11)
+
+---
+
+#### 12.5 One-Click Tax Filing Readiness
+
+Add a `src/tax_reporter.py` module that assembles a complete tax filing package for a given quarter:
+
+```python
+def generate_filing_package(year: int, quarter: int, db_conn) -> FilingPackage:
+    """
+    Assembles all data needed to file a quarter's taxes.
+    Returns a FilingPackage with:
+      - modelo_303: Modelo303Result (from tax_engine)
+      - modelo_130: Modelo130Result (from tax_engine)
+      - modelo_349: Modelo349Result (if intra-EU operations exist)
+      - oss_return: OSSReturnResult (if OSS transactions exist)
+      - supporting_docs: list of processed_invoices used in computation
+      - completeness_check: CompletionReport (see below)
+      - generated_at: datetime
+    """
+
+class CompletionReport:
+    """Pre-flight check before the user marks a quarter as filed."""
+    unreviewed_invoices: int        # processed_invoices WHERE status = 'EXTRACTED'
+    low_confidence_invoices: int    # confidence_score < 0.75
+    missing_nif_eu_b2b: int         # IVA_EU_B2B without recipient_nif
+    unlinked_stripe_income: int     # Stripe transactions with no matching invoice
+    unknown_vat_treatments: int     # vat_treatment = 'UNKNOWN'
+    is_ready_to_file: bool          # True only if all above = 0
+    blocking_issues: list[str]
+    warnings: list[str]
+```
+
+**Output formats from `generate_filing_package()`:**
+1. **PDF summary report** — printable document showing all boxes, source invoices, and amounts (using `reportlab` or `weasyprint`)
+2. **Excel workbook** — one sheet per model, with invoice-level detail rows and summary totals (reusing `src/excel_exporter.py` pattern)
+3. **JSON export** — machine-readable, for programmatic submission or accountant tools
+4. **AEAT CSV** — formatted for direct import into Agencia Tributaria portal where supported (Modelo 347, OSS)
+
+---
+
+#### 12.6 UI Tab: "Invoice Processing" (replaces existing Invoice Upload tab)
+
+The new tab has four panels:
+
+**A. Upload & Process**
+
+- Drag-and-drop zone accepting PDF, JPG, PNG, TIFF (multiple files at once)
+- File deduplication: if `doc_hash` already in DB, show "Already processed on [date]" and skip
+- Progress bar during LLM extraction (per file)
+- Results preview: extracted fields shown in an editable form for immediate correction
+- "Confirm & Save" / "Reject & Discard" per document
+- Direction auto-detected but overridable (EMITTED / RECEIVED toggle)
+
+**B. Document Library**
+
+Filterable table of all processed invoices:
+
+```
+Filters: Year | Quarter | Direction | Status | VAT Treatment | Activity | Confidence
+
+Columns:
+  filename | date | direction | issuer/recipient | base (€) | VAT (€) | IRPF (€) | 
+  total (€) | vat_treatment | activity | status | confidence | actions
+```
+
+Actions per row:
+- **Edit** — open extracted data form, all fields editable, saves corrections to `corrections_json`
+- **View original** — open file in browser
+- **Link to Stripe** — manually match to a `transactions` record
+- **Mark as Confirmed** — moves status EXTRACTED → CONFIRMED
+- **Delete** — removes from DB (with confirmation)
+
+Color coding: red = low confidence or UNKNOWN VAT treatment, amber = EXTRACTED (awaiting review), green = CONFIRMED or FILED.
+
+**C. Quarter Readiness Dashboard**
+
+Quarter selector → runs `generate_filing_package()` and shows:
+
+- `CompletionReport` as a checklist (green/red per item)
+- Summary of each model's computed result:
+  ```
+  Modelo 303  Q1 2025  →  IVA a ingresar: €1,247.30   [Ready ✓]
+  Modelo 130  Q1 2025  →  IRPF a ingresar: €420.00    [Ready ✓]
+  Modelo 349  Q1 2025  →  2 EU clients, €3,400 ops    [Ready ✓]
+  OSS Return  Q1 2025  →  3 countries, €182 VAT        [1 issue ⚠]
+  ```
+- "Generate Filing Package" button → produces PDF + Excel + JSON exports
+
+**D. Filing History**
+
+Table of all quarters with their filing status, amounts paid, and package download links. Links to `tax_filing_status` table (from Feature 11).
+
+---
+
+#### 12.7 Stripe-to-Invoice Reconciliation
+
+Emitted invoices should correspond to Stripe transactions (income). The system should detect and surface gaps:
+
+**Auto-matching logic** (in `src/reconciliation.py`):
+1. For each EMITTED invoice in a quarter, attempt to match a Stripe transaction by:
+   - Amount within ±2% tolerance (to account for rounding / partial payments)
+   - Date within ±7 days
+   - Email match if both present
+2. If matched: set `linked_transaction_id`; mark the Stripe transaction as `invoice_matched = 1`
+3. Unmatched emitted invoices → flag as "invoice without Stripe payment" (possible bank transfer)
+4. Unmatched Stripe transactions → flag as "Stripe income without invoice" (missing invoice, compliance risk)
+
+This reconciliation view is shown in the Quarter Readiness dashboard as a reconciliation table.
+
+---
+
+#### 12.8 IRPF Retention Workflow
+
+For **emitted invoices to Spanish professional clients**, the recipient withholds 15% IRPF (7% in year 1-3). This amount does not arrive in Stripe — the client pays `total - IRPF retention` and later declares the withheld amount on their behalf.
+
+The system must:
+1. Track `irpf_retention_eur` on each emitted invoice (extracted by LLM)
+2. Accumulate YTD retenciones soportadas → feeds Modelo 130 Box 07
+3. At year end, the user should receive a **Certificado de Retenciones** from each client — upload these to verify the accumulated figure matches
+
+For **received invoices from Spanish contractors**, the autónomo withholds 15% IRPF:
+1. Track `irpf_retention_eur` on each received invoice
+2. These feed Modelo 111 (not modelled in this system — flag as "file with gestor")
+
+---
+
+#### 12.9 New Module Structure
+
+**Files to create:**
+- `src/invoice_ocr.py` — LLM call, JSON parsing, Pydantic validation, dedup hash
+- `src/invoice_models.py` — Pydantic: `ExtractedInvoice`, `ProcessedInvoice`, `FilingPackage`, `CompletionReport`
+- `src/reconciliation.py` — Stripe-to-invoice matching logic
+- `src/tax_reporter.py` — `generate_filing_package()`, PDF/Excel/JSON/CSV export
+- `app/invoice_processing.py` — Streamlit tab (replaces `app/invoice_upload.py`)
+- `tests/test_invoice_ocr.py` — unit tests with mocked LLM responses
+- `tests/test_reconciliation.py` — matching logic tests
+
+**Files to modify:**
+- `src/database.py` — add `processed_invoices` table; add `invoice_matched` column to `transactions`
+- `src/tax_engine.py` (Feature 11) — extend all `compute_modelo_*` functions to query `processed_invoices`
+- `app/streamlit_app.py` — replace Invoice Upload tab with Invoice Processing tab
+- `requirements.txt` — add: `anthropic`, `pdf2image`, `Pillow`, `reportlab`
+- `config.json.example` — add `invoice_ocr` section (see below)
+
+**New config section:**
+```json
+{
+  "invoice_ocr": {
+    "enabled": true,
+    "llm_model": "claude-sonnet-4-6",
+    "high_confidence_threshold": 0.85,
+    "review_required_below": 0.75,
+    "auto_confirm_above": 0.95,
+    "pdf_dpi": 200,
+    "supported_formats": ["pdf", "jpg", "jpeg", "png", "tiff"],
+    "storage_path": "data/invoices/processed/"
+  }
+}
+```
+
+---
+
+#### 12.10 Key Test Cases for `test_invoice_ocr.py`
+
+```python
+# LLM extraction
+- Spain invoice with IRPF → irpf_retention_rate=0.15, vat_treatment=IVA_ES_21
+- Spain invoice first 3 years → irpf_retention_rate=0.07
+- EU B2B invoice → vat_treatment=IVA_EU_B2B, vat_amount=0, recipient_nif present
+- EU B2B received (reverse charge) → vat_self_assessed=True, vat_amount > 0
+- Non-EU invoice → vat_treatment=IVA_EXPORT, vat_amount=0
+- USD invoice → currency_original=USD, fx_rate populated, base_imponible_eur converted
+- Duplicate upload (same file) → dedup by doc_hash, no re-processing
+- Low confidence (<0.75) → status=EXTRACTED, flagged for review, not auto-confirmed
+- Malformed LLM JSON → raise InvoiceExtractionError, log raw response
+
+# Reconciliation
+- Invoice amount matches Stripe charge ±2% → linked_transaction_id populated
+- Invoice date 5 days after Stripe charge → still matched
+- Invoice with no Stripe match → flagged as unreconciled
+- Stripe transaction with no invoice → flagged as missing invoice
+
+# Tax linkage (integration tests)
+- Q with only Spain invoices → 303 Box 01/03 matches sum of IVA_ES_21 invoices
+- Q with EU B2B received → Box 11/12 show reverse charge (net zero)
+- Q with retenciones → 130 Box 07 = sum of irpf_retention_eur from emitted invoices
+- Filing package completeness check → blocks when low-confidence invoices present
+```
+
+---
+
+#### 12.11 End-to-End Flow Summary
+
+```
+Invoice file (PDF/image)
+    ↓
+invoice_ocr.py
+    → SHA-256 dedup check → skip if already processed
+    → pdf2image conversion (if PDF)
+    → Claude multimodal API call
+    → JSON parse + Pydantic validation
+    → FX conversion if non-EUR (src/fx_rates.py)
+    → direction inference (issuer NIF = autónomo NIF → EMITTED)
+    ↓
+processed_invoices (SQLite) — status: EXTRACTED
+    ↓
+Human review in Invoice Processing tab
+    → edit fields if needed
+    → mark as CONFIRMED
+    ↓
+reconciliation.py
+    → match to transactions table (Stripe income)
+    → flag unmatched invoices and transactions
+    ↓
+tax_engine.py (Feature 11)
+    → query processed_invoices + transactions together
+    → compute Modelo 303, 130, 347, 349, OSS
+    ↓
+tax_reporter.py
+    → CompletionReport (pre-flight check)
+    → generate_filing_package()
+    → PDF + Excel + JSON + AEAT CSV outputs
+    ↓
+User files with AEAT / sends package to gestor
+    → mark quarter as FILED in tax_filing_status
+```
+
+---
+
 *Generated by Claude Code on 2026-04-02*

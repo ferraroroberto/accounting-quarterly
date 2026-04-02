@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -21,6 +21,16 @@ class Payment(BaseModel):
     payment_type_meta: Optional[str] = None
     event_api_id_meta: Optional[str] = None
     email_meta: Optional[str] = None
+    card_country: Optional[str] = None
+    amount_original: Optional[float] = None
+    fx_rate: Optional[float] = None
+    # Traceability fields (raw source snapshots / key Stripe IDs)
+    stripe_customer_id: Optional[str] = None
+    stripe_payment_intent_id: Optional[str] = None
+    stripe_balance_transaction_id: Optional[str] = None
+    stripe_invoice_id: Optional[str] = None
+    raw_source: Optional[dict[str, Any]] = None
+    raw_source_type: Optional[str] = None  # "stripe_api" | "stripe_csv" | etc.
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -126,27 +136,3 @@ class MonthlyAggregation(BaseModel):
         return date(self.year, self.month, 1).strftime("%b %Y")
 
 
-class ValidationResult(BaseModel):
-    period_start: str
-    period_end: str
-    total_transactions: int
-    classification_errors: int
-    geo_errors: int
-    coaching_actual: float
-    newsletter_actual: float
-    illustrations_actual: float
-    coaching_fee_actual: float
-    newsletter_fee_actual: float
-    illustrations_fee_actual: float
-    total_income_actual: float
-    total_fee_actual: float
-    coaching_expected: float
-    newsletter_expected: float
-    illustrations_expected: float
-    total_income_expected: float
-    total_fee_expected: float
-    regional_actual: dict
-    regional_expected: dict
-    passed: bool
-    discrepancies: list[dict]
-    unclassified_ids: list[str]

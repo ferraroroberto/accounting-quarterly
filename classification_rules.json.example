@@ -1,0 +1,66 @@
+{
+  "activity_rules": [
+    {
+      "priority": 1,
+      "name": "empty_description_default",
+      "activity_type": "COACHING",
+      "match_type": "empty_description",
+      "description": "Empty or null description defaults to COACHING"
+    },
+    {
+      "priority": 2,
+      "name": "luma_registration",
+      "activity_type": "COACHING",
+      "match_type": "payment_type",
+      "match_value": "registration",
+      "description": "Luma registration payment type"
+    },
+    {
+      "priority": 3,
+      "name": "illustrations_keywords",
+      "activity_type": "ILLUSTRATIONS",
+      "match_type": "description_contains",
+      "keywords": ["charge for"],
+      "description": "Description contains illustration-related keywords"
+    },
+    {
+      "priority": 4,
+      "name": "newsletter_keywords",
+      "activity_type": "NEWSLETTER",
+      "match_type": "description_contains",
+      "keywords": ["subscription"],
+      "description": "Description contains newsletter-related keywords"
+    },
+    {
+      "priority": 5,
+      "name": "coaching_keywords",
+      "activity_type": "COACHING",
+      "match_type": "description_contains",
+      "keywords": [
+        "calendly",
+        "coach",
+        "discovery session",
+        "consulting",
+        "master virtual meetings",
+        "virtual meetings"
+      ],
+      "description": "Description contains coaching-related keywords"
+    }
+  ],
+  "geographic_rules": {
+    "defaults": {
+      "eur_default": "SPAIN",
+      "eur_newsletter_default": "EU_NOT_SPAIN",
+      "non_eur_default": "OUTSIDE_EU"
+    },
+    "geographic_overrides": {
+      "client name as it appears in description": "EU_NOT_SPAIN",
+      "another client name": "OUTSIDE_EU",
+      "spanish client name": "SPAIN"
+    },
+    "email_overrides": {
+      "client@example.com": "EU_NOT_SPAIN",
+      "another@example.com": "OUTSIDE_EU"
+    }
+  }
+}

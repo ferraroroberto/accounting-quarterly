@@ -1,38 +1,67 @@
-# Automation Monorepo
+# Stripe Accounting Quarterly (Streamlit)
 
 ## 🧭 Context
-**WHAT**: A monolithic repository containing various automation tools, scripts, and assistants.
-**WHY**: To streamline personal and professional workflows across different domains (Audio, Email, Notion, LinkedIn, etc.).
-**STACK**: Python 3.x (primary), Batch/Shell scripts, Windows 10+, PowerShell 7+.
+**WHAT**: A Streamlit dashboard + Python backend that classifies Stripe payments and generates quarterly Excel reports.
+
+**WHY**: Replace manual accounting spreadsheets with repeatable classification rules, FX conversion to EUR, and one-click exports.
+
+**STACK**: Python 3.x, Streamlit, Pandas, Pydantic, Plotly, SQLite, Pytest. Windows-first (`launch_app.bat`), PowerShell-friendly.
 
 ## 🗺️ Codebase Map
-- `audio/`, `video/`, `image/`, `text/`: Media processing tools.
-- `email/`, `google/`, `notion/`, `linkedin/`: API integrations and platform automations.
-- `system/`: System-level maintenance and setup.
-- `html/`: Small web utilities.
-- `.venv`: Local virtual environment (DO NOT TOUCH).
+- `app/`: Streamlit UI (tab modules, each exposes `render()`).
+  - `streamlit_app.py`: entry point; sets page config and tabs.
+  - `data_loader.py`: cached load/classify pipeline helpers.
+- `src/`: business logic (classification, aggregation, Stripe API wrapper, FX rates, database, config, logging).
+- `tests/`: pytest suite.
+- `data/`: runtime data (CSV inputs, SQLite db, invoices, generated outputs) — mostly git-ignored.
+- `tmp/`: scratch space / local artifacts.
+- `.venv/`: local virtual environment (**do not edit**).
 
-## 🚀 Workflow (The "HOW")
-1.  **Plan**: Before coding, propose a brief implementation plan (files to change, strategy).
-2.  **Approve**: Wait for user confirmation.
-3.  **Implement**: specific, scoped changes.
-4.  **Test**: Verify using the local `.venv` interpreter directly.
+## 🚀 Workflow
+1. **Plan**: state intended changes + impacted files.
+2. **Implement**: keep changes small and scoped.
+3. **Verify**:
+   - Run the app with the repo’s interpreter (no activation): `.\.venv\Scripts\python.exe -m streamlit run app\streamlit_app.py`
+   - Or use `launch_app.bat`
+   - Run tests: `.\.venv\Scripts\python.exe -m pytest -v`
 
-## ⚖️ Core Principles (The "Ten Commandments")
-1.  **Config First**: Use JSON for config, `.env` for secrets. No hardcoded paths/creds.
-2.  **Logging**: Use `logging` module with emojis (ℹ️, ⚠️, ❌). Never use `print()`.
-3.  **Naming**: Files/Functions=`snake_case`, Classes=`PascalCase`, Constants=`UPPER_CASE`.
-4.  **No Secrets**: Never commit `.env` or credentials.
-5.  **Direct Execution**: Never "activate" venv. Use `& .\.venv\Scripts\python.exe`.
-6.  **Scope Discipline**: Do only what is asked. No "nice-to-haves".
-7.  **Dependencies**: Pin versions. Use existing `.venv`.
-8.  **PowerShell**: Use PS 7+ syntax (`&&`, chaining).
-9.  **Imports**: Standard Lib → Third Party → Local.
-10. **Error Handling**: Fail fast with clear error messages.
+## ⚖️ Project Standards
+- **Config & secrets**
+  - `config.json` is runtime config (use `config.json.example` as template).
+  - Secrets go in `.env` (use `.env.example`), never commit real keys.
+  - Read secrets via `src.config.get_stripe_api_key()` / environment variables.
+- **Logging**
+  - Use `src.logger.get_logger(__name__)`.
+  - Do not use `print()`. Prefer `log.info(...)`, `log.warning(...)`, `log.error(...)`.
+- **Imports**
+  - Standard library → third party → local (`app.*` / `src.*`).
+- **Naming**
+  - Files/functions: `snake_case`
+  - Classes: `PascalCase`
+  - Constants: `UPPER_CASE`
+- **Error handling**
+  - Fail fast with clear messages (raise `ConfigError` etc.), show user-facing errors via `st.error(...)` where appropriate.
 
-## 📚 Developer Reference (Progressive Disclosure)
-- **[AGENTS_PYTHON.md](AGENTS_PYTHON.md)**: Detailed Python standards, snippets, and patterns.
-- **[AGENTS_POWERSHELL.md](AGENTS_POWERSHELL.md)**: PowerShell syntax, file ops, and troubleshooting.
-- **[AGENTS_STRUCTURE.md](AGENTS_STRUCTURE.md)**: Rules for organizing files and refactoring.
-- **[AGENTS_CLI.md](AGENTS_CLI.md)**: Guide for building CLI tools.
-- **[AGENTS_PR.md](AGENTS_PR.md)**: Testing and Pull Request templates.
+## 🎛️ Streamlit Style Guide (this repo)
+- **Architecture**
+  - Keep `app/streamlit_app.py` as orchestration only (page config, sidebar, tabs, wiring).
+  - Each tab module in `app/` exposes a single `render()` and owns its UI.
+  - Put business logic in `src/`; keep UI modules thin.
+- **State**
+  - Use `st.session_state` for UI state and cross-tab cached results.
+  - Prefer deterministic widget keys (`key="tb_year"`) and avoid implicit widget keys.
+- **Caching**
+  - Use `@st.cache_data` for pure-ish data transforms and IO-heavy loads (see `app/data_loader.py`).
+  - Provide TTLs for time-sensitive data; expose an explicit “Clear Cache” action that calls `st.cache_data.clear()`.
+- **Layout**
+  - Use `st.columns(...)` and `st.tabs(...)` for structure.
+  - Prefer `st.dataframe(..., width="stretch")` and `st.plotly_chart(..., width="stretch")`.
+  - **Do not use** `use_container_width` (Streamlit deprecated it); use `width="stretch"` / `width="content"`.
+- **UX**
+  - Use `st.spinner(...)` for long operations, `st.progress(...)` for loops.
+  - Use `st.info/st.warning/st.error/st.success` for outcomes.
+  - Use `st.rerun()` after state-changing actions that should immediately refresh UI.
+
+## 🔒 Safety / Repo Hygiene
+- Never modify `.venv/`.
+- Never commit real `.env` values, API keys, or any `data/` artifacts that contain sensitive financial data.

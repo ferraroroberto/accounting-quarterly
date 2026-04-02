@@ -110,7 +110,7 @@ def render():
 
                 st.dataframe(
                     data_rows,
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config={
                         "Coaching": st.column_config.NumberColumn("Coaching EUR", format="%.2f"),

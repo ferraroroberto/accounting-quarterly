@@ -170,7 +170,7 @@ Classification priority order:
             edited_geo = st.data_editor(
                 pd.DataFrame(geo_rows) if geo_rows else pd.DataFrame(columns=["Key", "Region"]),
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 key="geo_overrides_editor",
             )
             if st.button("Save name overrides", key="save_name_ov"):
@@ -191,7 +191,7 @@ Classification priority order:
             edited_email = st.data_editor(
                 pd.DataFrame(email_rows) if email_rows else pd.DataFrame(columns=["Email", "Region"]),
                 num_rows="dynamic",
-                use_container_width=True,
+                width="stretch",
                 key="email_overrides_editor",
             )
             if st.button("Save email overrides", key="save_email_ov"):
@@ -273,12 +273,22 @@ geographic classification instead of manual overrides.
         c1, c2 = st.columns(2)
         input_mode = c1.selectbox(
             "Input mode",
-            ["csv", "api"],
-            index=0 if app_cfg.get("input_mode") == "csv" else 1,
+            ["api"],
+            index=0,
             key="app_input_mode",
+            help="This app is configured to always load transactions from the Stripe API.",
         )
-        csv_path_old = st.text_input("CSV path (with Currency col)", app_cfg.get("csv_path", "tmp/unified_payments_all_old.csv"), key="app_csv_old")
-        csv_path_new = st.text_input("CSV path (without Currency col)", app_cfg.get("csv_path_new", "tmp/unified_payments_all.csv"), key="app_csv_new")
+        st.caption("CSV paths are kept for backwards compatibility but are not used in API mode.")
+        csv_path_old = st.text_input(
+            "CSV path (legacy, not used)",
+            app_cfg.get("csv_path", "tmp/unified_payments_all_old.csv"),
+            key="app_csv_old",
+        )
+        csv_path_new = st.text_input(
+            "CSV path new (legacy, not used)",
+            app_cfg.get("csv_path_new", "tmp/unified_payments_all.csv"),
+            key="app_csv_new",
+        )
 
         if st.button("Save App Settings", type="primary", key="save_app"):
             cfg["app"]["input_mode"] = input_mode

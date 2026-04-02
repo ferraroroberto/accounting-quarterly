@@ -34,15 +34,8 @@ with st.sidebar:
     st.markdown("---")
     cfg = load_config()
     app_cfg = cfg.get("app", {})
-    input_mode = app_cfg.get("input_mode", "csv")
-    st.markdown(f"**Data source:** `{input_mode.upper()}`")
-    if input_mode == "csv":
-        csv_old = app_cfg.get("csv_path", "")
-        csv_new = app_cfg.get("csv_path_new", "")
-        if csv_old:
-            st.caption(f"CSV 1: `{csv_old}`")
-        if csv_new:
-            st.caption(f"CSV 2: `{csv_new}`")
+    st.markdown("**Data source:** `API`")
+    st.caption("Stripe transactions are loaded live from the Stripe API.")
     fx_count = get_rate_count()
     st.caption(f"FX rates stored: {fx_count}")
     st.caption("v2.1")
@@ -77,10 +70,8 @@ with tab_welcome:
     data_col1, data_col2 = st.columns(2)
     with data_col1:
         st.markdown(
-            "**Stripe transactions** are read from CSV files placed in "
-            "`data/raw/` (paths configured in the Configuration tab). "
-            "Alternatively, enable API mode to fetch live charges directly "
-            "from the Stripe API."
+            "**Stripe transactions** are fetched live from the Stripe API "
+            "(API key configured in the Configuration tab)."
         )
     with data_col2:
         st.markdown(

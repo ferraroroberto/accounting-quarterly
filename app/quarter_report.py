@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import tempfile
 from datetime import datetime
-from io import BytesIO
 
 import pandas as pd
 import streamlit as st

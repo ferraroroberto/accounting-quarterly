@@ -264,6 +264,7 @@ def load_classified_payments(
     """
     conn = _get_connection(db_path)
     try:
+        _ensure_transactions_schema(conn)
         query = "SELECT * FROM transactions WHERE 1=1"
         params: list = []
         if start_date:

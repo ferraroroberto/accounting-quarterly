@@ -85,7 +85,11 @@ class AccountingAPIClient:
 
         ctype = (resp.headers.get("content-type") or "").lower()
         if "application/json" in ctype:
-            return resp.json()
+            payload = resp.json()
+            if isinstance(payload, dict) and payload.get("status") == "KO":
+                msg = payload.get("message", "")
+                raise AccountingAPIError(f"Accounting API returned KO: {msg}")
+            return payload
         return resp.content
 
     def get_token(self, *, cif: Optional[str] = None, code: Optional[str] = None) -> str:

@@ -18,6 +18,14 @@ This is a **Python/Streamlit accounting automation system** for a freelancer (Sp
 
 **Tech stack:** Python 3, SQLite, Pydantic 2, Streamlit, Plotly, Pandas, Openpyxl, Stripe SDK, Pytest
 
+**Operational context (from planning conversation):**
+- Primary income comes through **Stripe** (coaching sessions, newsletter subscriptions, illustration commissions) with some additional **manual B2B invoices**
+- The autónomo has been operating for **2+ years** — past the 3-year first-activity threshold, so the applicable IRPF retention rate on invoices to Spanish professional clients is **15%** (not 7%)
+- Current workflow: Stripe transactions are exported to a gestor (IntegraLOOP/BILOOP) who creates **aggregate invoices grouping charges by activity type × geography** for IVA accounting — this maps exactly onto the system's existing classification dimensions
+- The gestor files all quarterly (303, 130, 349) and annual (390, 347, 100) tax models, charging **€90/month (€1,080/year)**. After 2 years the setup is routine for them — the marginal effort on their side is low
+- The system has **2+ years of clean, validated historical data**, making it a credible baseline for independent filing
+- **Key insight:** Stripe payment confirmations are **not Spanish facturas** — they lack NIF and a proper IVA breakdown. The gestor's aggregate entry is an accounting record for IVA purposes, not a customer-facing invoice. This distinction drives the design of Features 11, 12, and 13
+
 ---
 
 ## Feature Proposals
@@ -27,6 +35,8 @@ This is a **Python/Streamlit accounting automation system** for a freelancer (Sp
 ### Feature 1: Expense Tracking Module
 
 **Rationale:** The system currently tracks only income. For meaningful profit/loss analysis, expenses must be recorded alongside income. This is the single highest-value practical gap.
+
+> **Context from planning:** Expense data is the only significant input the system cannot derive from Stripe. It is a hard dependency for two critical tax computations: **Modelo 130 Box 02** (gastos deducibles YTD, which reduces the IRPF advance payment) and **Modelo 303 Box 28** (IVA soportado deducible on purchases). Without this feature, the tax engine overstates taxable income and cannot compute deductible VAT. Currently the gestor manages this data — building Feature 1 is the prerequisite that unlocks independent quarterly filing. It should be implemented before Feature 11.
 
 **What to build:**
 
@@ -157,6 +167,8 @@ Option B — **APScheduler embedded in Streamlit** (background thread):
 
 **Rationale:** For a freelancer working with an accounting partner, proactive notifications are more useful than a dashboard that requires manual checking.
 
+> **Context from planning:** One concrete service the gestor provides today is deadline awareness — they file on time so the autónomo never has to track dates. When going independent, **late filing penalties** (recargos: 5% under 3 months, 10% under 6, 15% under 12, 20% + interest beyond 12 months) become the autónomo's direct risk. The tax calendar (Feature 11) tracks deadlines; this feature closes the loop by making them push rather than pull. The single most important alert is "filing due in 15 days" for Modelos 303 and 130.
+
 **What to build:**
 
 Add a `src/notifier.py` module with email sending capability (SMTP or SendGrid API).
@@ -181,9 +193,11 @@ Add a `src/notifier.py` module with email sending capability (SMTP or SendGrid A
 
 ---
 
-### Feature 5: VAT / Tax Compliance Reporter
+### Feature 5: VAT / Tax Compliance Reporter *(preliminary sketch — superseded by Feature 11)*
 
 **Rationale:** Spanish freelancers (autónomos) must file quarterly VAT (IVA) returns (Modelo 303) and annual income summaries. This system already has the data needed — it just needs to compute the right figures.
+
+> **Context from planning:** This feature was the initial sketch of the tax computation idea. It was later expanded substantially into Feature 11, which covers all applicable models (303, 130, 390, 347, 349, OSS) with full box-level detail, data model additions, and integration with the invoice OCR pipeline (Feature 12). If implementing from scratch, go directly to Feature 11 and skip this section. Feature 5 is retained here only for continuity of the design record.
 
 **What to build:**
 
@@ -300,6 +314,8 @@ customer_view (SQLite view, not a table):
 
 **Rationale:** Classification overrides and rule changes are currently not tracked — there is no record of who changed what and why. For accounting purposes, an audit trail is both good practice and (in Spain) potentially legally required.
 
+> **Context from planning:** When a gestor manages your accounting, they are the implicit audit trail — if AEAT questions a figure, the gestor has records of every decision. Going independent removes that buffer. If AEAT issues a *requerimiento* (information request), the system's audit log becomes the evidence: which rule classified a transaction, whether it was manually overridden, and why. This feature gains importance specifically in the context of replacing the gestor, not just as a general good practice.
+
 **What to build:**
 
 Add an `audit_log` table and a `src/audit.py` module.
@@ -404,18 +420,35 @@ Forecast for Q2 2026:
 
 ## Implementation Priority Matrix
 
-| # | Feature | Practical Value | Educational Value | Complexity | Suggested Order |
-|---|---|---|---|---|---|
-| 1 | Expense Tracking | High | Medium | Low | **1st** |
-| 8 | Audit Trail | High | High | Low | **2nd** |
-| 3 | Scheduled Sync | High | Medium | Medium | **3rd** |
-| 5 | VAT/Tax Reporter | High | High | Medium | **4th** |
-| 2 | AI Classification | Medium | Very High | Medium | **5th** |
-| 6 | REST API Layer | Medium | Very High | Medium | **6th** |
-| 4 | Email Alerts | Medium | Medium | Low | **7th** |
-| 7 | Customer Analytics | Medium | High | Medium | **8th** |
-| 10 | Forecasting | Medium | High | Medium | **9th** |
-| 9 | Multi-Source Import | Low | High | High | **10th** |
+The order below reflects the **gestor-replacement goal** established during planning: file quarterly taxes independently from Q2 2026, keep gestor only for annual Renta.
+
+**Phase 1 — Minimum viable independence (build before cancelling gestor):**
+
+| # | Feature | Why it's blocking | Effort |
+|---|---|---|---|
+| 1 | Expense Tracking | Required for Modelo 130 Box 02 and 303 Box 28 — no independent filing without this | Low |
+| 11 | Tax Obligations Suite | Computes all quarterly filings; tax calendar; integrates with expenses | Medium |
+| 12 | Invoice OCR | Replaces IntegraLOOP; tracks B2B invoices and supplier receipts for deductible IVA | High |
+| 8 | Audit Trail | Legal protection when self-filing — replaces gestor's implicit record-keeping | Low |
+| 4 | Email Alerts | Replaces gestor's deadline awareness; late filing penalties are now your risk | Low |
+
+**Phase 2 — Operational polish (after first independent quarter):**
+
+| # | Feature | Practical Value | Educational Value | Complexity |
+|---|---|---|---|---|
+| 13 | AEAT Filing Assistant | Guided + file-upload for 347/349; removes final friction | High | Medium |
+| 3 | Scheduled Sync | Keeps DB fresh without manual intervention | High | Medium |
+| 2 | AI Classification | Resolves UNKNOWN transactions automatically | Medium | Very High |
+| 10 | Forecasting | Tax provision planning; what-if scenarios | Medium | High |
+
+**Phase 3 — Nice to have:**
+
+| # | Feature | Notes |
+|---|---|---|
+| 6 | REST API Layer | Useful if integrating with other tools; great learning project |
+| 7 | Customer Analytics | Business intelligence; LTV, retention, churn |
+| 9 | Multi-Source Import | Only if income sources beyond Stripe exist |
+| 5 | VAT/Tax Reporter | Superseded by Feature 11 — skip |
 
 ---
 
@@ -455,6 +488,14 @@ You are implementing a new feature for an existing Python/Streamlit accounting a
 ### Feature 11: Spanish Autónomo — Full Tax Obligations Suite
 
 **Rationale:** A Spain-based freelancer (autónomo) has a fixed calendar of mandatory tax filings with the Agencia Tributaria. All the raw data needed to compute these obligations is already in the system (income by geography, activity, VAT treatment, FX-converted amounts). This feature turns the system into a tax preparation assistant — it does not replace an accountant but eliminates the data-gathering step and pre-fills every box that can be computed automatically.
+
+> **Context from planning:** The system's classification dimensions (activity type × geography) are not accidental — they map directly onto IVA declaration requirements. The gestor's aggregate invoices group Stripe charges by exactly these dimensions because that is what Modelo 303 needs. This means the tax engine is largely a thin aggregation layer on top of already-classified data, not a new data model.
+>
+> Concretely: the quarterly filings (303, 130) are **mechanical once the numbers exist**. The gestor's active work per quarter is likely 30–50 minutes of form-filling after receiving the Stripe export. The research shows this is the clearest case for replacement — low error risk, all inputs already in the system.
+>
+> **IRPF retention rate:** The autónomo is past their first 3 years of professional activity. Hard-code `irpf_retention_rate: 0.15` as the default in `config.json` (not 0.07). The UI should still make this editable.
+>
+> **Modelo 100 (Renta) is explicitly out of scope** for this feature. It requires annual income from all sources, personal deductions, and planning judgment that a gestor adds genuine value on. The recommended approach is: use this system for all quarterly filings, retain a gestor engagement (€150–200/year, not a monthly retainer) for the Renta only.
 
 ---
 
@@ -851,6 +892,15 @@ Specific known limitations to flag:
 ### Feature 12: LLM Invoice OCR — Structured Extraction, Document Tracking & One-Click Tax Filing
 
 **Rationale:** The existing system uploads invoice files to an external accounting platform (IntegraLOOP/BILOOP) as a black box. This feature replaces that dependency with a local pipeline: invoices (PDF or image) are processed via Claude's multimodal API, structured data is extracted and stored in SQLite, and the resulting records are linked directly to the tax engine (Feature 11). The outcome is a fully self-contained system where every tax box in every quarterly filing is traceable back to a source document — with one-click report generation and filing readiness.
+
+> **Context from planning:** A critical architectural distinction drove this design. **Stripe payment confirmations are not Spanish facturas.** They lack NIF, a proper IVA breakdown in AEAT format, and other mandatory fields. The gestor has been treating Stripe transactions as source data and creating an **aggregate accounting entry** (asiento resumen or factura recapitulativa) for IVA purposes, grouped by activity type × geography. This is standard practice for digital/ecommerce businesses in Spain and is legally valid.
+>
+> This means the invoice OCR pipeline serves a **different population of documents** than the Stripe data:
+> - **Stripe transactions** → flow through the tax engine via transaction classification (Feature 11). No OCR needed.
+> - **B2B invoices you issue manually** (coaching to companies, illustration commissions) → OCR extracts structured data; these are the genuine facturas that need tracking
+> - **Supplier invoices you receive** (SaaS tools, contractors, professional services) → OCR extracts IVA soportado for Modelo 303 Box 28 and gastos deducibles for Modelo 130 Box 02
+>
+> The `CompletionReport` pre-flight check should therefore **not block** on missing invoices for Stripe-sourced income — it should only flag missing invoices for manually-issued B2B transactions where a factura is legally required.
 
 ---
 
@@ -1450,6 +1500,16 @@ The learning investment is real but bounded. The documentation produced by build
 
 **Feasibility verdict upfront:** Fully unattended, API-driven filing is **not feasible** for most models. AEAT does not publish REST or SOAP APIs for autónomos filing Modelos 303, 130, 349, or 347. What IS feasible — and genuinely valuable — is a three-tier approach: (1) guided step-by-step assistant that navigates the user through AEAT's web portal, (2) file-based auto-upload for models that accept it (347, 349, OSS/369), and (3) Playwright browser automation as an optional advanced layer for the technically confident. This is still a major time saving; the hard part is always computing the numbers and knowing what to enter — this system already does that.
 
+> **Context from planning:** The three-tier design emerged from direct research into AEAT's technical interfaces. Findings:
+> - AEAT provides official SOAP web services only for **SII/Verifactu** (invoice records), not for periodic tax return submission
+> - **Modelo 347 and 349 officially accept BOE text file uploads** — these are fully automatable (Tier 2)
+> - **Modelos 303 and 130 have no file upload or API** — web form only, making them candidates for either Tier 1 (guided) or Tier 3 (Playwright)
+> - The `aeat-web-services` Python library on PyPI covers SII/Verifactu SOAP calls but not form submission
+> - No battle-tested Selenium/Playwright implementations for AEAT form automation were found in public repositories — Tier 3 is genuinely experimental
+> - The `requests-pkcs12` library enables FNMT `.p12` certificate use in Python for SOAP calls; Playwright can use extracted PEM files as client certificates against AEAT's HTTPS endpoints
+>
+> **Practical conclusion:** The value of this feature is not removing the final click — it is ensuring the autónomo arrives at the AEAT form already knowing every number to enter, in the correct order, with one-click clipboard copy. That eliminates the transcription risk and the "where do I find that figure?" friction that currently makes the gestor feel necessary.
+
 ---
 
 #### 13.1 What AEAT Actually Offers Programmatically
@@ -1775,6 +1835,130 @@ Specific warnings to display:
 | Filing archive + confirmation UI | 0.5 days | Low | — |
 
 **Recommended scope:** Build Tier 1 and Tier 2 first (4 days total). They deliver 90% of the value. Tier 3 is an optional upgrade for the user who wants to remove the last manual step — but a single human confirmation click before submitting a tax return is arguably not a bad thing to keep.
+
+---
+
+---
+
+## Appendix B: Verifactu — What It Is, Whether It Applies, and What To Do
+
+### B.1 What Verifactu Is
+
+Verifactu (Sistema de Verificación de Facturas) is a Spanish regulation (Royal Decree 1007/2023) that mandates **billing software** to generate invoices with a cryptographic hash chain linking each invoice to the previous one, and optionally submit invoice records to AEAT in near real-time. It is part of a broader anti-fraud initiative targeting the use of "double accounting" software.
+
+The key framing: **it regulates software that issues invoices**, not the invoices themselves or the people who issue them.
+
+---
+
+### B.2 Does It Apply to This System's Stripe Revenue?
+
+**No — and this distinction is important.**
+
+Stripe is a payment processor, not an invoicing system. The payment confirmation Stripe sends to customers is **not a Spanish factura** — it lacks the mandatory fields (NIF of issuer, IVA base and rate broken down per the Reglamento de Facturación, sequential invoice number). Therefore:
+
+- Stripe transactions do not constitute facturas under Spanish law
+- The gestor's aggregate accounting entry (asiento resumen / factura recapitulativa) groups these transactions for IVA purposes — it is an **internal accounting record**, not a customer-facing invoice
+- Verifactu does not apply to accounting records; it applies to facturas emitidas (invoices issued to clients)
+
+This practice — aggregating payment processor receipts into a periodic accounting entry — is standard and accepted in Spain for digital/ecommerce businesses. Continue doing it this way.
+
+---
+
+### B.3 Where Verifactu Does Apply
+
+| Invoice type | Verifactu required when mandatory? | Notes |
+|---|---|---|
+| **Manual B2B invoices** (coaching to companies, illustration commissions) | **Yes** — these are facturas emitidas | Must be generated by compliant software |
+| **Manual invoices to Spanish professional clients** (with IRPF retention) | **Yes** | Same as above |
+| **Stripe payment receipts** | **No** | Not facturas under Spanish law |
+| **Gestor's aggregate IVA accounting entry** | **No** (gestor's software handles it) | Not a customer-facing invoice |
+| **Supplier invoices received** | **No** — Verifactu is for issuers, not recipients | You keep them; the supplier's software must be compliant |
+
+---
+
+### B.4 Timeline
+
+- **Large companies (>€6M turnover, REDEME, VAT groups):** mandatory from July 2025
+- **Autónomos and SMEs:** originally scheduled for July 2025, repeatedly delayed
+- **Current expected deadline for autónomos: mid-to-late 2027** (user-confirmed as of April 2026; verify with AEAT before implementation)
+
+Given the history of delays, building Verifactu compliance now is premature. Design for it; build it later.
+
+---
+
+### B.5 Technical Requirements When It Becomes Mandatory
+
+Each factura emitida must include:
+
+1. **Hash chain**: SHA-256 of (prior invoice hash + key invoice fields) — links to the previous invoice, making it impossible to insert or delete invoices without detection
+2. **QR code**: printed on the invoice PDF, encoding the AEAT verification URL for that invoice
+3. **`TipoHuella` field**: hash algorithm identifier (`01` = SHA-256)
+4. **Optional real-time submission** to AEAT's Verifactu endpoint (SOAP, WSDL published)
+
+If the autónomo opts into real-time submission ("Verifactu mode" as opposed to "LROE/non-Verifactu mode"), invoices are registered at AEAT within 4 days of issue. This effectively eliminates the need for Modelo 390 and Modelo 347.
+
+---
+
+### B.6 Recommended Implementation Approach for This System
+
+The invoice generation side of Feature 12 (emitting B2B invoices) should be designed with Verifactu in mind even if not yet compliant:
+
+**`src/invoice_generator.py`** (future module):
+```python
+def generate_invoice(invoice_data: InvoiceData, config: dict) -> GeneratedInvoice:
+    """
+    Generate a PDF factura emitida.
+    
+    When config.verifactu.enabled = True:
+      - Compute hash: SHA-256(prev_hash + nif + date + number + base + cuota)
+      - Store hash in processed_invoices.verifactu_hash
+      - Print QR code linking to AEAT verification URL
+      - If config.verifactu.realtime_submission = True:
+          POST to AEAT Verifactu SOAP endpoint using aeat-web-services library
+    """
+```
+
+**New SQLite columns on `processed_invoices`:**
+```sql
+verifactu_hash       TEXT,   -- SHA-256 hash for this invoice
+verifactu_prev_hash  TEXT,   -- hash of preceding invoice in the chain
+verifactu_submitted  INTEGER DEFAULT 0,  -- 1 if sent to AEAT
+verifactu_submitted_at TEXT,
+verifactu_aeat_response TEXT
+```
+
+**New config section:**
+```json
+{
+  "verifactu": {
+    "enabled": false,
+    "realtime_submission": false,
+    "chain_start_date": null,
+    "aeat_endpoint": "https://www7.aeat.es/wlpl/SSII-FACT/ws/fe/SiiFactFEV1SOAP"
+  }
+}
+```
+
+Toggle `enabled` to `true` when the regulation becomes mandatory for autónomos. Until then, the module exists but does nothing — no code needs to change when the deadline arrives.
+
+---
+
+### B.7 Available Python Library
+
+The `pyverifactu` package on PyPI wraps the AEAT SOAP endpoint for Verifactu submissions. The `aeat-web-services` library handles certificate-signed SOAP calls more generally. Both can be added as optional dependencies — only imported when `verifactu.enabled = true`.
+
+---
+
+### B.8 Summary
+
+| Question | Answer |
+|---|---|
+| Does Verifactu affect Stripe revenue? | No — Stripe receipts are not facturas |
+| Does Verifactu affect the gestor's aggregate entry? | No — that's the gestor's software responsibility |
+| Does it affect manual B2B invoices you issue? | Yes — when mandatory for autónomos (~2027) |
+| Is it urgent now (April 2026)? | No — design for it, build it later |
+| What is the right approach? | Add a `verifactu.enabled` toggle; implement the hash chain and QR code when the deadline approaches |
+| Can this system handle it? | Yes — `pyverifactu` + `aeat-web-services` cover the technical layer |
 
 ---
 

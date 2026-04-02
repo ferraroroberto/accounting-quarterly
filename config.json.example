@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Stripe Automation Dashboard",
+    "name": "Stripe Accounting Dashboard",
     "accountant_email": "accountant@example.com",
     "accountant_name": "Accountant Name",
     "owner_email": "owner@example.com",
@@ -9,68 +9,13 @@
     "data_dir": "data",
     "logs_dir": "logs",
     "input_mode": "csv",
-    "csv_path": "tmp/unified_payments_all_old.csv",
-    "csv_path_new": "tmp/unified_payments_all.csv",
-    "validate_on_load": true
+    "csv_path": "data/raw/unified_payments_all_old.csv",
+    "csv_path_new": "data/raw/unified_payments_all.csv",
+    "invoice_in_dir": "data/invoices/in",
+    "invoice_out_dir": "data/invoices/out"
   },
-  "classification_patterns": {
-    "coaching": [
-      "calendly",
-      "coach",
-      "discovery session",
-      "consulting",
-      "master virtual meetings",
-      "virtual meetings"
-    ],
-    "newsletter": [
-      "subscription"
-    ],
-    "illustrations": [
-      "charge for"
-    ],
-    "coaching_luma_payment_type": "registration",
-    "empty_description_default": "COACHING"
-  },
-  "geographic_rules": {
-    "eur_default": "SPAIN",
-    "eur_newsletter_default": "EU_NOT_SPAIN",
-    "non_eur_default": "OUTSIDE_EU"
-  },
-  "geographic_overrides": {
-    "client name as it appears in description": "EU_NOT_SPAIN",
-    "another client name": "OUTSIDE_EU",
-    "spanish client name": "SPAIN"
-  },
-  "email_overrides": {
-    "client@example.com": "EU_NOT_SPAIN",
-    "another@example.com": "OUTSIDE_EU"
-  },
-  "known_totals": {
-    "period": "2023-07-01 to 2025-12-31",
-    "coaching": 0.00,
-    "newsletter": 0.00,
-    "illustrations": 0.00,
-    "coaching_fee": 0.00,
-    "newsletter_fee": 0.00,
-    "illustrations_fee": 0.00,
-    "total_income": 0.00,
-    "total_fee": 0.00,
-    "regional": {
-      "spain": {
-        "coaching": 0.00,
-        "newsletter": 0.00,
-        "illustrations": 0.00
-      },
-      "eu_not_spain": {
-        "coaching": 0.00,
-        "newsletter": 0.00,
-        "illustrations": 0.00
-      },
-      "outside_eu": {
-        "coaching": 0.00,
-        "newsletter": 0.00,
-        "illustrations": 0.00
-      }
-    }
+  "accounting_api": {
+    "company_id": "",
+    "enabled": false
   }
 }

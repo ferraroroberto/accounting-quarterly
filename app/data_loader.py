@@ -19,7 +19,7 @@ from src.csv_importer import merge_csv_files, parse_stripe_csv
 from src.fx_rates import convert_to_eur, init_fx_table
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
-from src.database import load_payments, upsert_classified, upsert_payments
+from src.database import load_classified_payments, load_payments, upsert_classified, upsert_payments
 from src.stripe_client import fetch_charges
 
 
@@ -138,16 +138,17 @@ def get_classified_for_period(
             end_date = datetime(year, 12, 31, 23, 59, 59)
 
     if mode == "db":
-        payments = load_payments(start_date, end_date)
-        payments = apply_fx_conversion(payments)
-    else:
-        payments = load_payments_for_period_api(
-            start_date,
-            end_date,
-            force_refresh_token=force_refresh_token,
-        )
-        payments = apply_fx_conversion(payments)
-        upsert_payments(payments, source="api")
+        # Return stored classifications directly — no re-classification needed.
+        return load_classified_payments(start_date, end_date)
+
+    # API mode: fetch fresh data from Stripe, classify, and persist.
+    payments = load_payments_for_period_api(
+        start_date,
+        end_date,
+        force_refresh_token=force_refresh_token,
+    )
+    payments = apply_fx_conversion(payments)
+    upsert_payments(payments, source="api")
 
     classified = classify_payments(tuple(p.model_dump_json() for p in payments))
     # Persist classification back to DB (best-effort).

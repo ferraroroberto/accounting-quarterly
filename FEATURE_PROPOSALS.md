@@ -1446,4 +1446,336 @@ The learning investment is real but bounded. The documentation produced by build
 
 ---
 
+### Feature 13: AEAT Filing Assistant — Step-by-Step Guided Submission with Electronic Certificate
+
+**Feasibility verdict upfront:** Fully unattended, API-driven filing is **not feasible** for most models. AEAT does not publish REST or SOAP APIs for autónomos filing Modelos 303, 130, 349, or 347. What IS feasible — and genuinely valuable — is a three-tier approach: (1) guided step-by-step assistant that navigates the user through AEAT's web portal, (2) file-based auto-upload for models that accept it (347, 349, OSS/369), and (3) Playwright browser automation as an optional advanced layer for the technically confident. This is still a major time saving; the hard part is always computing the numbers and knowing what to enter — this system already does that.
+
+---
+
+#### 13.1 What AEAT Actually Offers Programmatically
+
+This is the technical reality as of 2026, researched against official documentation:
+
+| Model | AEAT's official programmatic option | Practical automation level |
+|---|---|---|
+| **303** (IVA quarterly) | Web form only; no file upload; no public API | **Tier 1 / Tier 3** — guided or Playwright |
+| **130** (IRPF quarterly) | Web form only | **Tier 1 / Tier 3** — guided or Playwright |
+| **390** (IVA annual) | Web form only | **Tier 1 / Tier 3** — guided or Playwright |
+| **347** (large operations) | **Official BOE text file upload** | **Tier 2** — fully automated file generation + upload |
+| **349** (intra-EU) | **Official BOE text file upload** | **Tier 2** — fully automated file generation + upload |
+| **369 / OSS** | Web form in AEAT Sede (same as other models) | **Tier 1 / Tier 3** — guided or Playwright |
+| **SII/Verifactu** | Official SOAP web services (WSDL published) | **Tier 2** — only if autónomo opts into SII |
+
+> **SII note:** An autónomo can voluntarily opt into the Suministro Inmediato de Información system. Benefits: +10 days on all VAT deadlines, exempt from filing 347 and 390. Downside: must submit invoice records to AEAT within 4 days of issue. This is a separate strategic decision, not required for this feature, but worth flagging in the UI.
+
+---
+
+#### 13.2 Electronic Certificate Setup
+
+The system needs to know where the user's FNMT certificate is stored. This is a one-time configuration step.
+
+**Supported certificate types (AEAT accepts all of these):**
+- FNMT Persona Física (`.p12` / `.pfx`) — most common for autónomos
+- DNIe (requires hardware reader — not automatable, skip for this feature)
+- Cl@ve PIN (session-based, not suitable for automation)
+
+**Certificate configuration in `config.json`:**
+```json
+{
+  "aeat": {
+    "certificate_path": "/home/user/.certs/fnmt_cert.p12",
+    "certificate_password_env": "AEAT_CERT_PASSWORD",
+    "nif": "X1234567Z",
+    "test_mode": false,
+    "aeat_base_url": "https://sede.agenciatributaria.gob.es",
+    "aeat_pre_url": "https://preportal.aeat.es"
+  }
+}
+```
+
+**Certificate verification on startup** (`src/aeat_client.py`):
+```python
+def verify_certificate(cert_path: str, password: str) -> CertificateInfo:
+    """
+    Load .p12 file using 'cryptography' library.
+    Extract: subject CN (taxpayer name), NIF, expiry date, issuer (FNMT).
+    Warn if certificate expires within 30 days.
+    Return CertificateInfo(name, nif, valid_until, is_valid)
+    """
+```
+
+---
+
+#### 13.3 Tier 1 — Guided Step-by-Step Filing Assistant
+
+For models without file upload support (303, 130, 390, 369/OSS), the system acts as a contextual guide. The user files manually on the AEAT website; the system tells them exactly what to type into each box, in sequence, with the data pre-computed.
+
+**UI design — "File Now" button flow:**
+
+1. User clicks "File Now" for a model in the Tax Obligations tab (Feature 11)
+2. System runs `CompletionReport` (Feature 12) — blocks if any issues remain
+3. Opens the **AEAT filing page in a new browser tab** (`webbrowser.open(url)`)
+4. Simultaneously opens a **Filing Guide panel** in the Streamlit sidebar:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  FILING GUIDE — Modelo 303 · Q1 2026                │
+│                                                     │
+│  Step 1 of 6 — Identification                      │
+│  ▸ NIF:         X1234567Z          [copy]           │
+│  ▸ Year:        2026               [copy]           │
+│  ▸ Period:      1T                 [copy]           │
+│                                    [Next step →]   │
+├─────────────────────────────────────────────────────┤
+│  Step 2 of 6 — IVA Devengado                       │
+│  ▸ Box 01 (base imponible 21%):  €4,200.00  [copy] │
+│  ▸ Box 03 (cuota 21%):           €882.00    [copy] │
+│  ▸ Box 10 (intracom. exentas):   €1,100.00  [copy] │
+│                                    [Next step →]   │
+├─────────────────────────────────────────────────────┤
+│  ⚠ Box 01 includes 3 invoices — click to verify    │
+└─────────────────────────────────────────────────────┘
+```
+
+- Each value has a **[copy]** button (copies to clipboard via `pyperclip` or JS clipboard API)
+- Each step links to the AEAT form section it corresponds to
+- "Verify" links open the source invoice list for that figure
+- When the user completes submission on AEAT, they return to Streamlit and click **"Mark as Filed"**, entering the AEAT locator number (CSV de presentación) — stored in `tax_filing_status`
+
+**Step sequences per model (hard-coded in `src/aeat_guide.py`):**
+
+```python
+FILING_GUIDES = {
+    "303": [
+        FilingStep("Identification", fields=["nif", "year", "period"]),
+        FilingStep("IVA Devengado", fields=["box_01", "box_03", "box_10"]),
+        FilingStep("IVA Deducible", fields=["box_28", "box_29"]),
+        FilingStep("Resultado", fields=["box_46", "box_48"], is_computed=True),
+        FilingStep("Domiciliación bancaria", fields=["iban"], note="Leave blank to pay via NRC"),
+        FilingStep("Confirm & submit on AEAT", action="mark_filed"),
+    ],
+    "130": [
+        FilingStep("Identification", fields=["nif", "year", "period"]),
+        FilingStep("Ingresos y gastos YTD", fields=["box_01", "box_02", "box_03"]),
+        FilingStep("Cálculo retención", fields=["box_05", "box_07", "box_14", "box_16"]),
+        FilingStep("Confirm & submit on AEAT", action="mark_filed"),
+    ],
+    "390": [...],  # annual summary — 8 steps
+    "369": [...],  # OSS — grouped by country regime
+}
+```
+
+**AEAT URL map (opened automatically):**
+```python
+AEAT_URLS = {
+    "303": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G414.shtml",
+    "130": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G410.shtml",
+    "390": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G418.shtml",
+    "347": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G415.shtml",
+    "349": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G416.shtml",
+    "369": "https://sede.agenciatributaria.gob.es/Sede/procedimientoini/G420.shtml",
+}
+```
+
+---
+
+#### 13.4 Tier 2 — File-Based Automated Upload (Modelo 347 and 349)
+
+Modelo 347 and 349 officially accept a **BOE text file format**. The system generates this file; the user uploads it to AEAT in one click (or the system opens the upload page directly).
+
+**Module: `src/aeat_file_generator.py`**
+
+**Modelo 349 BOE format** (well-documented in the BOE official design):
+
+```
+Record type 1 — Presenter / declarant header:
+  Positions 1-2:   "34" (record type)
+  Positions 3-4:   "9 " (model)
+  Positions 5-8:   year (YYYY)
+  Positions 9-17:  NIF of declarant (9 chars, left-padded)
+  Positions 18-57: full name (40 chars, blank-padded)
+  Positions 58-60: period code ("1T", "2T", "3T", "4T", "0A" for annual)
+  Positions 61-75: total operations count (15 digits, zero-padded)
+  Positions 76-90: total base amount (15 digits, cents, no decimal)
+  ...
+
+Record type 2 — Per-counterparty row:
+  One row per EU client with their VAT ID, country code, total amount
+```
+
+```python
+def generate_modelo_349_boe(year: int, quarter: int, db_conn, config: dict) -> bytes:
+    """
+    Query processed_invoices + transactions for IVA_EU_B2B operations.
+    Group by recipient_nif + recipient_country.
+    Return BOE text file as bytes, UTF-8 encoded.
+    Filename: {NIF}{YEAR}{PERIOD}I.349
+    """
+
+def generate_modelo_347_boe(year: int, db_conn, config: dict) -> bytes:
+    """
+    Query all Spain-domestic operations grouped by counterparty NIF.
+    Include only those where annual total > €3,005.06.
+    Return BOE text file. Filename: {NIF}{YEAR}0A.347
+    """
+```
+
+**UI flow for Tier 2:**
+1. System generates the file and stores it at `data/tax_filings/`
+2. User sees: "Modelo 349 file ready — 3 counterparties, total €12,400"
+3. "Download file" button + "Open AEAT upload page" button
+4. After upload, user enters the AEAT locator number → marked as filed
+
+---
+
+#### 13.5 Tier 3 — Playwright Browser Automation (Advanced, Optional)
+
+This tier automates the manual steps in Tier 1 using Playwright. It is **opt-in only**, clearly labelled as experimental, and requires the FNMT certificate to be installed in the user's system certificate store (not the Python script).
+
+**Why it's complex and what can go wrong:**
+- AEAT's Sede Electrónica forms use JavaScript-heavy rendering; simple HTTP POST is not viable
+- Client certificate selection in Playwright requires OS-level certificate installation + browser configuration
+- AEAT may update form field IDs or page layouts — selectors break silently
+- No CAPTCHA has been observed on certificate-authenticated sessions, but this is not guaranteed
+- AEAT sessions time out; multi-step forms lose state if the user is idle
+
+**Technical implementation (`src/aeat_playwright.py`):**
+
+```python
+# Prerequisites: pip install playwright && playwright install chromium
+# Certificate must be installed in OS certificate store (not .p12 file directly)
+
+from playwright.sync_api import sync_playwright
+
+def file_modelo_303_automated(year: int, quarter: int, boxes: dict, config: dict) -> FilingResult:
+    """
+    Automates Modelo 303 web form on AEAT Sede Electrónica.
+    
+    Steps:
+    1. Launch Chromium with --ignore-certificate-errors (if needed for pre-prod)
+    2. Navigate to AEAT Sede Electrónica → authenticate via certificate (OS dialog)
+    3. Navigate to Modelo 303 form
+    4. Fill each field using stable CSS selectors or ARIA labels
+    5. Validate computed totals match expected (abort if mismatch)
+    6. Submit and capture the locator (CSV de presentación)
+    7. Screenshot final confirmation page for audit
+    8. Return FilingResult(locator, filed_at, screenshot_path)
+    
+    Raises: AEATAuthError, AEATFormError, AEATMismatchError
+    """
+```
+
+**Certificate selection for Playwright:**
+AEAT triggers a browser-native certificate picker on navigation. Playwright can suppress or pre-select this using:
+```python
+context = browser.new_context(
+    client_certificates=[{
+        "origin": "https://sede.agenciatributaria.gob.es",
+        "certPath": "/tmp/cert.pem",      # extracted from .p12 at runtime
+        "keyPath": "/tmp/key.pem",        # extracted from .p12 at runtime
+    }]
+)
+```
+The `.p12` is temporarily extracted to PEM files in memory using the `cryptography` library, used for the session, then deleted.
+
+**Stability strategy:**
+- All selectors stored in a config file (`aeat_selectors.json`) separate from code — easy to update when AEAT changes their forms without touching source
+- Each step validates its output before proceeding; aborts with a clear error and falls back to Tier 1 guidance if any assertion fails
+- Full page screenshots saved at each step to `data/tax_filings/screenshots/`
+- Dry-run mode: fills all fields but stops before the final "Submit" button — user reviews and confirms in a Streamlit modal
+
+**UI toggle in Configuration tab:**
+```
+[ ] Enable Playwright automation (experimental)
+    Requires: certificate installed in system store, Playwright installed
+    [Test connection to AEAT] [Run dry-run for last quarter]
+```
+
+---
+
+#### 13.6 Post-Filing: Confirmation & Record
+
+Regardless of tier used, after each filing the system records:
+
+```sql
+UPDATE tax_filing_status SET
+    status = 'FILED',
+    filed_at = '2026-04-18T11:32:00',
+    aeat_locator = 'AA26130000XXXXXX',     -- CSV de presentación
+    amount_eur = 882.00,
+    screenshot_path = 'data/tax_filings/screenshots/303_q1_2026.png',
+    notes = 'Filed via Tier 1 guided assistant'
+WHERE year = 2026 AND quarter = 1 AND model = '303';
+```
+
+The Tax Calendar (Feature 11) immediately reflects the update. The filing package PDF (Feature 12) is also updated with the locator and filed timestamp.
+
+---
+
+#### 13.7 Filing History & Evidence Archive
+
+Add a **"Filing Archive"** panel to the Tax Obligations tab showing:
+
+```
+Year  Quarter  Model  Status   Filed At          Locator              Amount     Tier
+2026  Q1       303    FILED    2026-04-18 11:32  AA26130000XXXXXX    €882.00    Guided
+2026  Q1       130    FILED    2026-04-18 11:45  AB26130000XXXXXX    €420.00    Guided
+2026  Q1       349    FILED    2026-04-19 09:10  AC26130000XXXXXX    €0 (info)  Auto-file
+2025  Q4       303    FILED    2026-01-28 14:22  ...                 €1,102.00  Guided
+...
+```
+
+- Download button for each filing's PDF summary
+- Download button for generated BOE files (347, 349)
+- Screenshot viewer for Playwright-automated filings
+- This archive is the proof of compliance if AEAT ever audits
+
+---
+
+#### 13.8 New Module Structure
+
+**Files to create:**
+- `src/aeat_client.py` — certificate loading, verification, connection test
+- `src/aeat_guide.py` — `FILING_GUIDES` step definitions, URL map, copy-to-clipboard helpers
+- `src/aeat_file_generator.py` — BOE file generators for Modelo 347 and 349
+- `src/aeat_playwright.py` — Playwright automation (Tier 3, optional dependency)
+- `data/aeat_selectors.json` — CSS/ARIA selectors for AEAT forms (maintainable separately)
+- `app/filing_assistant.py` — Streamlit filing guide panel UI
+- `tests/test_aeat_file_generator.py` — BOE file format tests
+
+**Files to modify:**
+- `app/tax_obligations.py` (Feature 11) — add "File Now" buttons, integrate filing guide panel
+- `src/database.py` — add `aeat_locator` and `screenshot_path` columns to `tax_filing_status`
+- `config.json.example` — add `aeat` section
+- `.env.example` — add `AEAT_CERT_PASSWORD`
+- `requirements.txt` — add `cryptography`, `pyperclip`; optional: `playwright`
+
+---
+
+#### 13.9 Known Limitations to Flag in the UI
+
+> **Important:** AEAT does not provide an official API for individual autónomos. Tier 1 (guided) and Tier 3 (Playwright) interact with the AEAT web portal in the same way a human user would, using your certificate. This is not officially supported by AEAT and may break if the portal is updated. Always verify the filed locator number on AEAT's confirmation screen.
+
+Specific warnings to display:
+- Tier 3 selectors for Modelo 303/130 may become outdated — check `aeat_selectors.json` against AEAT's portal each tax season
+- Modelo 303 "domiciliación" (direct debit) requires an active IBAN registered with AEAT — if not registered, pay separately via the NRC code generated on filing
+- OSS (Modelo 369) regime must match the registration type (Union / External Union / Import OSS) — the system assumes Union OSS for EU newsletter subscribers; verify on first use
+- AEAT pre-production environment (`preportal.aeat.es`) should be used for all development and testing — never test against production with real certificates
+
+---
+
+#### 13.10 Effort & Dependencies Summary
+
+| Component | Effort | Risk | Dependencies |
+|---|---|---|---|
+| Certificate loading + verification | 0.5 days | Low | `cryptography` |
+| Tier 1 guided assistant (all models) | 1.5 days | Low | `pyperclip`, `webbrowser` |
+| Tier 2 BOE file generator (347, 349) | 2 days | Low-Medium | BOE spec research |
+| Tier 3 Playwright automation (303, 130) | 3–4 days | High | `playwright`, stable AEAT selectors |
+| Filing archive + confirmation UI | 0.5 days | Low | — |
+
+**Recommended scope:** Build Tier 1 and Tier 2 first (4 days total). They deliver 90% of the value. Tier 3 is an optional upgrade for the user who wants to remove the last manual step — but a single human confirmation click before submitting a tax return is arguably not a bad thing to keep.
+
+---
+
 *Generated by Claude Code on 2026-04-02*

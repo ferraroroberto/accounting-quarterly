@@ -22,6 +22,8 @@ class Payment(BaseModel):
     event_api_id_meta: Optional[str] = None
     email_meta: Optional[str] = None
     card_country: Optional[str] = None
+    amount_original: Optional[float] = None
+    fx_rate: Optional[float] = None
 
     @field_validator("currency", mode="before")
     @classmethod

@@ -41,6 +41,8 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
                 event_api_id_meta TEXT,
                 email_meta TEXT,
                 card_country TEXT,
+                amount_original REAL,
+                fx_rate REAL,
                 activity_type TEXT,
                 geo_region TEXT,
                 classification_rule TEXT,
@@ -56,6 +58,16 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
                 ON transactions(activity_type);
             CREATE INDEX IF NOT EXISTS idx_transactions_geo
                 ON transactions(geo_region);
+
+            CREATE TABLE IF NOT EXISTS fx_rates (
+                rate_date TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                rate REAL NOT NULL,
+                PRIMARY KEY (rate_date, currency)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fx_rates_currency
+                ON fx_rates(currency);
 
             CREATE TABLE IF NOT EXISTS upload_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

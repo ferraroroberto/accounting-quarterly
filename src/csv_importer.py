@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -116,6 +117,14 @@ def parse_stripe_csv(
             event_api_id_meta = _get_meta(row, col_map, "event_api_id_meta")
             email_meta = _get_meta(row, col_map, "email_meta")
 
+            raw_row = None
+            try:
+                raw_row = {str(k): (None if pd.isna(v) else v) for k, v in row.to_dict().items()}
+                # Ensure JSON-serialisable primitives
+                json.dumps(raw_row, ensure_ascii=False, default=str)
+            except Exception:
+                raw_row = None
+
             p = Payment(
                 id=pid,
                 created_date=created_dt,
@@ -127,6 +136,8 @@ def parse_stripe_csv(
                 payment_type_meta=payment_type_meta,
                 event_api_id_meta=event_api_id_meta,
                 email_meta=email_meta,
+                raw_source=raw_row,
+                raw_source_type="stripe_csv",
             )
             payments.append(p)
 

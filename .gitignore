@@ -19,6 +19,16 @@ __pycache__
 /data/cache/*
 !/data/cache/.gitkeep
 
+/data/invoices/in/*
+!/data/invoices/in/.gitkeep
+
+/data/invoices/out/*
+!/data/invoices/out/.gitkeep
+
+# ── SQLite database ─────────────────────────────────────────────────────────────
+*.db
+
 # ── Secrets and local configuration ───────────────────────────────────────────
 .env
 config.json
+classification_rules.json

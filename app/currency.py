@@ -98,11 +98,13 @@ def render():
             xaxis_title="Date",
             yaxis_title=f"1 EUR = ? {currency}",
             height=350,
-            plot_bgcolor="white",
+            template="plotly_dark",
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
             margin=dict(t=40, b=30),
             hovermode="x unified",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # --- Rate lookup ---
     st.markdown("---")

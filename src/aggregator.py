@@ -124,14 +124,18 @@ def calculate_grand_totals(payments: list[ClassifiedPayment]) -> dict:
     totals: dict[str, float] = defaultdict(float)
 
     for p in payments:
-        if p.activity_type == "UNKNOWN":
-            continue
         net = p.net_amount
+        totals["total_income"] = round(totals["total_income"] + net, 2)
+        totals["total_fee"] = round(totals["total_fee"] + p.fee, 2)
+
+        if p.activity_type == "UNKNOWN":
+            totals["unknown"] = round(totals["unknown"] + net, 2)
+            totals["unknown_fee"] = round(totals["unknown_fee"] + p.fee, 2)
+            continue
+
         act = p.activity_type.lower()
         totals[act] = round(totals[act] + net, 2)
         totals[f"{act}_fee"] = round(totals[f"{act}_fee"] + p.fee, 2)
-        totals["total_income"] = round(totals["total_income"] + net, 2)
-        totals["total_fee"] = round(totals["total_fee"] + p.fee, 2)
 
     return dict(totals)
 
@@ -140,7 +144,7 @@ def calculate_regional_totals(payments: list[ClassifiedPayment]) -> dict:
     """Calculate totals grouped by geographic region."""
     result = {}
     for region in GEO_REGIONS:
-        region_payments = [p for p in payments if p.geo_region == region and p.activity_type != "UNKNOWN"]
+        region_payments = [p for p in payments if p.geo_region == region]
         result[region] = calculate_grand_totals(region_payments)
     return result
 
@@ -149,8 +153,6 @@ def get_transaction_count(payments: list[ClassifiedPayment]) -> dict:
     """Return transaction counts by region and activity type."""
     counts: dict[str, int] = defaultdict(int)
     for p in payments:
-        if p.activity_type == "UNKNOWN":
-            continue
         counts["total"] += 1
         counts[p.geo_region.lower()] = counts[p.geo_region.lower()] + 1
         counts[p.activity_type.lower()] = counts[p.activity_type.lower()] + 1

@@ -15,8 +15,7 @@
     "invoice_out_dir": "data/invoices/out"
   },
   "accounting_api": {
-    "base_url": "",
-    "api_key_env": "ACCOUNTING_API_KEY",
+    "company_id": "",
     "enabled": false
   }
 }

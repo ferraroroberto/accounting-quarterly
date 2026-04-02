@@ -31,3 +31,4 @@ __pycache__
 # ── Secrets and local configuration ───────────────────────────────────────────
 .env
 config.json
+classification_rules.json

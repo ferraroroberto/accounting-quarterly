@@ -1,6 +1,7 @@
 """Stripe API client for fetching charges with extended metadata."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -44,16 +45,33 @@ def fetch_charges(
     starting_after = None
 
     while has_more:
+        expand = ["data.customer", "data.balance_transaction"]
         params = {
             "limit": limit,
             "created": {"gte": start_ts, "lte": end_ts},
-            "expand": ["data.customer", "data.balance_transaction"],
+            "expand": expand,
         }
         if starting_after:
             params["starting_after"] = starting_after
 
         try:
             response = stripe.Charge.list(**params)
+        except stripe.error.PermissionError as exc:
+            # Restricted keys may not have access to expand customer / balance transaction.
+            # Retry with reduced expansions so we can still load core charge data.
+            msg = str(exc)
+            if "customer" in msg.lower() and "data.customer" in expand:
+                log.warning("⚠️ Stripe key lacks customer read permission; retrying without customer expand.")
+                expand = [e for e in expand if e != "data.customer"]
+                params["expand"] = expand
+                response = stripe.Charge.list(**params)
+            elif "balance" in msg.lower() and "data.balance_transaction" in expand:
+                log.warning("⚠️ Stripe key lacks balance transaction permission; retrying without balance_transaction expand.")
+                expand = [e for e in expand if e != "data.balance_transaction"]
+                params["expand"] = expand
+                response = stripe.Charge.list(**params)
+            else:
+                raise StripeAPIError(f"Stripe permission error: {exc}") from exc
         except stripe.error.AuthenticationError as exc:
             raise StripeAPIError(f"Stripe authentication failed: {exc}") from exc
         except stripe.error.StripeError as exc:
@@ -85,6 +103,29 @@ def fetch_charges(
                     if card:
                         card_country = getattr(card, "country", None)
 
+                # Traceability: keep important IDs and a raw charge snapshot.
+                customer_id = getattr(charge, "customer", None)
+                if hasattr(customer_id, "id"):
+                    customer_id = customer_id.id
+                payment_intent_id = getattr(charge, "payment_intent", None)
+                if hasattr(payment_intent_id, "id"):
+                    payment_intent_id = payment_intent_id.id
+                balance_txn_id = getattr(charge, "balance_transaction", None)
+                if hasattr(balance_txn_id, "id"):
+                    balance_txn_id = balance_txn_id.id
+                invoice_id = getattr(charge, "invoice", None)
+                if hasattr(invoice_id, "id"):
+                    invoice_id = invoice_id.id
+
+                raw_charge = None
+                try:
+                    raw_charge = charge.to_dict_recursive()
+                except Exception:
+                    try:
+                        raw_charge = json.loads(str(charge))
+                    except Exception:
+                        raw_charge = {"id": charge.id}
+
                 p = Payment(
                     id=charge.id,
                     created_date=datetime.fromtimestamp(charge.created),
@@ -95,6 +136,12 @@ def fetch_charges(
                     currency=currency,
                     email_meta=email_meta,
                     card_country=card_country,
+                    stripe_customer_id=customer_id,
+                    stripe_payment_intent_id=payment_intent_id,
+                    stripe_balance_transaction_id=balance_txn_id,
+                    stripe_invoice_id=invoice_id,
+                    raw_source=raw_charge,
+                    raw_source_type="stripe_api",
                 )
                 payments.append(p)
             except Exception as exc:

@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from app.data_loader import get_classified_for_period, quarter_dates
+from src.database import get_transaction_date_bounds
 from src.aggregator import (
     build_monthly_table,
     calculate_grand_totals,
@@ -23,44 +24,68 @@ def render():
     """Render the Quarter Report tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
+    min_tx_dt, _ = get_transaction_date_bounds()
+    first_year = min_tx_dt.year if min_tx_dt else 2023
+    year_options: list[int | str] = ["Since inception", *list(range(first_year, current_year + 2))]
+    default_year = current_year if current_year in year_options else first_year
+
     with col1:
-        year = st.selectbox(
+        year_selection = st.selectbox(
             "Year",
-            list(range(2023, current_year + 2)),
-            index=list(range(2023, current_year + 2)).index(current_year),
+            year_options,
+            index=year_options.index(default_year),
             key="qr_year",
         )
+        is_since_inception = year_selection == "Since inception"
+        year_for_filters = None if is_since_inception else int(year_selection)
     with col2:
-        quarter_opt = st.radio("Quarter", ["Q1", "Q2", "Q3", "Q4", "Full Year"], horizontal=True, key="qr_quarter")
+        quarter_opt = st.radio(
+            "Quarter",
+            ["Q1", "Q2", "Q3", "Q4", "Full Year"],
+            horizontal=True,
+            key="qr_quarter",
+            disabled=is_since_inception,
+        )
     with col3:
-        use_custom = st.checkbox("Custom date range", key="qr_custom")
+        use_custom = st.checkbox("Custom date range", key="qr_custom", disabled=is_since_inception)
         if use_custom:
             c1, c2 = st.columns(2)
-            custom_start = c1.date_input("From", datetime(year, 1, 1), key="qr_from")
-            custom_end = c2.date_input("To", datetime(year, 12, 31), key="qr_to")
+            custom_start = c1.date_input("From", datetime(year_for_filters, 1, 1), key="qr_from")
+            custom_end = c2.date_input("To", datetime(year_for_filters, 12, 31), key="qr_to")
             start_dt = datetime.combine(custom_start, datetime.min.time())
             end_dt = datetime.combine(custom_end, datetime.max.time().replace(microsecond=0))
             quarter = None
+        elif is_since_inception:
+            quarter = None
+            start_dt = datetime(min_tx_dt.year, 1, 1) if min_tx_dt else datetime(2023, 1, 1)
+            end_dt = datetime(current_year, 12, 31, 23, 59, 59)
         else:
             quarter = None if quarter_opt == "Full Year" else int(quarter_opt[1])
             if quarter:
-                start_dt, end_dt = quarter_dates(year, quarter)
+                start_dt, end_dt = quarter_dates(year_for_filters, quarter)
             else:
-                start_dt, end_dt = datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
+                start_dt, end_dt = datetime(year_for_filters, 1, 1), datetime(year_for_filters, 12, 31, 23, 59, 59)
 
     load_btn = st.button("Load Data", type="primary", key="qr_load")
-    if load_btn or "quarter_data" not in st.session_state or st.session_state.get("quarter_key") != (year, quarter_opt):
-        with st.spinner("Loading and classifying payments..."):
-            payments = get_classified_for_period(year, quarter, start_dt, end_dt)
+    period_key = (year_selection, quarter_opt, start_dt.isoformat(), end_dt.isoformat(), "db")
+    if load_btn or "quarter_data" not in st.session_state or st.session_state.get("quarter_key") != period_key:
+        with st.spinner("Loading payments from SQLite..."):
+            payments = get_classified_for_period(
+                year_for_filters or current_year,
+                quarter,
+                start_dt,
+                end_dt,
+                input_mode="db",
+            )
             st.session_state["quarter_data"] = payments
-            st.session_state["quarter_key"] = (year, quarter_opt)
-            st.session_state["quarter_year"] = year
+            st.session_state["quarter_key"] = period_key
+            st.session_state["quarter_year"] = year_selection
             st.session_state["quarter_q"] = quarter
 
     payments = st.session_state.get("quarter_data", [])
 
     if not payments:
-        st.warning("No payments found for the selected period. Check your CSV files and date range.")
+        st.warning("No payments found for the selected period. Check your SQLite data and date range.")
         return
 
     grand = calculate_grand_totals(payments)
@@ -78,6 +103,25 @@ def render():
     m4.metric("Transactions", counts.get("total", 0))
 
     st.markdown("---")
+    st.subheader("Income Type Breakdown")
+
+    ic1, ic2, ic3 = st.columns(3)
+    for col_widget, key, label in [
+        (ic1, "coaching", "Coaching"),
+        (ic2, "newsletter", "Newsletter"),
+        (ic3, "illustrations", "Illustrations"),
+    ]:
+        income = grand.get(key, 0)
+        fees = grand.get(f"{key}_fee", 0)
+        tx_count = counts.get(key, 0)
+        col_widget.metric(
+            label,
+            f"{income:,.2f} EUR",
+            f"Fees: {fees:,.2f} EUR | {tx_count} tx",
+            delta_color="off",
+        )
+
+    st.markdown("---")
     st.subheader("Geographic Breakdown")
 
     rc1, rc2, rc3 = st.columns(3)
@@ -90,7 +134,12 @@ def render():
         income = r.get("total_income", 0)
         fees = r.get("total_fee", 0)
         count = counts.get(region_key.lower(), 0)
-        col_widget.metric(label, f"{income:,.2f} EUR", f"Fees: {fees:,.2f} EUR | {count} tx")
+        col_widget.metric(
+            label,
+            f"{income:,.2f} EUR",
+            f"Fees: {fees:,.2f} EUR | {count} tx",
+            delta_color="off",
+        )
 
     st.markdown("---")
     st.subheader("Monthly Breakdown")
@@ -101,7 +150,7 @@ def render():
     tabs = st.tabs(geo_tab_labels)
     for tab, geo_key in zip(tabs, geo_tab_keys):
         with tab:
-            table_rows = build_monthly_table(payments, geo_key, year, quarter)
+            table_rows = build_monthly_table(payments, geo_key, year_for_filters, quarter)
             if table_rows:
                 df = pd.DataFrame(table_rows)
                 total_row = df[df["Month"] == "TOTAL"]
@@ -153,13 +202,18 @@ def render():
 
     with export_col:
         st.subheader("Export")
-        label = f"Q{quarter}_{year}" if quarter else str(year)
-        filename = generate_report_filename(year, quarter)
+        export_year = year_for_filters or current_year
+        label = f"Q{quarter}_{export_year}" if quarter else ("Since_Inception" if is_since_inception else str(export_year))
+        filename = (
+            "Stripe_Report_Since_Inception.xlsx"
+            if is_since_inception
+            else generate_report_filename(export_year, quarter)
+        )
 
         if st.button("Generate Excel Report", type="primary", key="qr_export"):
             with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
                 tmp_path = tmp.name
-            create_excel_report(payments, tmp_path, year, quarter, label)
+            create_excel_report(payments, tmp_path, export_year, quarter, label)
             with open(tmp_path, "rb") as f:
                 excel_bytes = f.read()
             os.unlink(tmp_path)

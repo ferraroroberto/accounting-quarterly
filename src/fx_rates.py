@@ -23,6 +23,30 @@ SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF"]
 _DB_PATH = Path(__file__).parent.parent / "data" / "accounting.db"
 
 
+def _get_table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] for r in rows}
+
+
+def _ensure_fx_schema(conn: sqlite3.Connection) -> None:
+    """Add timestamp columns to existing fx_rates tables (best-effort)."""
+    existing = _get_table_columns(conn, "fx_rates")
+    if "loaded_at" not in existing:
+        try:
+            conn.execute("ALTER TABLE fx_rates ADD COLUMN loaded_at TEXT")
+            conn.execute("UPDATE fx_rates SET loaded_at = datetime('now') WHERE loaded_at IS NULL")
+            log.info("ℹ️ Migrated DB: added fx_rates.loaded_at")
+        except Exception as exc:
+            log.warning("⚠️ DB migration skipped for fx_rates.loaded_at: %s", exc)
+    if "updated_at" not in existing:
+        try:
+            conn.execute("ALTER TABLE fx_rates ADD COLUMN updated_at TEXT")
+            conn.execute("UPDATE fx_rates SET updated_at = datetime('now') WHERE updated_at IS NULL")
+            log.info("ℹ️ Migrated DB: added fx_rates.updated_at")
+        except Exception as exc:
+            log.warning("⚠️ DB migration skipped for fx_rates.updated_at: %s", exc)
+
+
 def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30) -> requests.Response:
     last_exc: Exception | None = None
     for base in FRANKFURTER_BASES:
@@ -56,6 +80,8 @@ def init_fx_table(db_path: Optional[str | Path] = None) -> None:
                 rate_date TEXT NOT NULL,
                 currency TEXT NOT NULL,
                 rate REAL NOT NULL,
+                loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 PRIMARY KEY (rate_date, currency)
             )
         """)
@@ -63,6 +89,7 @@ def init_fx_table(db_path: Optional[str | Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_fx_rates_currency
                 ON fx_rates(currency)
         """)
+        _ensure_fx_schema(conn)
         conn.commit()
     finally:
         conn.close()
@@ -119,12 +146,15 @@ def store_rates(
     conn = _get_connection(db_path)
     count = 0
     try:
+        _ensure_fx_schema(conn)
         for date_str, currency_rates in rates.items():
             for currency, rate in currency_rates.items():
                 conn.execute("""
-                    INSERT INTO fx_rates (rate_date, currency, rate)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(rate_date, currency) DO UPDATE SET rate = excluded.rate
+                    INSERT INTO fx_rates (rate_date, currency, rate, loaded_at, updated_at)
+                    VALUES (?, ?, ?, datetime('now'), datetime('now'))
+                    ON CONFLICT(rate_date, currency) DO UPDATE SET
+                        rate = excluded.rate,
+                        updated_at = datetime('now')
                 """, (date_str, currency.upper(), rate))
                 count += 1
         conn.commit()
@@ -157,6 +187,7 @@ def get_rate(
     """
     conn = _get_connection(db_path)
     try:
+        _ensure_fx_schema(conn)
         row = conn.execute(
             "SELECT rate FROM fx_rates WHERE rate_date = ? AND currency = ?",
             (rate_date.isoformat(), currency.upper()),
@@ -184,6 +215,7 @@ def get_rate_with_fallback(
 
     conn = _get_connection(db_path)
     try:
+        _ensure_fx_schema(conn)
         row = conn.execute(
             "SELECT rate FROM fx_rates WHERE currency = ? AND rate_date <= ? "
             "ORDER BY rate_date DESC LIMIT 1",
@@ -240,6 +272,7 @@ def get_all_rates(
     """Get all stored rates for a currency, sorted by date."""
     conn = _get_connection(db_path)
     try:
+        _ensure_fx_schema(conn)
         rows = conn.execute(
             "SELECT rate_date, rate FROM fx_rates WHERE currency = ? ORDER BY rate_date",
             (currency.upper(),),
@@ -255,6 +288,7 @@ def get_stored_date_range(
     """Get the min and max dates stored in the fx_rates table."""
     conn = _get_connection(db_path)
     try:
+        _ensure_fx_schema(conn)
         row = conn.execute(
             "SELECT MIN(rate_date) as min_date, MAX(rate_date) as max_date FROM fx_rates"
         ).fetchone()
@@ -272,7 +306,21 @@ def get_rate_count(db_path: Optional[str | Path] = None) -> int:
     """Get total number of FX rate entries stored."""
     conn = _get_connection(db_path)
     try:
+        _ensure_fx_schema(conn)
         row = conn.execute("SELECT COUNT(*) as cnt FROM fx_rates").fetchone()
         return row["cnt"]
+    finally:
+        conn.close()
+
+
+def get_latest_fx_sync_at(db_path: Optional[str | Path] = None) -> Optional[datetime]:
+    """Get latest FX DB sync timestamp from stored rates."""
+    conn = _get_connection(db_path)
+    try:
+        _ensure_fx_schema(conn)
+        row = conn.execute("SELECT MAX(updated_at) AS max_updated_at FROM fx_rates").fetchone()
+        if row and row["max_updated_at"]:
+            return datetime.fromisoformat(row["max_updated_at"])
+        return None
     finally:
         conn.close()

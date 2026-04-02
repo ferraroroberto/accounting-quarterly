@@ -452,4 +452,400 @@ You are implementing a new feature for an existing Python/Streamlit accounting a
 
 ---
 
+### Feature 11: Spanish Autónomo — Full Tax Obligations Suite
+
+**Rationale:** A Spain-based freelancer (autónomo) has a fixed calendar of mandatory tax filings with the Agencia Tributaria. All the raw data needed to compute these obligations is already in the system (income by geography, activity, VAT treatment, FX-converted amounts). This feature turns the system into a tax preparation assistant — it does not replace an accountant but eliminates the data-gathering step and pre-fills every box that can be computed automatically.
+
+---
+
+#### 11.1 Spanish Tax Obligations Overview
+
+The following filings apply to an autónomo in **régimen de estimación directa simplificada** (the standard regime for freelancers with < €600,000 annual revenue):
+
+| Model | Name | Frequency | Deadline | What it covers |
+|---|---|---|---|---|
+| **Modelo 303** | Declaración IVA trimestral | Quarterly | Apr 20 / Jul 20 / Oct 20 / Jan 30 | VAT collected vs. VAT paid — net to pay or refund |
+| **Modelo 390** | Resumen anual IVA | Annual | 30 Jan (following year) | Annual summary of all four Modelo 303s |
+| **Modelo 130** | Pago fraccionado IRPF (ED) | Quarterly | Same as 303 | 20% advance income tax on quarterly net profit |
+| **Modelo 100** | Declaración de la Renta (IRPF) | Annual | May–Jun (following year) | Full annual income tax return |
+| **Modelo 347** | Operaciones con terceros | Annual | Feb (following year) | Operations > €3,005.06 with same party |
+| **Modelo 349** | Operaciones intracomunitarias | Quarterly/Monthly | 20th of month after quarter | Intra-EU B2B supply of services |
+| **OSS** | One Stop Shop (IVA digital services) | Quarterly | 31st of month after quarter | B2C digital services to EU non-Spain customers |
+
+> **Not in scope (no data in system):** Modelo 190 (retention summary for employees), Modelo 111 (monthly retentions). Social Security cuota is a payment, not a filing — not modelled.
+
+---
+
+#### 11.2 VAT (IVA) Rules by Activity and Geography
+
+Each income transaction must be assigned a **VAT treatment** before any model can be computed:
+
+| Activity | Geography | VAT Treatment | IVA Rate | Notes |
+|---|---|---|---|---|
+| COACHING | SPAIN | `IVA_ES_21` | 21% | Standard professional services |
+| COACHING | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% (reverse charge) | Requires buyer NIF-IVA; seller states "inversión del sujeto pasivo" |
+| COACHING | EU_NOT_SPAIN (B2C) | `IVA_EU_B2C` | Buyer country rate | Rare for coaching; typically B2B |
+| COACHING | OUTSIDE_EU | `IVA_EXPORT` | 0% | Export of services — exempt |
+| NEWSLETTER | SPAIN | `IVA_ES_21` | 21% | Digital service, Spain B2C |
+| NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` | Buyer country rate (see table below) | Digital service B2C — OSS registration required |
+| NEWSLETTER | OUTSIDE_EU | `IVA_EXPORT` | 0% | Export |
+| ILLUSTRATIONS | SPAIN | `IVA_ES_21` | 21% | Artistic/professional services |
+| ILLUSTRATIONS | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% | Typically B2B commissions |
+| ILLUSTRATIONS | OUTSIDE_EU | `IVA_EXPORT` | 0% | Export |
+
+**EU VAT rates for OSS digital services (major countries):**
+```python
+OSS_RATES = {
+    "DE": 0.19, "FR": 0.20, "IT": 0.22, "NL": 0.21,
+    "BE": 0.21, "PT": 0.23, "AT": 0.20, "PL": 0.23,
+    "SE": 0.25, "DK": 0.25, "FI": 0.24, "IE": 0.23,
+    "DEFAULT_EU": 0.21  # fallback if country unknown
+}
+```
+
+> The system already stores `card_country` on each transaction — this is the basis for OSS country assignment.
+
+---
+
+#### 11.3 IRPF Retention Rules
+
+When issuing invoices to **Spanish clients (empresas or autónomos)**, the payer deducts **15% IRPF** from the invoice (7% in the first 3 years of activity). This retention is tracked on invoices but does NOT affect income recognition in this system — it affects Modelo 130 calculation.
+
+- If the autónomo has retenciones soportadas (Spanish clients deducted IRPF), Modelo 130 box 16 is reduced.
+- The system should allow the user to input total retenciones received per quarter (manual entry, since Stripe doesn't handle IRPF).
+
+---
+
+#### 11.4 Data Model Additions
+
+```python
+# New field on ClassifiedPayment / transactions table
+vat_treatment: str  
+# Values: IVA_ES_21 | IVA_EU_B2B | IVA_EU_B2C | OSS_EU | IVA_EXPORT | EXEMPT | UNKNOWN
+
+vat_base_eur: float     # taxable base (= net_amount for income, already EUR)
+vat_amount_eur: float   # IVA collected (vat_base_eur × applicable rate)
+oss_country: str        # ISO-2 country code, populated if vat_treatment == OSS_EU
+buyer_vat_id: str       # NIF-IVA / VAT ID of buyer (manual entry for B2B EU)
+
+# New table: quarterly_tax_entries (manual inputs that can't be computed from Stripe data)
+CREATE TABLE quarterly_tax_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    year        INTEGER,
+    quarter     INTEGER,
+    entry_type  TEXT,   -- RETENCIONES_SOPORTADAS | GASTOS_DEDUCIBLES | IVA_SOPORTADO | OTHER
+    amount_eur  REAL,
+    description TEXT,
+    notes       TEXT,
+    created_at  TEXT,
+    updated_at  TEXT
+);
+
+# New table: tax_filing_status
+CREATE TABLE tax_filing_status (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    year         INTEGER,
+    quarter      INTEGER,  -- NULL for annual filings
+    model        TEXT,     -- '303' | '390' | '130' | '100' | '347' | '349' | 'OSS'
+    status       TEXT,     -- PENDING | COMPUTED | REVIEWED | FILED
+    filed_at     TEXT,
+    amount_eur   REAL,     -- final amount paid or refunded (negative = refund)
+    notes        TEXT,
+    created_at   TEXT
+);
+```
+
+---
+
+#### 11.5 New Module: `src/tax_engine.py`
+
+```python
+# Public interface — all functions return a dataclass or dict ready for UI display
+
+def compute_vat_treatment(payment: ClassifiedPayment, config: dict) -> VATTreatment:
+    """Assign vat_treatment, vat_base_eur, vat_amount_eur, oss_country to a payment."""
+
+def compute_modelo_303(year: int, quarter: int, db_conn) -> Modelo303Result:
+    """
+    Returns all boxes for Modelo 303 quarterly VAT return.
+    
+    Key boxes computed:
+      Box 01: Base imponible operaciones interiores (IVA_ES_21 income base)
+      Box 03: Cuota devengada (IVA_ES_21 income × 21%)
+      Box 10: Base intracomunitarias (IVA_EU_B2B base — informative)
+      Box 28: Cuota IVA soportado deducible (from quarterly_tax_entries)
+      Box 46: Resultado (Box 03 - Box 28)
+      Box 47: % atribuible a actividad (100% default)
+      Box 48: Net result to pay or compensate
+    """
+
+def compute_modelo_130(year: int, quarter: int, db_conn) -> Modelo130Result:
+    """
+    Returns all boxes for Modelo 130 quarterly IRPF fractional payment.
+    
+    Key boxes computed:
+      Box 01: Ingresos computables (total net income for the year-to-date)
+      Box 02: Gastos deducibles YTD (from quarterly_tax_entries, cumulative)
+      Box 03: Rendimiento neto (Box 01 - Box 02)
+      Box 05: 20% × Box 03
+      Box 07: Retenciones soportadas YTD (manual entry, cumulative)
+      Box 14: Previous quarters' Modelo 130 payments (cumulative)
+      Box 16: Result to pay (max(0, Box 05 - Box 07 - Box 14))
+    """
+
+def compute_modelo_349(year: int, quarter: int, db_conn) -> Modelo349Result:
+    """
+    Returns rows for Modelo 349 (intra-EU operations).
+    One row per EU client (identified by buyer_vat_id) with total operations amount.
+    Only applies to IVA_EU_B2B transactions.
+    """
+
+def compute_oss_return(year: int, quarter: int, db_conn) -> OSSReturnResult:
+    """
+    Returns OSS quarterly return: one row per EU member state.
+    Groups OSS_EU transactions by oss_country, sums base and VAT at each country's rate.
+    """
+
+def compute_modelo_347(year: int, db_conn) -> Modelo347Result:
+    """
+    Annual: group all operations by counterparty (email/name).
+    Flag any counterparty where total operations > €3,005.06.
+    Returns list of reportable counterparties with amounts.
+    """
+
+def get_tax_calendar(year: int) -> list[TaxDeadline]:
+    """Return all filing deadlines for the year with status (PENDING/DUE/OVERDUE/FILED)."""
+```
+
+---
+
+#### 11.6 UI Tab: "Tax Obligations"
+
+The tab has four sub-sections:
+
+**A. Tax Calendar**
+
+A visual timeline showing all deadlines for the selected year. Each item shows:
+- Model number and name
+- Deadline date
+- Status badge: `PENDING` / `DUE` (within 15 days) / `OVERDUE` / `FILED`
+- Computed amount (or `—` if not yet computed)
+- "Compute" / "Mark as Filed" action buttons
+
+Color coding: green = filed, amber = due soon, red = overdue, grey = pending.
+
+---
+
+**B. Modelo 303 — IVA Trimestral**
+
+Quarter selector → triggers `compute_modelo_303()`.
+
+Display as a form mirroring the official Agencia Tributaria layout:
+
+```
+DEVENGADO (IVA collected)
+  Box 01  Base imponible al 21%          €  [auto-computed]
+  Box 03  Cuota (21% × Box 01)           €  [auto-computed]
+  Box 10  Entregas intracom. exentas     €  [auto-computed, informative]
+
+DEDUCIBLE (IVA paid on expenses)  
+  Box 28  Cuota IVA soportado            €  [from quarterly_tax_entries, editable]
+  Box 29  Base correspondiente           €  [editable]
+
+RESULTADO
+  Box 46  Diferencia (Box 03 - Box 28)   €  [auto-computed]
+  Box 48  Resultado a ingresar/devolver  €  [auto-computed, highlighted]
+```
+
+Manual override: any auto-computed box can be manually overridden with an explanation note (stored in `tax_filing_status`).
+
+"Export Modelo 303 Summary" → generates a PDF or structured TXT file with all boxes for accountant review.
+
+---
+
+**C. Modelo 130 — IRPF Trimestral**
+
+Quarter selector → triggers `compute_modelo_130()`.
+
+Key input required from user (cannot be computed from Stripe data):
+- Total deductible expenses YTD (or import from Expense Tracking if Feature 1 is implemented)
+- Total retenciones soportadas YTD (IRPF deducted by Spanish clients on invoices issued)
+- Previous quarters' Modelo 130 amounts paid
+
+```
+INGRESOS Y GASTOS (year-to-date, cumulative)
+  Box 01  Ingresos del periodo            €  [auto-computed from system]
+  Box 02  Gastos deducibles               €  [from expenses / manual entry]
+  Box 03  Rendimiento neto (01 - 02)      €  [auto-computed]
+
+CÁLCULO
+  Box 05  20% de Box 03                   €  [auto-computed]
+  Box 07  Retenciones soportadas YTD      €  [manual entry]
+  Box 14  Pagos fraccionados anteriores   €  [auto-filled from previous quarters]
+  Box 16  Resultado a ingresar            €  [auto-computed, min 0]
+```
+
+---
+
+**D. Manual Entries & Adjustments**
+
+A form to add entries to `quarterly_tax_entries` for items that cannot be derived from Stripe:
+
+| Entry type | Description | Example |
+|---|---|---|
+| `IVA_SOPORTADO` | VAT paid on deductible purchases | Laptop purchase, software subscriptions |
+| `GASTOS_DEDUCIBLES` | IRPF-deductible expenses (no IVA, or IVA non-deductible) | Home office % of rent, phone bill |
+| `RETENCIONES_SOPORTADAS` | IRPF withheld by Spanish clients from invoices | Client X withheld €150 in Q1 |
+
+Table showing all manual entries for the selected quarter, with edit/delete capability.
+
+---
+
+**E. OSS Return (if applicable)**
+
+Only shown if there are `OSS_EU` transactions in the selected quarter.
+
+```
+OSS QUARTERLY RETURN — Q[n] [year]
+
+Country   Transactions  Base (€)   VAT Rate  VAT Amount (€)
+-------   ------------  --------   --------  --------------
+DE        12            €1,240     19%       €235.60
+FR         8            €820       20%       €164.00
+IT         3            €310       22%       €68.20
+...
+TOTAL      23            €2,370               €467.80
+
+Filing due: [date]
+```
+
+"Export OSS Return" → CSV in the format accepted by the AEAT OSS portal.
+
+---
+
+**F. Modelo 347 (Annual)**
+
+Year selector → shows table of counterparties with operations > €3,005.06.
+
+```
+COUNTERPARTY            VAT ID     TOTAL OPERATIONS   QUARTER BREAKDOWN
+Client A SL             B12345678  €5,200             Q1: €1,200 Q2: €2,000 Q3: €2,000
+Supplier B SL           A87654321  €3,500             Q1: €1,500 Q4: €2,000
+...
+```
+
+Note: only applies to Spain-based counterparties with a NIF/CIF. EU and non-EU clients appear on Modelo 349 instead.
+
+---
+
+#### 11.7 Filing Deadline Reference (hard-coded constants)
+
+```python
+TAX_DEADLINES = {
+    "303": {
+        1: "April 20",
+        2: "July 20",
+        3: "October 20",
+        4: "January 30 (next year)"
+    },
+    "130": {  # same as 303
+        1: "April 20",
+        2: "July 20",
+        3: "October 20",
+        4: "January 30 (next year)"
+    },
+    "390": "January 30 (following year)",  # annual
+    "347": "February 28 (following year)",  # annual
+    "349": {  # quarterly if > €50k/quarter, otherwise monthly option
+        1: "April 20",
+        2: "July 20",
+        3: "October 20",
+        4: "January 20 (next year)"
+    },
+    "OSS": {  # EU deadline — 31st of month after quarter end
+        1: "April 30",
+        2: "July 31",
+        3: "October 31",
+        4: "January 31 (next year)"
+    }
+}
+```
+
+---
+
+#### 11.8 Important Caveats to Surface in the UI
+
+The UI must display these prominently, not hide them in fine print:
+
+> **This tool pre-fills tax data for review purposes only. It does not constitute tax advice. Always review outputs with a qualified gestor or asesor fiscal before filing. Regulatory changes (IVA rates, IRPF thresholds, OSS rules) are not automatically tracked — verify current rules with the Agencia Tributaria each filing period.**
+
+Specific known limitations to flag:
+- `IVA_EU_B2B` treatment requires a valid NIF-IVA in the VIES database — the system cannot verify this automatically; flag all EU B2B transactions as "requires NIF-IVA confirmation"
+- OSS country assignment uses `card_country` as a proxy — this may differ from the buyer's country of residence (the legally relevant field for B2C digital services)
+- Modelo 347 requires the seller's NIF/CIF, which is not stored in Stripe — must be entered manually
+- The system does not model the **Recargo de Equivalencia** regime (applies to retail; not relevant for these activities)
+- If the autónomo is in their **first 3 years of activity**, the IRPF retention rate on invoices is 7% instead of 15% — this is a user-configurable setting
+
+---
+
+#### 11.9 New Configuration Fields
+
+```json
+{
+  "tax": {
+    "regime": "estimacion_directa_simplificada",
+    "vat_registered": true,
+    "oss_registered": true,
+    "oss_registration_country": "ES",
+    "irpf_retention_rate": 0.15,
+    "activity_start_date": "2022-01-01",
+    "nif": "XXXXXXXX",
+    "fiscal_year_start_month": 1,
+    "vat_proration_percentage": 100,
+    "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
+    "default_vat_treatment_eu_newsletter": "OSS_EU"
+  }
+}
+```
+
+---
+
+#### 11.10 Implementation Notes for LLM
+
+**Files to create:**
+- `src/tax_engine.py` — all computation logic
+- `src/tax_models.py` — Pydantic models for Modelo303Result, Modelo130Result, etc.
+- `app/tax_obligations.py` — Streamlit tab
+- `tests/test_tax_engine.py` — unit tests for each computation function
+
+**Files to modify:**
+- `src/database.py` — add `quarterly_tax_entries` and `tax_filing_status` tables; add `vat_treatment`, `vat_base_eur`, `vat_amount_eur`, `oss_country`, `buyer_vat_id` columns to `transactions`
+- `src/models.py` — extend `ClassifiedPayment` with VAT fields
+- `src/classifier.py` — add `classify_vat()` function called after `classify_geography()`
+- `app/streamlit_app.py` — add "Tax Obligations" tab (8th tab)
+- `config.json.example` — add `tax` section
+
+**Key test cases for `test_tax_engine.py`:**
+```python
+# Modelo 303
+- Zero IVA quarter (all OUTSIDE_EU) → Box 48 = 0
+- Spain-only income → Box 03 = 21% of total net
+- Mixed Spain + EU + Outside → correct allocation per treatment
+- IVA soportado > devengado → negative Box 48 (refund scenario)
+
+# Modelo 130
+- First quarter of year → no prior payments in Box 14
+- Q2+ → prior payments correctly accumulated in Box 14
+- Retenciones > 20% net → Box 16 = 0 (floor at zero)
+- High expenses → rendimiento neto negative → Box 16 = 0
+
+# VAT treatment classification
+- NEWSLETTER + EU_NOT_SPAIN → OSS_EU
+- COACHING + EU_NOT_SPAIN → IVA_EU_B2B
+- Any + OUTSIDE_EU → IVA_EXPORT
+- Any + SPAIN → IVA_ES_21
+```
+
+---
+
 *Generated by Claude Code on 2026-04-02*

@@ -44,6 +44,36 @@ streamlit run app/streamlit_app.py
 
 ---
 
+## Data Flow
+
+```
+Stripe CSV exports  ──or──  Stripe API (live charges)
+        │                           │
+        └───────────┬───────────────┘
+                    ▼
+          Parse & deduplicate
+                    │
+                    ▼
+       FX conversion (non-EUR → EUR)
+       using ECB daily rates from SQLite
+                    │
+                    ▼
+       Classify activity + geography
+       (rules from classification_rules.json)
+                    │
+                    ▼
+       Aggregate, display, export
+```
+
+**Where data is loaded from:** The app reads Stripe transaction data from CSV
+files in `data/raw/` (configured in `config.json`). Non-EUR amounts (GBP, USD,
+CHF) are automatically converted to EUR using ECB exchange rates stored in the
+local SQLite database (`data/accounting.db`). If a rate is missing for a
+transaction date, the system fetches it from the Frankfurter API or falls back
+to the most recent available rate.
+
+---
+
 ## Project Structure
 
 ```
@@ -59,15 +89,17 @@ streamlit run app/streamlit_app.py
 │   ├── aggregator.py              # Monthly/quarterly aggregations and totals
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
-│   ├── database.py                # SQLite database for persistent transaction storage
+│   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
+│   ├── database.py                # SQLite database for transactions, FX rates, upload log
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard (flat structure, no subfolders)
-│   ├── streamlit_app.py           # Entry point with horizontal tabs
-│   ├── data_loader.py             # Cached data loading helpers
+│   ├── streamlit_app.py           # Entry point with welcome page and horizontal tabs
+│   ├── data_loader.py             # Cached data loading + FX conversion pipeline
 │   ├── quarter_report.py          # Quarterly summary + Excel export
 │   ├── transaction_browser.py     # Browse/filter transactions + overrides
 │   ├── history.py                 # Timeline charts across all quarters
+│   ├── currency.py                # FX rate management, charts, and conversion tool
 │   ├── configuration.py           # Classification rules editor, API keys, settings
 │   └── invoice_upload.py          # Invoice upload scaffold for accounting partner
 ├── tests/                         # Pytest test suite
@@ -75,11 +107,13 @@ streamlit run app/streamlit_app.py
 │   ├── test_classifier.py         # Classification engine tests
 │   ├── test_models.py             # Data model tests
 │   ├── test_database.py           # SQLite database tests
+│   ├── test_fx_rates.py           # FX rate fetch, store, convert, fallback tests
 │   ├── test_rules_engine.py       # Rules JSON load/save tests
 │   └── test_aggregator.py         # Aggregation logic tests
 ├── data/
 │   ├── raw/                       # CSV source files (git-ignored)
 │   ├── processed/                 # Generated reports
+│   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── invoices/in/               # Invoices received (PDFs)
 │   └── invoices/out/              # Invoices produced (PDFs)
 └── logs/                          # Rotating daily log files
@@ -121,6 +155,32 @@ When using the Stripe API, the card issuing country (`charge.payment_method_deta
 
 ---
 
+## Currency Conversion
+
+Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using daily exchange rates from the European Central Bank (ECB).
+
+**Source:** [Frankfurter API](https://frankfurter.dev) - free, open-source, based on ECB reference rates. No API key required.
+
+**How it works:**
+
+1. Load historical FX rates via the **Currency** tab (or they are fetched on-demand)
+2. Rates are stored in SQLite (`fx_rates` table) for offline access
+3. When a non-EUR transaction is loaded, the rate for its date is looked up
+4. If no rate exists for the exact date (weekends, holidays), the most recent previous rate is used
+5. If no rate exists at all, the system attempts a live fetch from the Frankfurter API
+
+**Supported currency pairs (all expressed as 1 EUR = X):**
+
+| Pair | Description |
+|------|-------------|
+| EUR/USD | US Dollar |
+| EUR/GBP | British Pound |
+| EUR/CHF | Swiss Franc |
+
+The Currency tab also provides interactive charts showing historical rates and a conversion calculator.
+
+---
+
 ## Historical Validation
 
 The classification system was validated against historical known totals covering the period from July 2023 to December 2025. All computed totals matched the original manual Excel files, confirming the accuracy of the automated classification rules.
@@ -131,10 +191,10 @@ The classification system was validated against historical known totals covering
 
 Transaction data is stored in a SQLite database (`data/accounting.db`) for persistent storage and incremental loading:
 
-- New transactions from CSV or Stripe API are inserted automatically
-- Changed transactions (amount or fee updates) are detected and updated
-- Invoice upload history is tracked to avoid duplicate uploads
-- Date-range queries support efficient filtering
+- **transactions** — Stripe payment records with classification and FX conversion data
+- **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
+- **upload_log** — Invoice upload tracking to prevent duplicates
+- Date-range queries and incremental upserts for efficient operation
 
 ---
 

@@ -10,7 +10,10 @@ Automated Stripe payment classification and quarterly reporting system. Classifi
 
 ```bash
 python -m venv .venv
+# Windows
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+# macOS / Linux
+.venv/bin/pip install -r requirements.txt
 ```
 
 ### 2. Configure
@@ -23,18 +26,16 @@ cp classification_rules.json.example classification_rules.json
 cp .env.example .env  # add your Stripe API key (and optional Accounting API settings)
 ```
 
-### 3. Load transactions (Stripe API; CSV is legacy)
-
-This app is configured to load transactions from the **Stripe API** by default.
-Set `STRIPE_API_KEY` in `.env` and use the dashboard.
-
-CSV paths in `config.json` are kept for backwards compatibility but are not used in API mode.
-
-### 4. Launch the dashboard
+### 3. Launch the dashboard
 
 ```bash
+# Windows
 .\.venv\Scripts\python.exe -m streamlit run app/streamlit_app.py
+# macOS / Linux
+.venv/bin/streamlit run app/streamlit_app.py
 ```
+
+A `launch_app.bat` shortcut is provided for Windows.
 
 ---
 
@@ -44,26 +45,25 @@ CSV paths in `config.json` are kept for backwards compatibility but are not used
 Stripe API (live charges)
           │
           ▼
-          Parse & deduplicate
-                    │
-                    ▼
-       FX conversion (non-EUR → EUR)
-       using ECB daily rates from SQLite
-                    │
-                    ▼
-       Classify activity + geography
-       (rules from classification_rules.json)
-                    │
-                    ▼
-       Aggregate, display, export
+   Fetch & deduplicate
+   (upserted into SQLite)
+          │
+          ▼
+   FX conversion (non-EUR → EUR)
+   using ECB daily rates from SQLite
+          │
+          ▼
+   Classify activity + geography
+   (rules from classification_rules.json)
+          │
+          ▼
+   Persist classifications to SQLite
+          │
+          ▼
+   Aggregate, display, export
 ```
 
-**Where data is loaded from:** The app fetches Stripe transaction data from the
-Stripe API (configured via `STRIPE_API_KEY` in `.env`). Non-EUR amounts (GBP,
-USD, CHF) are automatically converted to EUR using ECB exchange rates stored in
-the local SQLite database (`data/accounting.db`). If a rate is missing for a
-transaction date, the system fetches it from the Frankfurter API or falls back
-to the most recent available rate.
+Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API. Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
 
 ---
 
@@ -71,46 +71,48 @@ to the most recent available rate.
 
 ```
 ├── config.json                    # App settings (git-ignored, use config.json.example)
-├── classification_rules.json      # Classification rules (git-ignored, copy from classification_rules.json.example)
+├── classification_rules.json      # Classification rules (git-ignored, copy from .example)
 ├── classification_rules.json.example
+├── config.json.example
 ├── requirements.txt
+├── launch_app.bat                 # Windows launch shortcut
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
 │   ├── config.py                  # Load/save config.json
 │   ├── rules_engine.py            # Load/save classification_rules.json
-│   ├── classifier.py              # Activity and geographic classification (reads from rules JSON)
-│   ├── csv_importer.py            # CSV parsing, amount normalisation, deduplication
+│   ├── classifier.py              # Activity and geographic classification
 │   ├── aggregator.py              # Monthly/quarterly aggregations and totals
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite database for transactions, FX rates, upload log
-│   ├── accounting_api_client.py    # IntegraLOOP/BILOOP Accounting API client
+│   ├── database.py                # SQLite operations (transactions, FX rates, upload log)
+│   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
-├── app/                           # Streamlit dashboard (flat structure, no subfolders)
-│   ├── streamlit_app.py           # Entry point with welcome page and horizontal tabs
-│   ├── data_loader.py             # Cached data loading + FX conversion pipeline
+├── app/                           # Streamlit dashboard
+│   ├── streamlit_app.py           # Entry point: welcome page and horizontal tabs
+│   ├── data_loader.py             # Data loading, FX conversion, classification pipeline
 │   ├── quarter_report.py          # Quarterly summary + Excel export
-│   ├── transaction_browser.py     # Browse/filter transactions + overrides
+│   ├── transaction_browser.py     # Browse/filter transactions + geographic overrides
 │   ├── history.py                 # Timeline charts across all quarters
 │   ├── currency.py                # FX rate management, charts, and conversion tool
-│   ├── configuration.py           # Classification rules editor, API keys, settings
+│   ├── configuration.py           # Rules editor, Stripe API key, cache management
 │   └── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
-│   ├── test_classifier.py         # Classification engine tests
-│   ├── test_models.py             # Data model tests
-│   ├── test_database.py           # SQLite database tests
-│   ├── test_fx_rates.py           # FX rate fetch, store, convert, fallback tests
-│   ├── test_rules_engine.py       # Rules JSON load/save tests
-│   └── test_aggregator.py         # Aggregation logic tests
+│   ├── test_classifier.py
+│   ├── test_models.py
+│   ├── test_database.py
+│   ├── test_fx_rates.py
+│   ├── test_rules_engine.py
+│   └── test_aggregator.py
 ├── data/
-│   ├── raw/                       # CSV source files (git-ignored)
-│   ├── processed/                 # Generated reports
 │   ├── accounting.db              # SQLite database (git-ignored)
-│   ├── invoices/in/               # Invoices received (PDFs)
-│   └── invoices/out/              # Invoices produced (PDFs)
+│   ├── processed/                 # Generated Excel reports
+│   ├── cache/                     # Temporary cache files
+│   └── invoices/
+│       ├── in/                    # Invoices received (PDFs)
+│       └── out/                   # Invoices produced (PDFs)
 └── logs/                          # Rotating daily log files
 ```
 
@@ -135,18 +137,18 @@ Rules are evaluated in priority order; the first match wins.
 
 ### Geographic region
 
-| Priority | Condition | Region |
-|----------|-----------|--------|
+| Priority | Condition | Default region |
+|----------|-----------|----------------|
 | 1 | Currency is **not EUR** | OUTSIDE_EU |
 | 2 | EUR + explicit name/email override | Per override |
 | 3 | EUR + activity is **NEWSLETTER** | EU_NOT_SPAIN |
 | 4 | EUR + any other activity | SPAIN |
 
-Newsletter payments in EUR lack customer email/country metadata in Stripe CSV exports. By convention they are classified as EU (not Spain). Individual exceptions can be added via overrides.
+The default region for each condition is configurable in the Geographic Rules section of the Configuration tab.
 
 ### Card issuing country
 
-When using the Stripe API, the card issuing country (`charge.payment_method_details.card.country`) is extracted automatically. This provides ISO country codes (ES, DE, US, etc.) that can improve geographic classification accuracy beyond currency-based heuristics.
+The card issuing country (`charge.payment_method_details.card.country`) is extracted from the Stripe API automatically. This provides ISO country codes (ES, DE, US, etc.) that can improve geographic classification accuracy beyond currency-based heuristics.
 
 ---
 
@@ -154,7 +156,7 @@ When using the Stripe API, the card issuing country (`charge.payment_method_deta
 
 Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using daily exchange rates from the European Central Bank (ECB).
 
-**Source:** [Frankfurter API](https://www.frankfurter.app) - free, open-source, based on ECB reference rates. No API key required.
+**Source:** [Frankfurter API](https://www.frankfurter.app) — free, open-source, based on ECB reference rates. No API key required.
 
 **How it works:**
 
@@ -164,7 +166,7 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 4. If no rate exists for the exact date (weekends, holidays), the most recent previous rate is used
 5. If no rate exists at all, the system attempts a live fetch from the Frankfurter API
 
-**Supported currency pairs (all expressed as 1 EUR = X):**
+**Supported currency pairs (expressed as 1 EUR = X):**
 
 | Pair | Description |
 |------|-------------|
@@ -172,24 +174,17 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 | EUR/GBP | British Pound |
 | EUR/CHF | Swiss Franc |
 
-The Currency tab also provides interactive charts showing historical rates and a conversion calculator.
-
----
-
-## Historical Validation
-
-The classification system was validated against historical known totals covering the period from July 2023 to December 2025. All computed totals matched the original manual Excel files, confirming the accuracy of the automated classification rules.
-
 ---
 
 ## Database
 
-Transaction data is stored in a SQLite database (`data/accounting.db`) for persistent storage and incremental loading:
+Transaction data is stored in a SQLite database (`data/accounting.db`):
 
 - **transactions** — Stripe payment records with classification and FX conversion data
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
-- Date-range queries and incremental upserts for efficient operation
+
+Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load.
 
 ---
 
@@ -205,15 +200,24 @@ Required permissions for restricted keys (`rk_live_...`):
 - **Read charges** — transaction data, amounts, descriptions, card country
 - **Read balance transactions** — fee details
 
-The dashboard includes a permission checker to verify which API resources are accessible.
+The dashboard includes a connection tester and permission checker under **Configuration → Stripe API**.
 
 ---
 
 ## Running Tests
 
 ```bash
+# Windows
 .\.venv\Scripts\python.exe -m pytest -v
+# macOS / Linux
+.venv/bin/pytest -v
 ```
+
+---
+
+## Historical Validation
+
+The classification system was validated against historical known totals covering the period from July 2023 to December 2025. All computed totals matched the original manual Excel files, confirming the accuracy of the automated classification rules.
 
 ---
 
@@ -236,7 +240,7 @@ Enable it in `config.json`:
 }
 ```
 
-Then set the Accounting API settings in `.env`:
+Then set the Accounting API credentials in `.env`:
 
 ```
 ACCOUNTING_BASE_URL=https://api.example.com

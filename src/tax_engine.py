@@ -224,7 +224,19 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     )
 
     result.box_03_rendimiento = round(result.box_01_ingresos - result.box_02_gastos, 2)
-    result.box_05_base = round(max(0.0, result.box_03_rendimiento) * 0.20, 2)
+
+    # Gastos de difícil justificación: 5% of rendimiento neto previo, capped at €2,000/year
+    if result.box_03_rendimiento > 0:
+        result.gastos_dificil_justificacion = round(
+            min(result.box_03_rendimiento * 0.05, 2000.0), 2
+        )
+    else:
+        result.gastos_dificil_justificacion = 0.0
+    result.rendimiento_neto = round(
+        result.box_03_rendimiento - result.gastos_dificil_justificacion, 2
+    )
+
+    result.box_05_base = round(max(0.0, result.rendimiento_neto) * 0.20, 2)
 
     result.box_07_retenciones = round(
         _get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", db_conn, ytd=True), 2
@@ -259,13 +271,24 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             by_vat_id[key] = {"name": email, "vat_id": vat_id, "total": 0.0}
         by_vat_id[key]["total"] += _net_amount(row)
 
+    warnings: list[str] = []
     for info in by_vat_id.values():
+        total = round(info["total"], 2)
+        if total < 0:
+            warnings.append(
+                f"Negative total {total}€ for VAT ID {info['vat_id']} — "
+                f"Model 349 does not accept negative amounts. "
+                f"Corrective invoices must modify the original declaration period."
+            )
+            continue  # Exclude negative totals from the submission rows
         result.rows.append(Modelo349Row(
             buyer_name=info["name"],
             buyer_vat_id=info["vat_id"],
-            total_amount=round(info["total"], 2),
+            total_amount=total,
         ))
     result.total = round(sum(r.total_amount for r in result.rows), 2)
+    if warnings:
+        result.notes = "; ".join(warnings)
     return result
 
 

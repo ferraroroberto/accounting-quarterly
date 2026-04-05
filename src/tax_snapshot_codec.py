@@ -25,8 +25,14 @@ def _int_key_dict(d: dict[Any, Any]) -> dict[int, float]:
 
 
 def encode_snapshot(model: str, obj: Any) -> str:
-    """JSON payload for ``tax_computation_snapshots.payload_json``."""
-    return json.dumps(asdict(obj), ensure_ascii=False)
+    """JSON payload for ``tax_computation_snapshots.payload_json``.
+
+    The ``audit`` list is stored separately in ``tax_audit_log`` and is excluded
+    here to keep snapshot payloads lean and decode-compatible.
+    """
+    data = asdict(obj)
+    data.pop("audit", None)
+    return json.dumps(data, ensure_ascii=False)
 
 
 def decode_snapshot(model: str, payload_json: str) -> Any:

@@ -10,6 +10,7 @@ from src.logger import get_logger
 from src.models import ClassifiedPayment
 from src.tax_models import (
     OSS_RATES,
+    AuditEntry,
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
@@ -87,6 +88,107 @@ def _load_classified_ytd(year: int, quarter: int, conn: sqlite3.Connection) -> l
              AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
            ORDER BY created_date""",
         (f"{year}-01-01", end),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
+    import calendar
+    month_start = (quarter - 1) * 3 + 1
+    month_end = quarter * 3
+    last_day = calendar.monthrange(year, month_end)[1]
+    return (
+        f"{year}-{month_start:02d}-01",
+        f"{year}-{month_end:02d}-{last_day:02d}",
+    )
+
+
+def _load_expense_invoices_for_quarter(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Expense invoices (direction='in') for the quarter, keyed by supply_date || invoice_date."""
+    start, end = _invoice_date_range(year, quarter)
+    rows = conn.execute(
+        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
+                  total_eur, category, geo_region, vat_treatment,
+                  COALESCE(deductible_pct, 100.0) AS deductible_pct,
+                  vendor_nif, vendor_name, description
+           FROM invoices
+           WHERE direction = 'in'
+             AND COALESCE(supply_date, invoice_date) >= ?
+             AND COALESCE(supply_date, invoice_date) <= ?
+           ORDER BY tx_date""",
+        (start, end),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _load_expense_invoices_ytd(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Expense invoices (direction='in') from Q1 through the given quarter (YTD)."""
+    import calendar
+    month_end = quarter * 3
+    last_day = calendar.monthrange(year, month_end)[1]
+    rows = conn.execute(
+        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
+                  total_eur, category, geo_region, vat_treatment,
+                  COALESCE(deductible_pct, 100.0) AS deductible_pct,
+                  vendor_nif, vendor_name, description
+           FROM invoices
+           WHERE direction = 'in'
+             AND COALESCE(supply_date, invoice_date) >= ?
+             AND COALESCE(supply_date, invoice_date) <= ?
+           ORDER BY tx_date""",
+        (f"{year}-01-01", f"{year}-{month_end:02d}-{last_day:02d}"),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _load_income_invoices_ytd(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Income invoices (direction='out') from Q1 through the given quarter (YTD).
+
+    These are manually-issued invoices (bank transfer, etc.) NOT processed through
+    Stripe — Stripe income already lives in the ``transactions`` table.
+    """
+    import calendar
+    month_end = quarter * 3
+    last_day = calendar.monthrange(year, month_end)[1]
+    rows = conn.execute(
+        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
+                  total_eur, category, geo_region, vat_treatment,
+                  client_nif, client_name, description
+           FROM invoices
+           WHERE direction = 'out'
+             AND COALESCE(supply_date, invoice_date) >= ?
+             AND COALESCE(supply_date, invoice_date) <= ?
+           ORDER BY tx_date""",
+        (f"{year}-01-01", f"{year}-{month_end:02d}-{last_day:02d}"),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _load_income_invoices_for_quarter(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Income invoices (direction='out') for the quarter only."""
+    start, end = _invoice_date_range(year, quarter)
+    rows = conn.execute(
+        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
+                  total_eur, category, geo_region, vat_treatment,
+                  client_nif, client_name, description
+           FROM invoices
+           WHERE direction = 'out'
+             AND COALESCE(supply_date, invoice_date) >= ?
+             AND COALESCE(supply_date, invoice_date) <= ?
+           ORDER BY tx_date""",
+        (start, end),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -171,31 +273,119 @@ def _previous_modelo130_payments(year: int, quarter: int, conn: sqlite3.Connecti
 
 def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo303Result:
     """Compute Modelo 303 (quarterly VAT return) for the given quarter."""
+    import json as _json
     result = Modelo303Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
+
+    # Counters and record lists for audit trail
+    n_es21 = n_eu_b2b = n_oss = n_export = 0
+    recs_es21: list[dict] = []
+    recs_eu_b2b: list[dict] = []
+    recs_oss: list[dict] = []
+    recs_export: list[dict] = []
 
     for row in rows:
         treatment = _get_vat_treatment(row)
         base = _get_vat_base(row)
         vat = _get_vat_amount(row)
+        _rec = {
+            "source": "stripe",
+            "date": str(row.get("created_date", ""))[:10],
+            "description": str(row.get("email_meta") or row.get("id", ""))[:50],
+            "base_eur": round(base, 2),
+            "vat_eur": round(vat, 2),
+            "geo_region": row.get("geo_region") or "",
+        }
 
         if treatment == "IVA_ES_21":
             result.box_01_base += base
             result.box_03_cuota += vat
+            n_es21 += 1
+            recs_es21.append(_rec)
         elif treatment == "IVA_EU_B2B":
             result.box_59_intracom_entregas += base
+            n_eu_b2b += 1
+            recs_eu_b2b.append(_rec)
         elif treatment == "OSS_EU":
             result.oss_base += base
             result.oss_vat += vat
+            n_oss += 1
+            recs_oss.append({**_rec, "oss_country": row.get("oss_country") or row.get("card_country") or ""})
         elif treatment == "IVA_EXPORT":
             result.export_base += base
+            n_export += 1
+            recs_export.append(_rec)
 
-    # Deductible IVA from manual entries (current quarter only)
-    result.box_28_iva_soportado = _get_tax_entries_total(
-        year, quarter, "IVA_SOPORTADO", db_conn, ytd=False
+    # Deductible IVA: sum from expense invoices for the quarter
+    expense_invs = _load_expense_invoices_for_quarter(year, quarter, db_conn)
+    inv_iva_soportado = 0.0
+    inv_base_soportado = 0.0
+    n_expense_inv = 0
+    recs_soportado: list[dict] = []
+    for inv in expense_invs:
+        iva = inv.get("iva_amount") or 0.0
+        base = inv.get("subtotal_eur") or 0.0
+        ded_pct = (inv.get("deductible_pct") or 100.0) / 100.0
+        _rec = {
+            "source": "invoice_in",
+            "date": str(inv.get("tx_date", ""))[:10],
+            "vendor": str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40],
+            "description": str(inv.get("description") or "")[:50],
+            "subtotal_eur": round(base, 2),
+            "iva_amount": round(iva, 2),
+            "deductible_pct": inv.get("deductible_pct") or 100.0,
+            "iva_deductible": round(iva * ded_pct, 2),
+            "geo_region": inv.get("geo_region") or "",
+        }
+        recs_soportado.append(_rec)
+        if iva > 0:
+            inv_iva_soportado += iva * ded_pct
+            inv_base_soportado += base * ded_pct
+            n_expense_inv += 1
+
+    # Also include income (outgoing) invoices into devengado boxes
+    income_invs_q = _load_income_invoices_for_quarter(year, quarter, db_conn)
+    n_inv_es21 = n_inv_eu_b2b = n_inv_export = 0
+    for inv in income_invs_q:
+        treatment = inv.get("vat_treatment") or "IVA_EXEMPT"
+        base = inv.get("subtotal_eur") or 0.0
+        vat = inv.get("iva_amount") or 0.0
+        _rec = {
+            "source": "invoice_out",
+            "date": str(inv.get("tx_date", ""))[:10],
+            "client": str(inv.get("client_name") or inv.get("client_nif") or "")[:40],
+            "description": str(inv.get("description") or "")[:50],
+            "base_eur": round(base, 2),
+            "vat_eur": round(vat, 2),
+            "vat_treatment": treatment,
+        }
+        if treatment == "IVA_ES_21":
+            result.box_01_base += base
+            result.box_03_cuota += vat
+            n_inv_es21 += 1
+            recs_es21.append(_rec)
+        elif treatment == "IVA_EU_B2B":
+            result.box_59_intracom_entregas += base
+            n_inv_eu_b2b += 1
+            recs_eu_b2b.append(_rec)
+        elif treatment == "IVA_EXPORT":
+            result.export_base += base
+            n_inv_export += 1
+            recs_export.append(_rec)
+
+    # Deductible IVA from manual entries (current quarter only) + invoices
+    result.box_28_iva_soportado = round(
+        inv_iva_soportado
+        + _get_tax_entries_total(year, quarter, "IVA_SOPORTADO", db_conn, ytd=False),
+        2,
     )
-    # Derive base from cuota assuming general 21% rate (approximate when mixed rates exist)
-    result.box_29_base_soportado = round(result.box_28_iva_soportado / 0.21, 2) if result.box_28_iva_soportado else 0.0
+    result.box_29_base_soportado = round(
+        inv_base_soportado
+        + (result.box_28_iva_soportado - inv_iva_soportado) / 0.21
+        if (result.box_28_iva_soportado - inv_iva_soportado) > 0
+        else inv_base_soportado,
+        2,
+    )
 
     # Round accumulations
     result.box_01_base = round(result.box_01_base, 2)
@@ -208,30 +398,116 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.box_46_diferencia = round(result.box_03_cuota - result.box_28_iva_soportado, 2)
     result.box_48_resultado = result.box_46_diferencia  # simplified (100% proration)
 
+    # --- Audit trail ---
+    def _a(cell, label, formula, value, **inputs):
+        return AuditEntry(
+            model="303", year=year, quarter=quarter,
+            cell=cell, label=label, formula=formula, value=value,
+            inputs_json=_json.dumps(inputs),
+        )
+    result.audit = [
+        _a("box_01_base",
+           "Base imponible 21% (IVA devengado — Stripe + facturas emitidas España)",
+           "SUM(vat_base_eur) WHERE vat_treatment='IVA_ES_21' (transactions + invoices out)",
+           result.box_01_base,
+           records=recs_es21),
+        _a("box_03_cuota",
+           "Cuota IVA devengado 21%",
+           "SUM(vat_amount_eur) WHERE vat_treatment = 'IVA_ES_21'  [= 21% × box_01_base]",
+           result.box_03_cuota,
+           box_01_base=result.box_01_base, rate=0.21),
+        _a("box_59_intracom_entregas",
+           "Entregas intracomunitarias exentas (casilla 59)",
+           "SUM(vat_base_eur) WHERE vat_treatment='IVA_EU_B2B'  [Art. 25 LIVA — ISP applies]",
+           result.box_59_intracom_entregas,
+           records=recs_eu_b2b),
+        _a("box_28_iva_soportado",
+           "IVA soportado deducible — todas las facturas recibidas del trimestre",
+           "SUM(iva_amount * deductible_pct/100) FROM invoices WHERE direction='in' AND quarter=Q "
+           "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='IVA_SOPORTADO' AND quarter=Q",
+           result.box_28_iva_soportado,
+           inv_iva_deductible=round(inv_iva_soportado, 2),
+           records=recs_soportado),
+        _a("box_29_base_soportado",
+           "Base IVA soportado (facturas + estimación 21% para entradas manuales)",
+           "SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21",
+           result.box_29_base_soportado,
+           inv_base_sum=round(inv_base_soportado, 2)),
+        _a("box_46_diferencia",
+           "Diferencia (IVA devengado − IVA deducible)",
+           "box_03_cuota − box_28_iva_soportado",
+           result.box_46_diferencia,
+           box_03_cuota=result.box_03_cuota, box_28_iva_soportado=result.box_28_iva_soportado),
+        _a("box_48_resultado",
+           "Resultado a ingresar / devolver",
+           "= box_46_diferencia  [100% prorrata; no prior-period compensation applied]",
+           result.box_48_resultado,
+           box_46_diferencia=result.box_46_diferencia),
+        _a("oss_base",
+           "Base OSS — servicios digitales B2C UE",
+           "SUM(vat_base_eur) WHERE vat_treatment = 'OSS_EU'  [declarar por OSS, no en 303]",
+           result.oss_base,
+           records=recs_oss),
+        _a("oss_vat",
+           "Cuota OSS (tipo del país del cliente)",
+           "SUM(vat_amount_eur) WHERE vat_treatment = 'OSS_EU'",
+           result.oss_vat,
+           oss_base=result.oss_base),
+        _a("export_base",
+           "Base exportaciones (exentas IVA — Art. 21 LIVA)",
+           "SUM(vat_base_eur) WHERE vat_treatment = 'IVA_EXPORT'",
+           result.export_base,
+           records=recs_export),
+    ]
     return result
 
 
 def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo130Result:
     """Compute Modelo 130 (quarterly IRPF advance) for the given quarter."""
+    import json as _json
     result = Modelo130Result(year=year, quarter=quarter)
+    # Stripe income (transactions table)
     rows = _load_classified_ytd(year, quarter, db_conn)
+    n_stripe_rows = len(rows)
+    stripe_income = sum(_get_vat_base(r) for r in rows)
 
-    total_income = sum(_get_vat_base(r) for r in rows)
-    result.box_01_ingresos = round(total_income, 2)
+    # Non-Stripe income: manually-issued invoices (direction='out')
+    income_invs = _load_income_invoices_ytd(year, quarter, db_conn)
+    inv_income = sum((inv.get("subtotal_eur") or 0.0) for inv in income_invs)
+    n_income_invs = len(income_invs)
+
+    result.box_01_ingresos = round(stripe_income + inv_income, 2)
+
+    # Expenses from invoices (direction='in'), YTD
+    expense_invs_ytd = _load_expense_invoices_ytd(year, quarter, db_conn)
+    inv_gastos = sum(
+        (inv.get("subtotal_eur") or 0.0) * (inv.get("deductible_pct") or 100.0) / 100.0
+        for inv in expense_invs_ytd
+    )
+    n_expense_invs = len(expense_invs_ytd)
 
     result.box_02_gastos = round(
-        _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", db_conn, ytd=True), 2
+        inv_gastos
+        + _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", db_conn, ytd=True),
+        2,
     )
+
+    # IRPF retenciones soportadas: from outgoing invoices (client withholds from us)
+    inv_retenciones = sum((inv.get("irpf_amount") or 0.0) for inv in income_invs)
 
     result.box_03_rendimiento = round(result.box_01_ingresos - result.box_02_gastos, 2)
 
     # Gastos de difícil justificación: 5% of rendimiento neto previo, capped at €2,000/year
+    # Art. 30.2.4ª LIRPF — estimación directa simplificada
     if result.box_03_rendimiento > 0:
-        result.gastos_dificil_justificacion = round(
-            min(result.box_03_rendimiento * 0.05, 2000.0), 2
-        )
+        raw_gdj = result.box_03_rendimiento * 0.05
+        result.gastos_dificil_justificacion = round(min(raw_gdj, 2000.0), 2)
+        gdj_capped = raw_gdj > 2000.0
     else:
+        raw_gdj = 0.0
         result.gastos_dificil_justificacion = 0.0
+        gdj_capped = False
+
     result.rendimiento_neto = round(
         result.box_03_rendimiento - result.gastos_dificil_justificacion, 2
     )
@@ -239,7 +515,9 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.box_05_base = round(max(0.0, result.rendimiento_neto) * 0.20, 2)
 
     result.box_07_retenciones = round(
-        _get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", db_conn, ytd=True), 2
+        inv_retenciones
+        + _get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", db_conn, ytd=True),
+        2,
     )
 
     result.box_14_pagos_anteriores = round(
@@ -251,11 +529,125 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         2,
     )
 
+    # --- Audit trail ---
+    def _a(cell, label, formula, value, **inputs):
+        return AuditEntry(
+            model="130", year=year, quarter=quarter,
+            cell=cell, label=label, formula=formula, value=value,
+            inputs_json=_json.dumps(inputs),
+        )
+    # Build record lists for audit trail
+    stripe_income_records = [
+        {
+            "source": "stripe",
+            "date": r.get("created_date", "")[:10],
+            "description": str(r.get("email_meta") or r.get("id", ""))[:50],
+            "vat_treatment": _get_vat_treatment(r),
+            "base_eur": round(_get_vat_base(r), 2),
+        }
+        for r in rows
+    ]
+    income_inv_records = [
+        {
+            "source": "invoice_out",
+            "date": inv.get("tx_date", "")[:10],
+            "client": str(inv.get("client_name") or inv.get("client_nif") or "")[:40],
+            "description": str(inv.get("description") or "")[:50],
+            "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+            "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
+            "vat_treatment": inv.get("vat_treatment") or "",
+        }
+        for inv in income_invs
+    ]
+    expense_inv_records = [
+        {
+            "source": "invoice_in",
+            "date": inv.get("tx_date", "")[:10],
+            "vendor": str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40],
+            "description": str(inv.get("description") or "")[:50],
+            "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+            "deductible_pct": inv.get("deductible_pct") or 100.0,
+            "deductible_amount": round(
+                (inv.get("subtotal_eur") or 0.0) * (inv.get("deductible_pct") or 100.0) / 100.0, 2
+            ),
+            "geo_region": inv.get("geo_region") or "",
+        }
+        for inv in expense_invs_ytd
+    ]
+
+    result.audit = [
+        _a("box_01_ingresos",
+           "Ingresos computables acumulados (Q1–Qn) — Stripe + facturas emitidas",
+           f"SUM(vat_base_eur) FROM transactions YTD + SUM(subtotal_eur) FROM invoices WHERE direction='out' YTD",
+           result.box_01_ingresos,
+           stripe_income=round(stripe_income, 2),
+           inv_income=round(inv_income, 2),
+           ytd_through_quarter=quarter,
+           records=stripe_income_records + income_inv_records),
+        _a("box_02_gastos",
+           "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + entradas manuales",
+           f"SUM(subtotal_eur * deductible_pct/100) FROM invoices WHERE direction='in' YTD "
+           f"+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES' AND quarter<=Q{quarter}",
+           result.box_02_gastos,
+           inv_gastos=round(inv_gastos, 2),
+           records=expense_inv_records),
+        _a("box_03_rendimiento",
+           "Rendimiento neto previo (antes de difícil justificación)",
+           "box_01_ingresos − box_02_gastos",
+           result.box_03_rendimiento,
+           box_01_ingresos=result.box_01_ingresos, box_02_gastos=result.box_02_gastos),
+        _a("gastos_dificil_justificacion",
+           "Gastos de difícil justificación (5%, máx €2.000/año)",
+           "min(box_03_rendimiento × 5%, 2000)  [Art. 30.2.4ª LIRPF — estimación directa simplificada]",
+           result.gastos_dificil_justificacion,
+           box_03_rendimiento=result.box_03_rendimiento, rate=0.05, cap_eur=2000.0,
+           raw_5pct=round(raw_gdj, 2), cap_applied=gdj_capped),
+        _a("rendimiento_neto",
+           "Rendimiento neto (base de cálculo IRPF)",
+           "box_03_rendimiento − gastos_dificil_justificacion",
+           result.rendimiento_neto,
+           box_03_rendimiento=result.box_03_rendimiento,
+           gastos_dificil=result.gastos_dificil_justificacion),
+        _a("box_05_base",
+           "Cuota IRPF (20% del rendimiento neto)",
+           "max(0, rendimiento_neto) × 20%",
+           result.box_05_base,
+           rendimiento_neto=result.rendimiento_neto, rate=0.20),
+        _a("box_07_retenciones",
+           "Retenciones e ingresos a cuenta soportados YTD — facturas + entradas manuales",
+           f"SUM(irpf_amount) FROM invoices WHERE direction='out' YTD "
+           f"+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='RETENCIONES_SOPORTADAS' AND quarter<=Q{quarter}",
+           result.box_07_retenciones,
+           inv_retenciones=round(inv_retenciones, 2),
+           records=[
+               {
+                   "source": "invoice_out",
+                   "date": inv.get("tx_date", "")[:10],
+                   "client": str(inv.get("client_name") or inv.get("client_nif") or "")[:40],
+                   "description": str(inv.get("description") or "")[:50],
+                   "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
+               }
+               for inv in income_invs if (inv.get("irpf_amount") or 0.0) > 0
+           ]),
+        _a("box_14_pagos_anteriores",
+           "Pagos fraccionados ingresados en trimestres anteriores",
+           "SUM(amount_eur) FROM tax_filing_status WHERE model='130' AND quarter < current AND status IN (FILED, COMPUTED)",
+           result.box_14_pagos_anteriores,
+           quarters_considered=list(range(1, quarter))),
+        _a("box_16_resultado",
+           "Resultado a ingresar",
+           "max(0, box_05_base − box_07_retenciones − box_14_pagos_anteriores)",
+           result.box_16_resultado,
+           box_05_base=result.box_05_base,
+           box_07_retenciones=result.box_07_retenciones,
+           box_14_pagos_anteriores=result.box_14_pagos_anteriores),
+    ]
     return result
 
 
 def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo349Result:
     """Compute Modelo 349 (intra-EU operations summary) for the given quarter."""
+    import json as _json
     result = Modelo349Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
@@ -271,7 +663,20 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             by_vat_id[key] = {"name": email, "vat_id": vat_id, "total": 0.0}
         by_vat_id[key]["total"] += _net_amount(row)
 
+    # Add EU B2B income invoices (direction='out', vat_treatment='IVA_EU_B2B')
+    inv_eu_b2b = _load_income_invoices_for_quarter(year, quarter, db_conn)
+    for inv in inv_eu_b2b:
+        if (inv.get("vat_treatment") or "") != "IVA_EU_B2B":
+            continue
+        vat_id = inv.get("client_nif") or "UNKNOWN"
+        name = inv.get("client_name") or ""
+        amount = inv.get("subtotal_eur") or 0.0
+        if vat_id not in by_vat_id:
+            by_vat_id[vat_id] = {"name": name, "vat_id": vat_id, "total": 0.0}
+        by_vat_id[vat_id]["total"] += amount
+
     warnings: list[str] = []
+    negative_excluded: list[str] = []
     for info in by_vat_id.values():
         total = round(info["total"], 2)
         if total < 0:
@@ -280,6 +685,7 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
                 f"Model 349 does not accept negative amounts. "
                 f"Corrective invoices must modify the original declaration period."
             )
+            negative_excluded.append(info["vat_id"])
             continue  # Exclude negative totals from the submission rows
         result.rows.append(Modelo349Row(
             buyer_name=info["name"],
@@ -289,11 +695,36 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.total = round(sum(r.total_amount for r in result.rows), 2)
     if warnings:
         result.notes = "; ".join(warnings)
+
+    # --- Audit trail ---
+    audit = []
+    for r in result.rows:
+        audit.append(AuditEntry(
+            model="349", year=year, quarter=quarter,
+            cell=f"operator_{r.buyer_vat_id}",
+            label=f"Entregas intracomunitarias — {r.buyer_vat_id}",
+            formula="SUM(net_amount) for IVA_EU_B2B transactions grouped by buyer_vat_id",
+            value=r.total_amount,
+            inputs_json=_json.dumps({"buyer_vat_id": r.buyer_vat_id, "buyer_name": r.buyer_name}),
+        ))
+    audit.append(AuditEntry(
+        model="349", year=year, quarter=quarter,
+        cell="total",
+        label="Total entregas intracomunitarias",
+        formula="SUM(total_amount) across all operators",
+        value=result.total,
+        inputs_json=_json.dumps({
+            "operator_count": len(result.rows),
+            "negative_excluded": negative_excluded,
+        }),
+    ))
+    result.audit = audit
     return result
 
 
 def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> OSSReturnResult:
     """Compute OSS quarterly return (B2C digital services to EU non-Spain customers)."""
+    import json as _json
     result = OSSReturnResult(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
@@ -324,13 +755,56 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
     result.total_base = round(result.total_base, 2)
     result.total_vat = round(result.total_vat, 2)
+
+    # --- Audit trail ---
+    audit = []
+    for r in result.rows:
+        audit.append(AuditEntry(
+            model="OSS", year=year, quarter=quarter,
+            cell=f"country_{r.country}_base",
+            label=f"OSS base — {r.country} ({int(r.vat_rate * 100)}%)",
+            formula="SUM(vat_base_eur) WHERE vat_treatment='OSS_EU' AND country=CC",
+            value=r.base_eur,
+            inputs_json=_json.dumps({
+                "country": r.country, "vat_rate": r.vat_rate, "transactions": r.transactions,
+            }),
+        ))
+        audit.append(AuditEntry(
+            model="OSS", year=year, quarter=quarter,
+            cell=f"country_{r.country}_vat",
+            label=f"OSS cuota — {r.country} ({int(r.vat_rate * 100)}%)",
+            formula=f"base_eur × {r.vat_rate}  [tasa país destino — OSS Reglamento (UE) 904/2010]",
+            value=r.vat_amount_eur,
+            inputs_json=_json.dumps({
+                "country": r.country, "base_eur": r.base_eur, "vat_rate": r.vat_rate,
+            }),
+        ))
+    audit.append(AuditEntry(
+        model="OSS", year=year, quarter=quarter,
+        cell="total_base",
+        label="Base total OSS (todos los países)",
+        formula="SUM(base_eur) across all countries",
+        value=result.total_base,
+        inputs_json=_json.dumps({"countries": len(result.rows), "transactions": result.total_transactions}),
+    ))
+    audit.append(AuditEntry(
+        model="OSS", year=year, quarter=quarter,
+        cell="total_vat",
+        label="Cuota total OSS (todos los países)",
+        formula="SUM(vat_amount_eur) across all countries",
+        value=result.total_vat,
+        inputs_json=_json.dumps({"total_base": result.total_base}),
+    ))
+    result.audit = audit
     return result
 
 
 def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Result:
     """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties)."""
+    import json as _json
     result = Modelo347Result(year=year)
 
+    # Stripe transactions from Spanish counterparties
     rows = db_conn.execute(
         """SELECT email_meta, converted_amount, converted_amount_refunded, geo_region,
                   strftime('%m', created_date) as month
@@ -342,6 +816,21 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         (str(year),),
     ).fetchall()
 
+    # Income invoices issued to Spanish clients
+    inv_rows = db_conn.execute(
+        """SELECT COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
+                  client_nif,
+                  subtotal_eur,
+                  strftime('%m', COALESCE(supply_date, invoice_date)) AS month
+           FROM invoices
+           WHERE direction = 'out'
+             AND geo_region = 'SPAIN'
+             AND COALESCE(supply_date, invoice_date) >= ?
+             AND COALESCE(supply_date, invoice_date) <= ?
+             AND subtotal_eur IS NOT NULL""",
+        (f"{year}-01-01", f"{year}-12-31"),
+    ).fetchall()
+
     by_email: dict[str, dict] = {}
     for row in rows:
         email = row["email_meta"] or "UNKNOWN"
@@ -349,21 +838,69 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         month = int(row["month"])
         q = (month - 1) // 3 + 1
         if email not in by_email:
-            by_email[email] = {"total": 0.0, "quarters": defaultdict(float)}
+            by_email[email] = {"total": 0.0, "quarters": defaultdict(float), "nif": ""}
         by_email[email]["total"] += net
         by_email[email]["quarters"][q] += net
 
+    for row in inv_rows:
+        counterparty = row["counterparty"]
+        net = row["subtotal_eur"] or 0.0
+        month_str = row["month"]
+        if not month_str:
+            continue
+        month = int(month_str)
+        q = (month - 1) // 3 + 1
+        if counterparty not in by_email:
+            by_email[counterparty] = {"total": 0.0, "quarters": defaultdict(float), "nif": row["client_nif"] or ""}
+        by_email[counterparty]["total"] += net
+        by_email[counterparty]["quarters"][q] += net
+        if not by_email[counterparty]["nif"] and row["client_nif"]:
+            by_email[counterparty]["nif"] = row["client_nif"]
+
+    total_counterparties = len(by_email)
+    below_threshold = 0
     for email, info in by_email.items():
         total = round(info["total"], 2)
         if total >= result.threshold:
             result.rows.append(Modelo347Row(
                 counterparty_name=email,
-                counterparty_nif="",  # must be entered manually
+                counterparty_nif=info.get("nif", ""),
                 total_operations=total,
                 quarter_breakdown={q: round(v, 2) for q, v in info["quarters"].items()},
             ))
+        else:
+            below_threshold += 1
 
     result.rows.sort(key=lambda r: r.total_operations, reverse=True)
+
+    # --- Audit trail ---
+    audit = []
+    for r in result.rows:
+        audit.append(AuditEntry(
+            model="347", year=year, quarter=0,
+            cell=f"counterparty_{r.counterparty_name[:30]}",
+            label=f"Operaciones con {r.counterparty_name}",
+            formula=f"SUM(net_amount) WHERE geo_region='SPAIN' AND email_meta='{r.counterparty_name}' — threshold ≥ €{result.threshold:,.2f}",
+            value=r.total_operations,
+            inputs_json=_json.dumps({
+                "counterparty": r.counterparty_name,
+                "quarter_breakdown": r.quarter_breakdown,
+            }),
+        ))
+    audit.append(AuditEntry(
+        model="347", year=year, quarter=0,
+        cell="summary",
+        label="Resumen Modelo 347",
+        formula=f"Counterparties >= €{result.threshold:,.2f} threshold",
+        value=float(len(result.rows)),
+        inputs_json=_json.dumps({
+            "total_counterparties_spain": total_counterparties,
+            "above_threshold": len(result.rows),
+            "below_threshold": below_threshold,
+            "threshold_eur": result.threshold,
+        }),
+    ))
+    result.audit = audit
     return result
 
 
@@ -449,40 +986,37 @@ def compute_and_persist_tax_snapshots(
     """
     from datetime import datetime
 
-    from src.database import TAX_SNAPSHOT_QUARTER_ANNUAL, upsert_tax_snapshot_conn
+    from src.database import (
+        TAX_SNAPSHOT_QUARTER_ANNUAL,
+        upsert_audit_entries_conn,
+        upsert_tax_snapshot_conn,
+    )
     from src.tax_snapshot_codec import encode_snapshot
 
     computed_at = datetime.now().isoformat(timespec="seconds")
 
     r303 = compute_modelo_303(year, quarter, db_conn)
-    upsert_tax_snapshot_conn(
-        db_conn, year, quarter, "303", encode_snapshot("303", r303), computed_at,
-    )
+    upsert_tax_snapshot_conn(db_conn, year, quarter, "303", encode_snapshot("303", r303), computed_at)
+    upsert_audit_entries_conn(db_conn, r303.audit, computed_at)
 
     r130 = compute_modelo_130(year, quarter, db_conn)
-    upsert_tax_snapshot_conn(
-        db_conn, year, quarter, "130", encode_snapshot("130", r130), computed_at,
-    )
+    upsert_tax_snapshot_conn(db_conn, year, quarter, "130", encode_snapshot("130", r130), computed_at)
+    upsert_audit_entries_conn(db_conn, r130.audit, computed_at)
 
     r_oss = compute_oss_return(year, quarter, db_conn)
-    upsert_tax_snapshot_conn(
-        db_conn, year, quarter, "OSS", encode_snapshot("OSS", r_oss), computed_at,
-    )
+    upsert_tax_snapshot_conn(db_conn, year, quarter, "OSS", encode_snapshot("OSS", r_oss), computed_at)
+    upsert_audit_entries_conn(db_conn, r_oss.audit, computed_at)
 
     r349 = compute_modelo_349(year, quarter, db_conn)
-    upsert_tax_snapshot_conn(
-        db_conn, year, quarter, "349", encode_snapshot("349", r349), computed_at,
-    )
+    upsert_tax_snapshot_conn(db_conn, year, quarter, "349", encode_snapshot("349", r349), computed_at)
+    upsert_audit_entries_conn(db_conn, r349.audit, computed_at)
 
     r347 = compute_modelo_347(year, db_conn)
     upsert_tax_snapshot_conn(
-        db_conn,
-        year,
-        TAX_SNAPSHOT_QUARTER_ANNUAL,
-        "347",
-        encode_snapshot("347", r347),
-        computed_at,
+        db_conn, year, TAX_SNAPSHOT_QUARTER_ANNUAL, "347",
+        encode_snapshot("347", r347), computed_at,
     )
+    upsert_audit_entries_conn(db_conn, r347.audit, computed_at)
 
     db_conn.commit()
     return computed_at

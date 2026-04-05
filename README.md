@@ -89,9 +89,10 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, tax)
-│   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results
+│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, tax, audit)
+│   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results + AuditEntry
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, calendar
+│   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # Gemini-powered PDF extraction for Spanish accounting
@@ -109,7 +110,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
-│   └── tax_validation.py          # Tax validation tab (gestor-filed vs DB-computed comparison)
+│   ├── tax_validation.py          # Tax validation tab (gestor-filed vs DB-computed comparison)
+│   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py
@@ -199,10 +201,11 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **transactions** — Stripe payment records with classification, FX conversion, and VAT treatment data
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
-- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields)
+- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
+- **tax_audit_log** — Per-cell calculation audit entries: every box in every model records the formula applied, named inputs, and computed value. Written alongside snapshots; queryable by year/quarter/model/run timestamp
 
 Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load. Tax obligation figures shown in the Tax Obligations tab are read from stored snapshots until you run **Calculate tax** again.
 
@@ -275,9 +278,25 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
 
 > **IRPF retention rate:** Use `0.15` (15%) after the first 3 years of activity, or `0.07` (7%) during the first 3 years. Configurable per the slider in Tax Settings.
 
+### Invoice data in tax calculations
+
+OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax models alongside Stripe transactions:
+
+| Model | Invoice contribution |
+|-------|---------------------|
+| **Modelo 303** box_28 | IVA soportado from expense invoices (`direction='in'`) |
+| **Modelo 303** box_01 | Base from income invoices classified as `IVA_ES_21` |
+| **Modelo 130** box_01 | Subtotal from non-Stripe income invoices (`direction='out'`) |
+| **Modelo 130** box_02 | Subtotal from expense invoices (weighted by `deductible_pct`) |
+| **Modelo 130** box_07 | IRPF withheld (`irpf_amount`) on outgoing invoices |
+| **Modelo 347** | Spanish-client invoice income alongside Stripe |
+| **Modelo 349** | EU B2B invoice income alongside Stripe |
+
+Geographic classification is auto-derived from the vendor NIF (expenses) or client NIF (income) at OCR extraction time. Existing rows are backfilled automatically on database init.
+
 ### Manual entries
 
-Items that cannot be derived from Stripe (IVA soportado on expenses, deductible costs, retenciones received from Spanish clients) are entered via the **Manual Entries** sub-tab and stored in `quarterly_tax_entries`.
+Items that cannot be derived from Stripe or invoices (additional overrides, one-off corrections) are entered via the **Manual Entries** sub-tab and stored in `quarterly_tax_entries`.
 
 > **Disclaimer:** This tool pre-fills tax data for review purposes only. It does not constitute tax advice. Always review outputs with a qualified gestor or asesor fiscal before filing.
 
@@ -325,6 +344,43 @@ Uncomment and fill in the appropriate template block in `tmp/validation/validati
     "01_ingresos_ytd": 0.00
     # ... (copy from gestor PDF)
 ```
+
+---
+
+## Tax Audit Trail
+
+The **Tax Audit** tab makes every calculated cell in every tax model fully inspectable. After running **Calculate Tax**, open this tab to see exactly how each figure was derived.
+
+### How it works
+
+Each time **Calculate Tax** runs, the engine writes one `AuditEntry` per cell to the `tax_audit_log` SQLite table alongside the usual snapshot. Entries are keyed by `(year, quarter, model, computed_at)` — re-running always replaces the previous entries for the same period.
+
+### What is audited
+
+| Model | Cells audited |
+|-------|--------------|
+| **Modelo 303** | box_01_base, box_03_cuota, box_59_intracom, box_28, box_29, box_46, box_48, oss_base, oss_vat, export_base |
+| **Modelo 130** | box_01_ingresos, box_02_gastos, box_03_rendimiento, gastos_dificil_justificacion (with cap flag), rendimiento_neto, box_05_base, box_07_retenciones, box_14_pagos_anteriores, box_16_resultado |
+| **Modelo 349** | one entry per operator (VAT ID) + total |
+| **OSS** | base + cuota per country + totals |
+| **Modelo 347** | one entry per counterparty above threshold + summary |
+
+### Per-cell detail
+
+Each entry records:
+- **Formula** — the rule applied (e.g. `"min(box_03_rendimiento × 5%, 2000) [Art. 30.2.4ª LIRPF]"`)
+- **Inputs** — named JSON dict of all values that fed the calculation (e.g. `{"box_03_rendimiento": 18400.00, "rate": 0.05, "cap_eur": 2000.0, "cap_applied": false}`)
+- **Records** — the individual transactions and invoices included in the figure (date, counterparty, description, amounts), shown as a full DataFrame in the drill-down
+- **Value** — the resulting EUR figure
+
+The UI shows a summary table plus an expandable drill-down per cell. Each expander header shows how many records contribute to that figure. Results can be downloaded as JSON.
+
+### Known approximations (documented in audit)
+
+| Cell | Approximation | Impact |
+|------|--------------|--------|
+| `box_29_base_soportado` (M303) | `box_28_iva_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
+| `box_48_resultado` (M303) | 100% proration assumed | User must enter only the deductible portion of IVA in manual entries |
 
 ---
 

@@ -70,9 +70,22 @@ def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
-    """Add missing columns to the `invoices` table (e.g. file_hash added later)."""
+    """Add missing columns to the `invoices` table."""
     existing = _get_table_columns(conn, "invoices")
-    additions = {"file_hash": "TEXT"}
+    additions = {
+        "file_hash": "TEXT",
+        # Enhanced Spanish accounting fields
+        "invoice_type": "TEXT",
+        "supply_date": "TEXT",
+        "due_date": "TEXT",
+        "is_rectificativa": "INTEGER DEFAULT 0",
+        "rectified_invoice_ref": "TEXT",
+        "vat_exempt_reason": "TEXT",
+        "iva_breakdown": "TEXT",
+        "deductible_pct": "REAL DEFAULT 100",
+        "billing_period_start": "TEXT",
+        "billing_period_end": "TEXT",
+    }
     for col, ddl in additions.items():
         if col not in existing:
             try:
@@ -621,7 +634,10 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 description, subtotal_eur, iva_rate, iva_amount,
                 irpf_rate, irpf_amount, total_eur,
                 currency, original_currency, original_amount, fx_rate,
-                payment_method, category, notes, raw_json, file_hash
+                payment_method, category, notes, raw_json, file_hash,
+                invoice_type, supply_date, due_date, is_rectificativa,
+                rectified_invoice_ref, vat_exempt_reason, iva_breakdown,
+                deductible_pct, billing_period_start, billing_period_end
             ) VALUES (
                 :id, :filename, :direction, :invoice_number, :invoice_date,
                 :vendor_name, :vendor_nif, :vendor_address,
@@ -629,7 +645,10 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 :description, :subtotal_eur, :iva_rate, :iva_amount,
                 :irpf_rate, :irpf_amount, :total_eur,
                 :currency, :original_currency, :original_amount, :fx_rate,
-                :payment_method, :category, :notes, :raw_json, :file_hash
+                :payment_method, :category, :notes, :raw_json, :file_hash,
+                :invoice_type, :supply_date, :due_date, :is_rectificativa,
+                :rectified_invoice_ref, :vat_exempt_reason, :iva_breakdown,
+                :deductible_pct, :billing_period_start, :billing_period_end
             )
             ON CONFLICT(filename, direction) DO UPDATE SET
                 invoice_number = excluded.invoice_number,
@@ -656,6 +675,16 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 notes = excluded.notes,
                 raw_json = excluded.raw_json,
                 file_hash = excluded.file_hash,
+                invoice_type = excluded.invoice_type,
+                supply_date = excluded.supply_date,
+                due_date = excluded.due_date,
+                is_rectificativa = excluded.is_rectificativa,
+                rectified_invoice_ref = excluded.rectified_invoice_ref,
+                vat_exempt_reason = excluded.vat_exempt_reason,
+                iva_breakdown = excluded.iva_breakdown,
+                deductible_pct = excluded.deductible_pct,
+                billing_period_start = excluded.billing_period_start,
+                billing_period_end = excluded.billing_period_end,
                 extracted_at = datetime('now')
         """, {
             "id": record_id,
@@ -685,6 +714,16 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
             "notes": data.get("notes"),
             "raw_json": data.get("raw_json"),
             "file_hash": data.get("file_hash"),
+            "invoice_type": data.get("invoice_type"),
+            "supply_date": data.get("supply_date"),
+            "due_date": data.get("due_date"),
+            "is_rectificativa": data.get("is_rectificativa", 0),
+            "rectified_invoice_ref": data.get("rectified_invoice_ref"),
+            "vat_exempt_reason": data.get("vat_exempt_reason"),
+            "iva_breakdown": data.get("iva_breakdown"),
+            "deductible_pct": data.get("deductible_pct", 100),
+            "billing_period_start": data.get("billing_period_start"),
+            "billing_period_end": data.get("billing_period_end"),
         })
         conn.commit()
         return record_id
@@ -750,6 +789,69 @@ def delete_invoice(filename: str, direction: str,
         )
         conn.commit()
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_invoices_by_ids(ids: list[str],
+                           db_path: Optional[str | Path] = None) -> int:
+    """Delete invoice records by their UUID ids. Returns number deleted."""
+    if not ids:
+        return 0
+    conn = _get_connection(db_path)
+    try:
+        placeholders = ",".join("?" * len(ids))
+        cursor = conn.execute(
+            f"DELETE FROM invoices WHERE id IN ({placeholders})", ids
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def clear_invoices(db_path: Optional[str | Path] = None) -> int:
+    """Delete ALL invoice records. Returns number of rows deleted."""
+    conn = _get_connection(db_path)
+    try:
+        cursor = conn.execute("DELETE FROM invoices")
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def get_invoice_stats(db_path: Optional[str | Path] = None) -> dict:
+    """Return invoice counts and latest extracted_at per direction.
+
+    Returns::
+
+        {
+            "in":  {"count": int, "last_extracted_at": str | None},
+            "out": {"count": int, "last_extracted_at": str | None},
+        }
+    """
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT direction,
+                   COUNT(*) AS cnt,
+                   MAX(extracted_at) AS last_at
+            FROM invoices
+            GROUP BY direction
+            """
+        ).fetchall()
+        result: dict = {
+            "in":  {"count": 0, "last_extracted_at": None},
+            "out": {"count": 0, "last_extracted_at": None},
+        }
+        for row in rows:
+            d = row["direction"]
+            if d in result:
+                result[d]["count"] = row["cnt"]
+                result[d]["last_extracted_at"] = row["last_at"]
+        return result
     finally:
         conn.close()
 

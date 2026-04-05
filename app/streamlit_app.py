@@ -8,7 +8,7 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.database import get_latest_stripe_sync_at, get_transaction_count_db, init_db
+from src.database import get_invoice_stats, get_latest_stripe_sync_at, get_transaction_count_db, init_db
 from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
 
 # Initialise database and FX table on startup
@@ -45,9 +45,18 @@ with st.sidebar:
     fx_last_update_text = fx_last_sync.strftime("%Y-%m-%d %H:%M:%S") if fx_last_sync else "n/a"
     st.caption(f"FX last update: {fx_last_update_text}")
 
+    st.markdown("---")
+    st.markdown("**Invoices (OCR)**")
+    _inv_stats = get_invoice_stats()
+    _in_last = _inv_stats["in"]["last_extracted_at"]
+    _out_last = _inv_stats["out"]["last_extracted_at"]
+    st.caption(f"Expenses (in):  {_inv_stats['in']['count']} · last {_in_last[:10] if _in_last else 'n/a'}")
+    st.caption(f"Income (out):   {_inv_stats['out']['count']} · last {_out_last[:10] if _out_last else 'n/a'}")
+
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
- tab_currency, tab_config, tab_invoices, tab_invoice_ocr, tab_tax) = st.tabs([
+ tab_currency, tab_config, tab_invoices, tab_invoice_ocr,
+ tab_invoice_explorer, tab_tax) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -56,6 +65,7 @@ with st.sidebar:
     "Configuration",
     "Invoice Upload",
     "Invoice OCR",
+    "Invoice Explorer",
     "Tax Obligations",
 ])
 
@@ -119,6 +129,10 @@ with tab_welcome:
          "(invoice, receipt, ticket). Uses Google Gemini to parse vendor, "
          "client, IVA, IRPF, and totals, and stores results in the `invoices` "
          "table. Supports in (expenses) and out (income) documents."),
+        ("Invoice Explorer",
+         "Browse and filter all OCR-extracted invoices in a single table. "
+         "Filter by vendor, client, direction, date range, subtotal, category, "
+         "and invoice type. Export filtered results to CSV."),
         ("Tax Obligations",
          "Spanish autónomo tax filing assistant. Computes Modelo 303 (IVA), "
          "Modelo 130 (IRPF advance), OSS Return, Modelo 349 (intra-EU), and "
@@ -146,6 +160,7 @@ from app.currency import render as render_currency
 from app.configuration import render as render_configuration
 from app.invoice_upload import render as render_invoice_upload
 from app.invoice_ocr_tab import render as render_invoice_ocr
+from app.invoice_explorer import render as render_invoice_explorer
 
 with tab_report:
     render_quarter_report()
@@ -167,6 +182,9 @@ with tab_invoices:
 
 with tab_invoice_ocr:
     render_invoice_ocr()
+
+with tab_invoice_explorer:
+    render_invoice_explorer()
 
 with tab_tax:
     render_tax_obligations()

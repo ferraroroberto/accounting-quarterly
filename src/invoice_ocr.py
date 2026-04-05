@@ -23,56 +23,128 @@ log = get_logger(__name__)
 MODEL = "gemini-3.1-flash-lite-preview"
 
 _EXTRACTION_PROMPT = """
-You are an expert Spanish accountant and OCR assistant.
+You are an expert Spanish accountant and OCR assistant specialising in AEAT compliance.
 
-Analyse the attached document (which may be an invoice, receipt, ticket,
-delivery note, or any commercial document) and extract the following fields
-for Spanish accounting purposes.
+Analyse the attached document (which may be a factura completa, factura simplificada,
+ticket, recibo, nota de gastos, delivery note, or any commercial document) and extract
+ALL fields required for Spanish accounting and AEAT filings (Libro de IVA, Modelo 303,
+Modelo 130, Modelo 347, Modelo 349, SII).
 
-Return ONLY a valid JSON object with these keys (use null for missing fields):
+Return ONLY a valid JSON object with these keys (use null for missing/inapplicable fields):
 
 {
-  "invoice_number":    string | null,
-  "invoice_date":      string | null,
-  "vendor_name":       string | null,
-  "vendor_nif":        string | null,
-  "vendor_address":    string | null,
-  "client_name":       string | null,
-  "client_nif":        string | null,
-  "client_address":    string | null,
-  "description":       string | null,
-  "subtotal_eur":      number | null,
-  "iva_rate":          number | null,
-  "iva_amount":        number | null,
-  "irpf_rate":         number | null,
-  "irpf_amount":       number | null,
-  "total_eur":         number | null,
-  "currency":          string,
-  "original_currency": string | null,
-  "original_amount":   number | null,
-  "fx_rate":           number | null,
-  "payment_method":    string | null,
-  "category":          string | null,
-  "notes":             string | null
+  "invoice_number":         string | null,
+  "invoice_date":           string | null,
+  "supply_date":            string | null,
+  "due_date":               string | null,
+  "invoice_type":           string | null,
+  "is_rectificativa":       boolean,
+  "rectified_invoice_ref":  string | null,
+  "vendor_name":            string | null,
+  "vendor_nif":             string | null,
+  "vendor_address":         string | null,
+  "client_name":            string | null,
+  "client_nif":             string | null,
+  "client_address":         string | null,
+  "description":            string | null,
+  "billing_period_start":   string | null,
+  "billing_period_end":     string | null,
+  "subtotal_eur":           number | null,
+  "iva_rate":               number | null,
+  "iva_amount":             number | null,
+  "iva_breakdown":          array | null,
+  "irpf_rate":              number | null,
+  "irpf_amount":            number | null,
+  "total_eur":              number | null,
+  "currency":               string,
+  "original_currency":      string | null,
+  "original_amount":        number | null,
+  "fx_rate":                number | null,
+  "payment_method":         string | null,
+  "vat_exempt_reason":      string | null,
+  "deductible_pct":         number | null,
+  "category":               string | null,
+  "notes":                  string | null
 }
 
 Field guidance:
-- invoice_date: ISO 8601 YYYY-MM-DD format.
-- subtotal_eur: base imponible (net amount before taxes), in EUR.
-- iva_rate: IVA % (e.g. 21, 10, 4, 0). If not shown but document is Spanish, assume 21.
-- iva_amount: cuota IVA in EUR.
-- irpf_rate / irpf_amount: IRPF retention % and EUR amount; null if absent.
-- total_eur: total amount to pay in EUR.
-- currency: document currency (default "EUR").
-- original_currency / original_amount: if document is in a non-EUR currency,
-  fill these; also try to fill total_eur if a EUR equivalent is shown.
-- category: one of TOOLS, SUBSCRIPTIONS, MARKETING, PROFESSIONAL_SERVICES,
-  TRAVEL, OFFICE_SUPPLIES, UTILITIES, SOFTWARE, HARDWARE, OTHER.
-- notes: flag anything unusual (missing NIF, unclear totals, foreign currency, etc.).
-- All monetary amounts must be numbers, not strings. Convert European-format
-  numbers (e.g. "1.234,56") to standard floats (1234.56).
-- For tickets/receipts with no explicit IVA breakdown, derive subtotal and
-  IVA from the total assuming 21% IVA.
+
+DATES (all ISO 8601 YYYY-MM-DD):
+- invoice_date: date printed on the document.
+- supply_date: fecha de prestación/entrega — when goods or services were actually
+  delivered. Fill only if explicitly different from invoice_date; otherwise null.
+- due_date: fecha de vencimiento / payment due date. Extract from payment terms
+  (e.g. "30 días netos" → add 30 days to invoice_date).
+- billing_period_start / billing_period_end: for subscription or recurring invoices
+  that state a coverage period (e.g. "Periodo: 01/01/2024 – 31/03/2024").
+
+DOCUMENT TYPE (invoice_type):
+- "factura_completa"     — standard full invoice (has NIF, address, itemised taxes)
+- "factura_simplificada" — simplified invoice (ticket-style, NIF may be absent)
+- "ticket"               — till receipt, no NIF required
+- "recibo"               — receipt for payment already made
+- "nota_gastos"          — expense note / nota de gastos
+- "factura_proforma"     — pro-forma invoice (not a tax document)
+- "other"                — anything else
+
+CORRECTIONS:
+- is_rectificativa: true if this is a factura rectificativa (corrective invoice).
+- rectified_invoice_ref: original invoice number/series being corrected, if stated.
+
+AMOUNTS (all numbers, no strings — convert "1.234,56" → 1234.56):
+- subtotal_eur: base imponible total (sum of all taxable bases), in EUR.
+- iva_rate / iva_amount: use the MAIN or ONLY IVA rate/amount.
+  If there is a single rate, fill both fields.
+- iva_breakdown: REQUIRED when the invoice has multiple IVA rates (very common in Spain).
+  Array of objects, one per tax line:
+  [
+    {
+      "base_imponible": number,
+      "iva_rate": number,
+      "iva_amount": number,
+      "re_rate": number | null,
+      "re_amount": number | null
+    }
+  ]
+  re_rate / re_amount: recargo de equivalencia (retail surcharge), if applicable.
+  If only one rate exists, still fill iva_breakdown with one element.
+  If no explicit breakdown is visible, derive it from the total.
+- irpf_rate / irpf_amount: IRPF retention % and amount (negative from total).
+  Common rates: 15% (professionals), 7% (new activity first 3 years), 19% (rent).
+  If not shown, set both to null — do NOT assume.
+- total_eur: final amount payable (subtotal + IVA − IRPF), in EUR.
+- currency: document currency, default "EUR".
+- original_currency / original_amount / fx_rate: if amounts are in a foreign currency.
+
+VAT TREATMENT:
+- vat_exempt_reason: if IVA = 0% or exempt, state the legal basis if shown
+  (e.g. "Art. 20 LIVA", "Art. 25 LIVA exportación", "operación intracomunitaria",
+  "OSS", "Art. 7.1 LIVA"). null if standard rated.
+
+DEDUCTIBILITY:
+- deductible_pct: percentage of this expense deductible for IRPF/IVA purposes.
+  Default 100 for normal business expenses. Use 50 for mixed-use vehicles, meals
+  with limited deductibility, or home-office partial use. null means unknown.
+
+PAYMENT:
+- payment_method: "transferencia", "tarjeta", "efectivo", "domiciliación",
+  "cheque", "paypal", "stripe", or other text found in the document.
+
+CATEGORY (classify the expense/income):
+  TOOLS, SUBSCRIPTIONS, MARKETING, PROFESSIONAL_SERVICES, TRAVEL,
+  OFFICE_SUPPLIES, UTILITIES, SOFTWARE, HARDWARE, RENT, INSURANCE,
+  BANKING_FEES, TRAINING, MEALS, OTHER.
+
+NOTES:
+- Flag: missing NIF on full invoice, amounts that don't add up, foreign currency
+  without FX rate, unclear IVA treatment, potential recargo de equivalencia,
+  intracomunitaria transactions, exports, possible SII obligation.
+- Always note if the document appears to be outside the ordinary Spanish VAT regime.
+
+QUALITY RULES:
+- All monetary fields must be numbers (float), never strings.
+- subtotal_eur + iva_amount − irpf_amount should equal total_eur (verify mentally).
+- For tickets with no IVA breakdown, derive: subtotal = total / 1.21, iva_amount = total − subtotal.
 - Do NOT include markdown fences. Output ONLY the JSON object.
 """
 
@@ -166,6 +238,7 @@ def extract_invoice(pdf_path: str | Path, api_key: Optional[str] = None) -> dict
     for field in (
         "subtotal_eur", "iva_rate", "iva_amount", "irpf_rate",
         "irpf_amount", "total_eur", "original_amount", "fx_rate",
+        "deductible_pct",
     ):
         val = data.get(field)
         if isinstance(val, str):
@@ -174,6 +247,23 @@ def extract_invoice(pdf_path: str | Path, api_key: Optional[str] = None) -> dict
                 data[field] = float(normalised)
             except (ValueError, TypeError):
                 data[field] = None
+
+    # Normalise iva_breakdown numeric sub-fields
+    breakdown = data.get("iva_breakdown")
+    if isinstance(breakdown, list):
+        for line in breakdown:
+            if isinstance(line, dict):
+                for sub in ("base_imponible", "iva_rate", "iva_amount", "re_rate", "re_amount"):
+                    v = line.get(sub)
+                    if isinstance(v, str):
+                        try:
+                            line[sub] = float(v.replace(".", "").replace(",", ".").strip())
+                        except (ValueError, TypeError):
+                            line[sub] = None
+        data["iva_breakdown"] = breakdown
+
+    # Coerce is_rectificativa to bool
+    data["is_rectificativa"] = bool(data.get("is_rectificativa"))
 
     data["_raw_response"] = raw_text
     data["_file_hash"] = file_hash

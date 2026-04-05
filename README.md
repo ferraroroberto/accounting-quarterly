@@ -106,6 +106,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
+│   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   └── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
@@ -193,7 +194,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **transactions** — Stripe payment records with classification, FX conversion, and VAT treatment data
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
-- **invoices** — AI-extracted invoice records (vendor, client, IVA, IRPF, totals)
+- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 
@@ -323,11 +324,45 @@ ACCOUNTING_PASSWORD=your_password_here
 
 ## Invoice OCR (AI Extraction)
 
-The **Invoice OCR** tab (after Invoice Upload) uses Google Gemini to extract Spanish accounting data from any PDF — invoices, receipts, tickets, foreign bills — and stores the results in the `invoices` SQLite table.
+The **Invoice OCR** tab uses Google Gemini to extract Spanish accounting data from any PDF — invoices, receipts, tickets, foreign bills — and stores the results in the `invoices` SQLite table.
 
-Extracted fields: invoice number, date, vendor/client NIF, IVA rate and amount, IRPF retention, total in EUR, original currency, payment method, and expense category.
+### Invoice directories
 
-PDFs in `data/invoices/in/` are treated as **expenses** (IVA soportado); PDFs in `data/invoices/out/` as **income** (IVA repercutido). Re-extraction is skipped automatically when the PDF has not changed (MD5 hash comparison).
+Configured via `config.json` (`invoice_in_dir` / `invoice_out_dir`). Both accept absolute paths. PDFs are scanned **recursively**, so subdirectories (e.g. year/quarter folders) are included automatically.
+
+| Direction | Default path | Accounting role |
+|-----------|-------------|-----------------|
+| **In** (expenses) | `E:/.../invoices in` | Facturas recibidas — IVA soportado |
+| **Out** (income) | `E:/.../invoices out/archive` | Facturas emitidas — IVA repercutido |
+
+Re-extraction is skipped automatically when the PDF has not changed (MD5 hash comparison).
+
+### Extracted fields
+
+All fields required for AEAT compliance (Libro de IVA, SII, Modelo 303/347/349):
+
+| Field | Description |
+|-------|-------------|
+| `invoice_number`, `invoice_date` | Document identification |
+| `invoice_type` | `factura_completa`, `factura_simplificada`, `ticket`, `recibo`, `nota_gastos` |
+| `supply_date`, `due_date` | Fecha prestación / fecha vencimiento |
+| `vendor_name`, `vendor_nif`, `vendor_address` | Emisor |
+| `client_name`, `client_nif`, `client_address` | Receptor |
+| `subtotal_eur`, `iva_rate`, `iva_amount` | Base imponible and main IVA |
+| `iva_breakdown` | JSON array — one entry per IVA rate line (supports mixed-rate invoices and recargo de equivalencia) |
+| `irpf_rate`, `irpf_amount` | IRPF retention |
+| `total_eur` | Total a pagar |
+| `vat_exempt_reason` | Legal basis for 0% IVA (Art. 20 LIVA, intracomunitaria, exportación, etc.) |
+| `deductible_pct` | Deductibility percentage (default 100; 50 for vehicles, home office, etc.) |
+| `is_rectificativa`, `rectified_invoice_ref` | Factura rectificativa handling |
+| `billing_period_start`, `billing_period_end` | Subscription billing period |
+| `payment_method`, `category`, `notes` | Classification and flags |
+
+### All Records tab features
+
+- **Date scanned** column shows when each invoice was extracted.
+- **Row-selection checkboxes** — select one or more records and click **Delete selected**.
+- **Clear invoice table** — wipes all records (with confirmation); PDF files are never touched.
 
 ### Google API key (AI Studio — recommended)
 
@@ -338,6 +373,16 @@ GOOGLE_API_KEY=AIzaSy...
 ```
 
 Model used: `gemini-3.1-flash-lite-preview`.
+
+---
+
+## Invoice Explorer
+
+The **Invoice Explorer** tab provides a filterable, exportable view of all OCR-extracted invoices in a single table.
+
+**Filters available:** direction (in/out), category, invoice type, vendor name (text search), client name (text search), invoice date range, subtotal range, and a "rectificativas only" toggle.
+
+Live summary metrics (matching count, total expenses, total income) update as filters change. Results can be exported to CSV.
 
 ### Vertex AI (GCP service account)
 

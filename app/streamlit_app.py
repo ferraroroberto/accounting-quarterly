@@ -60,7 +60,7 @@ with st.sidebar:
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr,
- tab_invoice_explorer, tab_tax, tab_validation) = st.tabs([
+ tab_invoice_explorer, tab_tax, tab_validation, tab_audit) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -72,6 +72,7 @@ with st.sidebar:
     "Invoice Explorer",
     "Tax Obligations",
     "Tax Validation",
+    "Tax Audit",
 ])
 
 # --- Welcome tab ---
@@ -150,6 +151,11 @@ with tab_welcome:
          "Cross-check gestor-filed AEAT figures (from `tmp/validation/validation.yaml`) "
          "against database-computed values for Modelo 130, 303, 349, and 390 — "
          "line-by-line casilla comparison with OK / high / low status."),
+        ("Tax Audit",
+         "Full calculation audit trail. For every cell in Modelo 303, 130, 349, OSS, and 347 "
+         "you can inspect the exact formula applied, all named input values, and the "
+         "computed result. Entries are written to `tax_audit_log` each time you hit "
+         "Calculate Tax. Download any run as JSON."),
     ]
 
     for name, description in tabs_info:
@@ -174,6 +180,7 @@ from app.invoice_upload import render as render_invoice_upload
 from app.invoice_ocr_tab import render as render_invoice_ocr
 from app.invoice_explorer import render as render_invoice_explorer
 from app.tax_validation import render as render_tax_validation
+from app.tax_audit import render as render_tax_audit
 
 with tab_report:
     render_quarter_report()
@@ -204,3 +211,6 @@ with tab_tax:
 
 with tab_validation:
     render_tax_validation()
+
+with tab_audit:
+    render_tax_audit()

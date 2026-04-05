@@ -1,9 +1,10 @@
 """Pydantic models for Spanish tax obligation computations."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 VATTreatmentType = Literal[
@@ -80,6 +81,7 @@ class Modelo303Result:
     oss_vat: float = 0.0
     export_base: float = 0.0          # IVA_EXPORT transactions base
     notes: str = ""
+    audit: list = field(default_factory=list)  # list[AuditEntry]
 
 
 @dataclass
@@ -99,6 +101,7 @@ class Modelo130Result:
     box_14_pagos_anteriores: float = 0.0  # Previous quarters paid
     box_16_resultado: float = 0.0      # max(0, Box 05 - Box 07 - Box 14)
     notes: str = ""
+    audit: list = field(default_factory=list)  # list[AuditEntry]
 
 
 @dataclass
@@ -116,6 +119,7 @@ class Modelo349Result:
     rows: list[Modelo349Row] = field(default_factory=list)
     total: float = 0.0
     notes: str = ""
+    audit: list = field(default_factory=list)  # list[AuditEntry]
 
 
 @dataclass
@@ -135,6 +139,7 @@ class OSSReturnResult:
     total_base: float = 0.0
     total_vat: float = 0.0
     total_transactions: int = 0
+    audit: list = field(default_factory=list)  # list[AuditEntry]
 
 
 @dataclass
@@ -150,6 +155,7 @@ class Modelo347Result:
     year: int
     rows: list[Modelo347Row] = field(default_factory=list)
     threshold: float = 3005.06
+    audit: list = field(default_factory=list)  # list[AuditEntry]
 
 
 @dataclass
@@ -162,3 +168,16 @@ class TaxDeadline:
     status: FilingStatus
     amount_eur: Optional[float] = None  # None until computed/filed
     notes: str = ""
+
+
+@dataclass
+class AuditEntry:
+    """One auditable calculation step within a tax model computation."""
+    model: str            # "303", "130", "349", "OSS", "347"
+    year: int
+    quarter: int          # 0 for annual models
+    cell: str             # field name, e.g. "box_01_base"
+    label: str            # human-readable, e.g. "Base imponible 21% (IVA devengado)"
+    formula: str          # text description of the formula/rule applied
+    value: float          # computed value in EUR
+    inputs_json: str = "" # JSON-serialised dict of named inputs for full traceability

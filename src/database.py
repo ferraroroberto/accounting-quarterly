@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +70,69 @@ def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
             log.warning("⚠️ DB migration skipped for %s: %s", col, exc)
 
 
+# ---------------------------------------------------------------------------
+# Geographic / VAT classification helpers for invoices
+# ---------------------------------------------------------------------------
+
+# EU VAT country prefixes (ISO 2-letter codes of EU member states, excl. Spain)
+_EU_VAT_PREFIXES: frozenset[str] = frozenset({
+    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "FI", "FR",
+    "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL",
+    "PL", "PT", "RO", "SE", "SI", "SK",
+})
+
+# Matches Spanish CIF (B12345678), DNI (12345678A), NIE (X1234567A), optionally ES-prefixed
+_SPANISH_NIF_RE = re.compile(
+    r"^(ES)?"
+    r"([A-HJ-NP-SUVW]\d{7}[0-9A-J]"   # CIF (companies / entities)
+    r"|\d{8}[A-Z]"                       # DNI (individuals)
+    r"|[XYZ]\d{7}[A-Z])$",              # NIE (foreign residents)
+    re.IGNORECASE,
+)
+
+
+def derive_geo_region_from_nif(nif: str | None) -> str:
+    """Return SPAIN / EU_NOT_SPAIN / OUTSIDE_EU / UNKNOWN from a NIF or VAT number."""
+    if not nif or not nif.strip():
+        return "UNKNOWN"
+    n = nif.strip().upper()
+    # Explicit ES prefix or matches Spanish NIF/CIF/DNI/NIE pattern
+    if n.startswith("ES") or _SPANISH_NIF_RE.match(n):
+        return "SPAIN"
+    # EU VAT number: starts with a 2-letter EU country prefix
+    if len(n) >= 4 and n[:2] in _EU_VAT_PREFIXES:
+        return "EU_NOT_SPAIN"
+    # Anything else (US EIN, no NIF at all after stripping, etc.)
+    return "OUTSIDE_EU"
+
+
+def derive_vat_treatment_for_invoice(
+    direction: str,
+    geo_region: str,
+    iva_amount: float | None,
+) -> str:
+    """Infer vat_treatment for an invoice row given direction + geo + IVA presence.
+
+    direction='in'  (expense): what IVA regime applies to our input VAT
+    direction='out' (income):  what regime applies to our output VAT
+    """
+    has_iva = bool(iva_amount and iva_amount > 0)
+    if direction == "in":
+        if has_iva:
+            return "IVA_ES_21"          # Spanish VAT charged → deductible soportado
+        if geo_region == "EU_NOT_SPAIN":
+            return "IVA_EU_B2B"         # reverse charge — no box_28 impact
+        return "IVA_EXEMPT"             # outside EU or exempt — no IVA
+    else:  # direction == 'out'
+        if geo_region == "SPAIN":
+            return "IVA_ES_21" if has_iva else "IVA_EXEMPT"
+        if geo_region == "EU_NOT_SPAIN":
+            return "IVA_EU_B2B"         # intracom B2B (ISP) — box_59
+        if geo_region == "OUTSIDE_EU":
+            return "IVA_EXPORT"         # export exemption — Art. 21 LIVA
+        return "IVA_EXEMPT"
+
+
 def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
     """Add missing columns to the `invoices` table."""
     existing = _get_table_columns(conn, "invoices")
@@ -85,6 +149,11 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "deductible_pct": "REAL DEFAULT 100",
         "billing_period_start": "TEXT",
         "billing_period_end": "TEXT",
+        # Geographic / VAT classification (mirrors transactions table)
+        "geo_region": "TEXT",        # SPAIN | EU_NOT_SPAIN | OUTSIDE_EU | UNKNOWN
+        "vat_treatment": "TEXT",     # IVA_ES_21 | IVA_EU_B2B | IVA_EXPORT | IVA_EXEMPT | OSS_EU
+        "activity_type": "TEXT",     # CONSULTING | TRAINING | SOFTWARE | SUBSCRIPTIONS | …
+        "supply_country": "TEXT",    # ISO-2 country code of the vendor / client
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -93,6 +162,59 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
                 log.info("ℹ️ Migrated DB: added invoices.%s", col)
             except Exception as exc:
                 log.warning("⚠️ DB migration skipped for invoices.%s: %s", col, exc)
+
+
+def backfill_invoice_classifications(conn: sqlite3.Connection) -> int:
+    """Auto-derive geo_region and vat_treatment for invoices where they are NULL.
+
+    Uses vendor_nif (expenses) or client_nif (income) to infer geo_region, then
+    derives vat_treatment from geo_region + iva_amount.  Only touches rows where
+    geo_region IS NULL; user-set values are never overwritten.
+
+    Returns the number of rows updated.
+    """
+    rows = conn.execute(
+        """SELECT id, direction, vendor_nif, client_nif, iva_amount
+           FROM invoices WHERE geo_region IS NULL"""
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        nif = row["vendor_nif"] if row["direction"] == "in" else row["client_nif"]
+        geo = derive_geo_region_from_nif(nif)
+        vat = derive_vat_treatment_for_invoice(
+            row["direction"], geo, row["iva_amount"]
+        )
+        conn.execute(
+            "UPDATE invoices SET geo_region = ?, vat_treatment = ? WHERE id = ?",
+            (geo, vat, row["id"]),
+        )
+        updated += 1
+    if updated:
+        conn.commit()
+        log.info("ℹ️ Backfilled geo_region/vat_treatment for %d invoice rows", updated)
+    return updated
+
+
+def _ensure_audit_schema(conn: sqlite3.Connection) -> None:
+    """Create the tax_audit_log table on existing DBs that predate it."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tax_audit_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            computed_at  TEXT NOT NULL,
+            year         INTEGER NOT NULL,
+            quarter      INTEGER NOT NULL,
+            model        TEXT NOT NULL,
+            cell         TEXT NOT NULL,
+            label        TEXT NOT NULL,
+            formula      TEXT NOT NULL,
+            inputs_json  TEXT NOT NULL DEFAULT '{}',
+            value        REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_audit_log_period
+            ON tax_audit_log(year, quarter, model, computed_at)
+    """)
 
 
 def init_db(db_path: Optional[str | Path] = None) -> None:
@@ -227,10 +349,28 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_tax_snapshots_year
                 ON tax_computation_snapshots(year);
+
+            CREATE TABLE IF NOT EXISTS tax_audit_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                computed_at  TEXT NOT NULL,
+                year         INTEGER NOT NULL,
+                quarter      INTEGER NOT NULL,
+                model        TEXT NOT NULL,
+                cell         TEXT NOT NULL,
+                label        TEXT NOT NULL,
+                formula      TEXT NOT NULL,
+                inputs_json  TEXT NOT NULL DEFAULT '{}',
+                value        REAL NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_log_period
+                ON tax_audit_log(year, quarter, model, computed_at);
         """)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)
+        _ensure_audit_schema(conn)
         conn.commit()
+        backfill_invoice_classifications(conn)
         log.info("ℹ️ Database initialised at %s", _DB_PATH)
     finally:
         conn.close()
@@ -638,6 +778,19 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
     conn = _get_connection(db_path)
     try:
         record_id = data.get("id") or str(uuid.uuid4())
+        direction = data.get("direction", "in")
+        iva_amount = data.get("iva_amount")
+        vendor_nif = data.get("vendor_nif")
+        client_nif = data.get("client_nif")
+        # Auto-derive geo_region from NIF if not explicitly provided
+        nif_for_geo = vendor_nif if direction == "in" else client_nif
+        geo_region = data.get("geo_region") or derive_geo_region_from_nif(nif_for_geo)
+        vat_treatment = data.get("vat_treatment") or derive_vat_treatment_for_invoice(
+            direction, geo_region, iva_amount
+        )
+        # Map category → activity_type when not explicitly set
+        activity_type = data.get("activity_type") or data.get("category")
+
         conn.execute("""
             INSERT INTO invoices (
                 id, filename, direction, invoice_number, invoice_date,
@@ -649,7 +802,8 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 payment_method, category, notes, raw_json, file_hash,
                 invoice_type, supply_date, due_date, is_rectificativa,
                 rectified_invoice_ref, vat_exempt_reason, iva_breakdown,
-                deductible_pct, billing_period_start, billing_period_end
+                deductible_pct, billing_period_start, billing_period_end,
+                geo_region, vat_treatment, activity_type, supply_country
             ) VALUES (
                 :id, :filename, :direction, :invoice_number, :invoice_date,
                 :vendor_name, :vendor_nif, :vendor_address,
@@ -660,7 +814,8 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 :payment_method, :category, :notes, :raw_json, :file_hash,
                 :invoice_type, :supply_date, :due_date, :is_rectificativa,
                 :rectified_invoice_ref, :vat_exempt_reason, :iva_breakdown,
-                :deductible_pct, :billing_period_start, :billing_period_end
+                :deductible_pct, :billing_period_start, :billing_period_end,
+                :geo_region, :vat_treatment, :activity_type, :supply_country
             )
             ON CONFLICT(filename, direction) DO UPDATE SET
                 invoice_number = excluded.invoice_number,
@@ -697,23 +852,27 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
                 deductible_pct = excluded.deductible_pct,
                 billing_period_start = excluded.billing_period_start,
                 billing_period_end = excluded.billing_period_end,
+                geo_region = excluded.geo_region,
+                vat_treatment = excluded.vat_treatment,
+                activity_type = excluded.activity_type,
+                supply_country = excluded.supply_country,
                 extracted_at = datetime('now')
         """, {
             "id": record_id,
             "filename": data.get("filename", ""),
-            "direction": data.get("direction", "in"),
+            "direction": direction,
             "invoice_number": data.get("invoice_number"),
             "invoice_date": data.get("invoice_date"),
             "vendor_name": data.get("vendor_name"),
-            "vendor_nif": data.get("vendor_nif"),
+            "vendor_nif": vendor_nif,
             "vendor_address": data.get("vendor_address"),
             "client_name": data.get("client_name"),
-            "client_nif": data.get("client_nif"),
+            "client_nif": client_nif,
             "client_address": data.get("client_address"),
             "description": data.get("description"),
             "subtotal_eur": data.get("subtotal_eur"),
             "iva_rate": data.get("iva_rate"),
-            "iva_amount": data.get("iva_amount"),
+            "iva_amount": iva_amount,
             "irpf_rate": data.get("irpf_rate"),
             "irpf_amount": data.get("irpf_amount"),
             "total_eur": data.get("total_eur"),
@@ -736,6 +895,10 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
             "deductible_pct": data.get("deductible_pct", 100),
             "billing_period_start": data.get("billing_period_start"),
             "billing_period_end": data.get("billing_period_end"),
+            "geo_region": geo_region,
+            "vat_treatment": vat_treatment,
+            "activity_type": activity_type,
+            "supply_country": data.get("supply_country"),
         })
         conn.commit()
         return record_id
@@ -1028,6 +1191,74 @@ def load_tax_snapshots_for_period(
            WHERE year = ? AND (quarter = ? OR (model = '347' AND quarter = ?))""",
         (year, quarter, TAX_SNAPSHOT_QUARTER_ANNUAL),
     ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# tax_audit_log helpers
+# ---------------------------------------------------------------------------
+
+def upsert_audit_entries_conn(
+    conn: sqlite3.Connection,
+    entries: list,  # list[AuditEntry]
+    computed_at: str,
+) -> None:
+    """Persist a list of AuditEntry objects for the given computed_at timestamp.
+
+    Replaces any existing entries for the same (year, quarter, model, computed_at)
+    so re-running a calculation always gives a fresh, consistent audit trail.
+    """
+    if not entries:
+        return
+    first = entries[0]
+    conn.execute(
+        "DELETE FROM tax_audit_log WHERE year = ? AND quarter = ? AND model = ? AND computed_at = ?",
+        (first.year, first.quarter, first.model, computed_at),
+    )
+    conn.executemany(
+        """INSERT INTO tax_audit_log
+               (computed_at, year, quarter, model, cell, label, formula, inputs_json, value)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (computed_at, e.year, e.quarter, e.model, e.cell,
+             e.label, e.formula, e.inputs_json, e.value)
+            for e in entries
+        ],
+    )
+
+
+def load_audit_entries(
+    year: int,
+    quarter: int,
+    model: str,
+    computed_at: Optional[str] = None,
+    db_path: Optional[str | Path] = None,
+) -> list[dict]:
+    """Load audit log rows for a given period and model.
+
+    If *computed_at* is None, returns entries from the most recent computation run.
+    """
+    conn = _get_connection(db_path)
+    try:
+        _ensure_audit_schema(conn)
+        if computed_at is None:
+            row = conn.execute(
+                """SELECT MAX(computed_at) AS ts FROM tax_audit_log
+                   WHERE year = ? AND quarter = ? AND model = ?""",
+                (year, quarter, model),
+            ).fetchone()
+            if not row or not row["ts"]:
+                return []
+            computed_at = row["ts"]
+        rows = conn.execute(
+            """SELECT id, computed_at, year, quarter, model, cell, label, formula, inputs_json, value
+               FROM tax_audit_log
+               WHERE year = ? AND quarter = ? AND model = ? AND computed_at = ?
+               ORDER BY id""",
+            (year, quarter, model, computed_at),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def upsert_vat_treatment(payment_id: str, vat_treatment: str,

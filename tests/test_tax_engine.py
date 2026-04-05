@@ -183,12 +183,16 @@ class TestModelo130:
         result = compute_modelo_130(2025, 1, db_conn)
         assert result.box_14_pagos_anteriores == 0.0
         assert result.box_01_ingresos == pytest.approx(1000.0)
-        assert result.box_05_base == pytest.approx(200.0)  # 20% of 1000
+        # 5% of 1000 = 50 gastos de difícil justificación
+        assert result.gastos_dificil_justificacion == pytest.approx(50.0)
+        assert result.rendimiento_neto == pytest.approx(950.0)
+        # 20% of 950 = 190
+        assert result.box_05_base == pytest.approx(190.0)
 
     def test_retenciones_greater_than_20pct_net_gives_zero(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
-        # Retenciones YTD = 600 > 20% of 1000 = 200
+        # Retenciones YTD = 600 > 20% of 950 (after 5% deduction) = 190
         db_conn.execute(
             "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) VALUES (2025, 1, 'RETENCIONES_SOPORTADAS', 600.0)"
         )
@@ -205,6 +209,7 @@ class TestModelo130:
         db_conn.commit()
         result = compute_modelo_130(2025, 1, db_conn)
         assert result.box_03_rendimiento < 0
+        assert result.gastos_dificil_justificacion == 0.0  # No deduction on negative rendimiento
         assert result.box_05_base == 0.0  # max(0, negative)
         assert result.box_16_resultado == 0.0
 
@@ -215,17 +220,20 @@ class TestModelo130:
         # Insert Q2 transaction
         _insert_tx(db_conn, id="t2", created_date="2025-04-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
-        # Save Q1 Modelo 130 as COMPUTED with amount 200
+        # Save Q1 Modelo 130 as COMPUTED with amount 190 (after 5% deduction)
         db_conn.execute(
             """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur)
-               VALUES (2025, '130', 1, 'COMPUTED', 200.0)"""
+               VALUES (2025, '130', 1, 'COMPUTED', 190.0)"""
         )
         db_conn.commit()
         result = compute_modelo_130(2025, 2, db_conn)
         assert result.box_01_ingresos == pytest.approx(2000.0)  # YTD
-        assert result.box_14_pagos_anteriores == pytest.approx(200.0)
-        # 20% of 2000 = 400 - 200 prior = 200
-        assert result.box_16_resultado == pytest.approx(200.0)
+        assert result.box_14_pagos_anteriores == pytest.approx(190.0)
+        # rendimiento neto previo = 2000, 5% = 100, rendimiento neto = 1900
+        # 20% of 1900 = 380 - 190 prior = 190
+        assert result.gastos_dificil_justificacion == pytest.approx(100.0)
+        assert result.rendimiento_neto == pytest.approx(1900.0)
+        assert result.box_16_resultado == pytest.approx(190.0)
 
 
 # ---------------------------------------------------------------------------

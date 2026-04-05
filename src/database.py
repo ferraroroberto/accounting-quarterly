@@ -31,6 +31,12 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "source": "TEXT NOT NULL DEFAULT 'csv'",
     "loaded_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
     "updated_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
+    # VAT / tax fields
+    "vat_treatment": "TEXT",
+    "vat_base_eur": "REAL",
+    "vat_amount_eur": "REAL",
+    "oss_country": "TEXT",
+    "buyer_vat_id": "TEXT",
 }
 
 
@@ -166,6 +172,36 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
                 ON invoices(direction);
             CREATE INDEX IF NOT EXISTS idx_invoices_date
                 ON invoices(invoice_date);
+
+            CREATE TABLE IF NOT EXISTS quarterly_tax_entries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                year        INTEGER NOT NULL,
+                quarter     INTEGER NOT NULL,
+                entry_type  TEXT NOT NULL,
+                amount_eur  REAL NOT NULL DEFAULT 0,
+                description TEXT,
+                notes       TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tax_entries_period
+                ON quarterly_tax_entries(year, quarter);
+
+            CREATE TABLE IF NOT EXISTS tax_filing_status (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                year        INTEGER NOT NULL,
+                quarter     INTEGER,
+                model       TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'PENDING',
+                filed_at    TEXT,
+                amount_eur  REAL,
+                notes       TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_status_key
+                ON tax_filing_status(year, model, COALESCE(quarter, -1));
         """)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)
@@ -714,5 +750,151 @@ def delete_invoice(filename: str, direction: str,
         )
         conn.commit()
         return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# quarterly_tax_entries helpers
+# ---------------------------------------------------------------------------
+
+def get_tax_entries(year: int, quarter: int,
+                    db_path: Optional[str | Path] = None) -> list[dict]:
+    """Return all manual tax entries for the given year/quarter."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM quarterly_tax_entries WHERE year = ? AND quarter = ? ORDER BY id",
+            (year, quarter),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def add_tax_entry(year: int, quarter: int, entry_type: str, amount_eur: float,
+                  description: str = "", notes: str = "",
+                  db_path: Optional[str | Path] = None) -> int:
+    """Insert a manual tax entry. Returns the new row id."""
+    conn = _get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            """INSERT INTO quarterly_tax_entries
+               (year, quarter, entry_type, amount_eur, description, notes)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (year, quarter, entry_type, amount_eur, description, notes),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+
+def delete_tax_entry(entry_id: int, db_path: Optional[str | Path] = None) -> bool:
+    """Delete a manual tax entry by id. Returns True if deleted."""
+    conn = _get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM quarterly_tax_entries WHERE id = ?", (entry_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_tax_entries_ytd(year: int, quarter: int, entry_type: str,
+                        db_path: Optional[str | Path] = None) -> float:
+    """Sum a given entry_type from Q1 through the given quarter (YTD)."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            """SELECT COALESCE(SUM(amount_eur), 0) AS total
+               FROM quarterly_tax_entries
+               WHERE year = ? AND quarter <= ? AND entry_type = ?""",
+            (year, quarter, entry_type),
+        ).fetchone()
+        return float(row["total"])
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# tax_filing_status helpers
+# ---------------------------------------------------------------------------
+
+def get_filing_status(year: int, model: str, quarter: Optional[int] = None,
+                      db_path: Optional[str | Path] = None) -> Optional[dict]:
+    """Return the filing status record for the given year/model/quarter, or None."""
+    conn = _get_connection(db_path)
+    try:
+        if quarter is None:
+            row = conn.execute(
+                "SELECT * FROM tax_filing_status WHERE year = ? AND model = ? AND quarter IS NULL",
+                (year, model),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM tax_filing_status WHERE year = ? AND model = ? AND quarter = ?",
+                (year, model, quarter),
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_filing_status(year: int, model: str, quarter: Optional[int],
+                         status: str, amount_eur: Optional[float] = None,
+                         notes: str = "", filed_at: Optional[str] = None,
+                         db_path: Optional[str | Path] = None) -> None:
+    """Insert or update a filing status record."""
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(year, model, COALESCE(quarter, -1)) DO UPDATE SET
+                   status = excluded.status,
+                   amount_eur = excluded.amount_eur,
+                   notes = excluded.notes,
+                   filed_at = excluded.filed_at""",
+            (year, model, quarter, status, amount_eur, notes, filed_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_filing_statuses(year: int,
+                             db_path: Optional[str | Path] = None) -> list[dict]:
+    """Return all filing status records for the given year."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM tax_filing_status WHERE year = ? ORDER BY model, quarter",
+            (year,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def upsert_vat_treatment(payment_id: str, vat_treatment: str,
+                         vat_base_eur: float, vat_amount_eur: float,
+                         oss_country: Optional[str] = None,
+                         buyer_vat_id: Optional[str] = None,
+                         db_path: Optional[str | Path] = None) -> None:
+    """Write VAT treatment fields back to the transactions table."""
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """UPDATE transactions SET
+                   vat_treatment = ?, vat_base_eur = ?, vat_amount_eur = ?,
+                   oss_country = ?, buyer_vat_id = ?, updated_at = datetime('now')
+               WHERE id = ?""",
+            (vat_treatment, vat_base_eur, vat_amount_eur,
+             oss_country, buyer_vat_id, payment_id),
+        )
+        conn.commit()
     finally:
         conn.close()

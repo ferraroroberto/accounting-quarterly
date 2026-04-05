@@ -11,7 +11,7 @@ import streamlit as st
 ROOT = Path(__file__).parent.parent
 
 from app.data_loader import invalidate_cache
-from src.config import load_config
+from src.config import load_config, reload_config, save_config
 from src.rules_engine import load_rules, save_rules
 from src.stripe_client import check_permissions, test_connection
 
@@ -26,6 +26,7 @@ def render():
         "Geographic Rules",
         "Stripe API",
         "App Settings",
+        "Tax Settings",
     ])
 
     # --- Classification Rules (editable JSON) ---
@@ -271,4 +272,98 @@ geographic classification instead of manual overrides.
         if st.button("Clear Cache", key="clear_cache"):
             invalidate_cache()
             st.success("Cache cleared")
+        if st.button("Reload Config", key="reload_config"):
+            reload_config()
+            st.success("Config reloaded from disk")
+            st.rerun()
         st.caption(f"Data root: `{ROOT}`")
+
+    # --- Tax Settings ---
+    with config_tabs[4]:
+        st.subheader("Tax Settings (Spanish Autónomo)")
+        st.caption("These settings drive Modelo 303, 130, OSS, and other tax computations.")
+
+        tax = cfg.get("tax", {})
+
+        st.markdown("##### Identity")
+        col1, col2 = st.columns(2)
+        nif = col1.text_input("NIF / NIE", value=tax.get("nif", ""), key="tax_nif",
+                              help="Your Spanish tax ID (e.g. X5939179G)")
+        activity_start = col2.text_input(
+            "Activity start date (YYYY-MM-DD)",
+            value=tax.get("activity_start_date", ""),
+            key="tax_start_date",
+            help="Date you registered as autónomo — determines IRPF retention rate eligibility",
+        )
+
+        st.markdown("##### Fiscal Regime")
+        REGIME_OPTIONS = ["estimacion_directa_simplificada", "estimacion_directa_normal", "modulos"]
+        regime_val = tax.get("regime", "estimacion_directa_simplificada")
+        if regime_val not in REGIME_OPTIONS:
+            REGIME_OPTIONS.append(regime_val)
+        regime = st.selectbox("Regime", REGIME_OPTIONS,
+                              index=REGIME_OPTIONS.index(regime_val), key="tax_regime")
+
+        col1, col2 = st.columns(2)
+        vat_registered = col1.checkbox("VAT registered (IVA)", value=tax.get("vat_registered", True),
+                                       key="tax_vat_reg")
+        oss_registered = col2.checkbox("OSS registered", value=tax.get("oss_registered", True),
+                                       key="tax_oss_reg")
+
+        col1, col2, col3 = st.columns(3)
+        oss_country = col1.text_input("OSS registration country",
+                                      value=tax.get("oss_registration_country", "ES"),
+                                      key="tax_oss_country")
+        fiscal_year_start = col2.number_input("Fiscal year start month", min_value=1, max_value=12,
+                                              value=tax.get("fiscal_year_start_month", 1),
+                                              key="tax_fy_start")
+        vat_proration = col3.number_input("VAT proration % (prorrata)", min_value=0, max_value=100,
+                                          value=tax.get("vat_proration_percentage", 100),
+                                          key="tax_vat_prorrata")
+
+        st.markdown("##### IRPF")
+        irpf_rate_pct = st.slider(
+            "IRPF retention rate",
+            min_value=0, max_value=30, step=1,
+            value=int(round(float(tax.get("irpf_retention_rate", 0.15)) * 100)),
+            format="%d%%",
+            key="tax_irpf_rate",
+            help="15% after first 3 years of activity; 7% during the first 3 years",
+        )
+        irpf_rate = irpf_rate_pct / 100.0
+        st.caption(f"Current rate: {irpf_rate_pct}%  |  {'🔵 Standard (post-3yr)' if irpf_rate_pct == 15 else '🟡 Reduced (first 3yr)' if irpf_rate_pct == 7 else '⚙️ Custom'}")
+
+        st.markdown("##### EU VAT defaults")
+        EU_B2B_OPTIONS = ["IVA_EU_B2B", "IVA_EU_B2C"]
+        EU_NL_OPTIONS = ["OSS_EU", "IVA_EU_B2B"]
+        col1, col2 = st.columns(2)
+        eu_coaching = col1.selectbox(
+            "EU Coaching VAT treatment",
+            EU_B2B_OPTIONS,
+            index=EU_B2B_OPTIONS.index(tax.get("default_vat_treatment_eu_coaching", "IVA_EU_B2B")),
+            key="tax_eu_coaching",
+        )
+        eu_newsletter = col2.selectbox(
+            "EU Newsletter VAT treatment",
+            EU_NL_OPTIONS,
+            index=EU_NL_OPTIONS.index(tax.get("default_vat_treatment_eu_newsletter", "OSS_EU")),
+            key="tax_eu_newsletter",
+        )
+
+        st.divider()
+        if st.button("Save Tax Settings", type="primary", key="save_tax_settings"):
+            cfg["tax"] = {
+                "regime": regime,
+                "vat_registered": vat_registered,
+                "oss_registered": oss_registered,
+                "oss_registration_country": oss_country,
+                "irpf_retention_rate": round(irpf_rate, 4),
+                "activity_start_date": activity_start,
+                "nif": nif,
+                "fiscal_year_start_month": int(fiscal_year_start),
+                "vat_proration_percentage": int(vat_proration),
+                "default_vat_treatment_eu_coaching": eu_coaching,
+                "default_vat_treatment_eu_newsletter": eu_newsletter,
+            }
+            save_config(cfg)
+            st.success("Tax settings saved to config.json")

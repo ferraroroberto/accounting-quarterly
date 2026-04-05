@@ -47,7 +47,7 @@ with st.sidebar:
 
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
- tab_currency, tab_config, tab_invoices, tab_invoice_ocr) = st.tabs([
+ tab_currency, tab_config, tab_invoices, tab_invoice_ocr, tab_tax) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -56,6 +56,7 @@ with st.sidebar:
     "Configuration",
     "Invoice Upload",
     "Invoice OCR",
+    "Tax Obligations",
 ])
 
 # --- Welcome tab ---
@@ -118,6 +119,11 @@ with tab_welcome:
          "(invoice, receipt, ticket). Uses Google Gemini to parse vendor, "
          "client, IVA, IRPF, and totals, and stores results in the `invoices` "
          "table. Supports in (expenses) and out (income) documents."),
+        ("Tax Obligations",
+         "Spanish autónomo tax filing assistant. Computes Modelo 303 (IVA), "
+         "Modelo 130 (IRPF advance), OSS Return, Modelo 349 (intra-EU), and "
+         "Modelo 347 (annual counterparty operations). Shows a tax calendar "
+         "with deadlines and filing status."),
     ]
 
     for name, description in tabs_info:
@@ -133,6 +139,7 @@ with tab_welcome:
 
 # --- Tab imports and rendering ---
 from app.quarter_report import render as render_quarter_report
+from app.tax_obligations import render as render_tax_obligations
 from app.transaction_browser import render as render_transaction_browser
 from app.history import render as render_history
 from app.currency import render as render_currency
@@ -160,3 +167,6 @@ with tab_invoices:
 
 with tab_invoice_ocr:
     render_invoice_ocr()
+
+with tab_tax:
+    render_tax_obligations()

@@ -183,7 +183,7 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             result.box_01_base += base
             result.box_03_cuota += vat
         elif treatment == "IVA_EU_B2B":
-            result.box_10_intracom += base
+            result.box_59_intracom_entregas += base
         elif treatment == "OSS_EU":
             result.oss_base += base
             result.oss_vat += vat
@@ -194,12 +194,13 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.box_28_iva_soportado = _get_tax_entries_total(
         year, quarter, "IVA_SOPORTADO", db_conn, ytd=False
     )
-    result.box_29_base_soportado = result.box_28_iva_soportado  # simplification
+    # Derive base from cuota assuming general 21% rate (approximate when mixed rates exist)
+    result.box_29_base_soportado = round(result.box_28_iva_soportado / 0.21, 2) if result.box_28_iva_soportado else 0.0
 
     # Round accumulations
     result.box_01_base = round(result.box_01_base, 2)
     result.box_03_cuota = round(result.box_03_cuota, 2)
-    result.box_10_intracom = round(result.box_10_intracom, 2)
+    result.box_59_intracom_entregas = round(result.box_59_intracom_entregas, 2)
     result.oss_base = round(result.oss_base, 2)
     result.oss_vat = round(result.oss_vat, 2)
     result.export_base = round(result.export_base, 2)
@@ -215,7 +216,7 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result = Modelo130Result(year=year, quarter=quarter)
     rows = _load_classified_ytd(year, quarter, db_conn)
 
-    total_income = sum(_net_amount(r) for r in rows)
+    total_income = sum(_get_vat_base(r) for r in rows)
     result.box_01_ingresos = round(total_income, 2)
 
     result.box_02_gastos = round(

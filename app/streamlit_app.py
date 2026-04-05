@@ -47,7 +47,7 @@ with st.sidebar:
 
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
- tab_currency, tab_config, tab_invoices) = st.tabs([
+ tab_currency, tab_config, tab_invoices, tab_invoice_ocr) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -55,6 +55,7 @@ with st.sidebar:
     "Currency",
     "Configuration",
     "Invoice Upload",
+    "Invoice OCR",
 ])
 
 # --- Welcome tab ---
@@ -112,6 +113,11 @@ with tab_welcome:
          "Upload invoice PDFs to your accounting partner. Scans the "
          "`invoices/in` and `invoices/out` directories, tracks which files "
          "have already been uploaded, and sends only new ones."),
+        ("Invoice OCR",
+         "AI-powered extraction of Spanish accounting data from any PDF "
+         "(invoice, receipt, ticket). Uses Google Gemini to parse vendor, "
+         "client, IVA, IRPF, and totals, and stores results in the `invoices` "
+         "table. Supports in (expenses) and out (income) documents."),
     ]
 
     for name, description in tabs_info:
@@ -132,6 +138,7 @@ from app.history import render as render_history
 from app.currency import render as render_currency
 from app.configuration import render as render_configuration
 from app.invoice_upload import render as render_invoice_upload
+from app.invoice_ocr_tab import render as render_invoice_ocr
 
 with tab_report:
     render_quarter_report()
@@ -150,3 +157,6 @@ with tab_config:
 
 with tab_invoices:
     render_invoice_upload()
+
+with tab_invoice_ocr:
+    render_invoice_ocr()

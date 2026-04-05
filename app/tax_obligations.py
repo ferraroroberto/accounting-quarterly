@@ -118,8 +118,8 @@ def _render_modelo_303(year: int, quarter: int) -> None:
     col1, col2 = st.columns(2)
     col1.metric("Box 01 — Base imponible al 21%", _fmt_eur(result.box_01_base))
     col2.metric("Box 03 — Cuota (21% × Box 01)", _fmt_eur(result.box_03_cuota))
-    st.metric("Box 10 — Entregas intracom. exentas (IVA_EU_B2B base, informative)",
-              _fmt_eur(result.box_10_intracom))
+    st.metric("Box 59 — Entregas intracom. exentas (EU B2B sales, informative)",
+              _fmt_eur(result.box_59_intracom_entregas))
 
     if result.oss_base > 0:
         st.info(

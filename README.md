@@ -92,6 +92,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, tax)
 │   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, calendar
+│   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # Gemini-powered PDF extraction for Spanish accounting
 │   ├── logger.py                  # Rotating file logger
@@ -107,7 +108,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
-│   └── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
+│   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
+│   └── tax_validation.py          # Tax validation tab (gestor-filed vs DB-computed comparison)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py
@@ -124,6 +126,9 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   └── invoices/
 │       ├── in/                    # Invoices received (PDFs)
 │       └── out/                   # Invoices produced (PDFs)
+├── tmp/
+│   └── validation/
+│       └── validation.yaml        # Gestor-filed AEAT reference data (git-ignored)
 └── logs/                          # Rotating daily log files
 ```
 
@@ -270,6 +275,51 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
 Items that cannot be derived from Stripe (IVA soportado on expenses, deductible costs, retenciones received from Spanish clients) are entered via the **Manual Entries** sub-tab and stored in `quarterly_tax_entries`.
 
 > **Disclaimer:** This tool pre-fills tax data for review purposes only. It does not constitute tax advice. Always review outputs with a qualified gestor or asesor fiscal before filing.
+
+---
+
+## Tax Validation
+
+The **Tax Validation** tab cross-checks the figures your gestor filed with AEAT against the values computed from your local database, making it easy to spot missing invoices, unclassified transactions, or expenses not yet entered.
+
+### How it works
+
+1. Filed reference data is stored in `tmp/validation/validation.yaml` (gitignored — never committed).
+2. At startup the tab loads that file, runs the same tax-engine computations used in Tax Obligations, and builds a line-by-line comparison for each casilla (PDF box).
+3. Each line gets a status:
+
+| Status | Icon | Meaning |
+|--------|------|---------|
+| `OK` | ✅ | DB value matches filed value (within €0.02 tolerance) |
+| `DB_HIGH` | ⬆️ | DB computes a higher value than the gestor filed |
+| `DB_LOW` | ⬇️ | DB computes a lower value than the gestor filed |
+| `N/A` | ➖ | One side has no data (yet) |
+
+**Diff sign convention:** `DB − filed`. Positive = our system computes more; negative = our system computes less.
+
+### Supported models
+
+| Model | Scope |
+|-------|-------|
+| Modelo 130 | Quarterly IRPF advance (YTD boxes) |
+| Modelo 303 | Quarterly IVA — devengado, deducible, result |
+| Modelo 349 | Intracomunitarias — operator count and total amount |
+| Modelo 390 | Annual IVA summary — all major casillas |
+
+### Adding a new filing period
+
+Uncomment and fill in the appropriate template block in `tmp/validation/validation.yaml`. No code changes are required — the tab reads all entries dynamically.
+
+```yaml
+- model: "130"
+  year: 2026
+  quarter: 1
+  filed_date: "2026-04-20"
+  result: 0.00
+  values:
+    "01_ingresos_ytd": 0.00
+    # ... (copy from gestor PDF)
+```
 
 ---
 

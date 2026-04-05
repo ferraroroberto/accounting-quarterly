@@ -165,8 +165,6 @@ def validate_modelo_303(
                         v.get("07_base_21pct"), computed.box_01_base),
         ValidationLine("09", "Cuota devengada @ 21%",
                         v.get("09_cuota_21pct"), computed.box_03_cuota),
-        ValidationLine("10", "Base adquisiciones intracomunitarias (ISP)",
-                        v.get("10_base_intracom"), computed.box_10_intracom),
         ValidationLine("27", "Total cuota IVA devengada",
                         v.get("27_total_cuota_devengada"), computed.box_03_cuota),
         ValidationLine("28", "Base IVA soportado interior corrientes",
@@ -175,6 +173,8 @@ def validate_modelo_303(
                         v.get("29_cuota_soportado"), computed.box_28_iva_soportado),
         ValidationLine("46", "Resultado régimen general (devengado - deducible)",
                         v.get("46_resultado"), computed.box_46_diferencia),
+        ValidationLine("59", "Entregas intracomunitarias de bienes y servicios",
+                        v.get("59_entregas_intracom"), computed.box_59_intracom_entregas),
         ValidationLine("60", "Exportaciones y operaciones exentas (informativo)",
                         v.get("60_exportaciones"), computed.export_base),
     ]
@@ -233,7 +233,7 @@ def validate_modelo_390(
         m = compute_modelo_303(year, q, conn)
         agg["base_21"]         += m.box_01_base
         agg["cuota_21"]        += m.box_03_cuota
-        agg["intracom"]        += m.box_10_intracom
+        agg["intracom"]        += m.box_59_intracom_entregas
         agg["export"]          += m.export_base
         agg["oss"]             += m.oss_base
         agg["soportado_base"]  += m.box_29_base_soportado
@@ -261,7 +261,7 @@ def validate_modelo_390(
                         v.get("06_cuota_ord_21"),    agg["cuota_21"]),
         ValidationLine("33",     "Total bases IVA devengado",
                         v.get("33_total_bases"),
-                        round(agg["base_21"] + agg["intracom"] + agg["oss"], 2)),
+                        round(agg["base_21"] + agg["intracom"], 2)),
         ValidationLine("34",     "Total cuotas IVA devengado",
                         v.get("34_total_cuotas"),    agg["cuota_21"]),
         ValidationLine("48/49",  "Total base/cuota IVA deducible interior",
@@ -273,7 +273,8 @@ def validate_modelo_390(
         ValidationLine("86",     "Resultado liquidación anual",
                         v.get("86_resultado_liquidacion"), agg_resultado),
         ValidationLine("99",     "Volumen operaciones régimen general",
-                        v.get("99_regimen_general"), agg["base_21"]),
+                        v.get("99_regimen_general"),
+                        round(agg["base_21"] + agg["intracom"] + agg["export"], 2)),
         ValidationLine("103",    "Entregas intracomunitarias (informativo)",
                         v.get("103_entregas_intracom"), agg["intracom"]),
         ValidationLine("104",    "Exportaciones y exentas con derecho a deducción",

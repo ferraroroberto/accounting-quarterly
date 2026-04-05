@@ -155,7 +155,7 @@ class TestModelo303:
         result = compute_modelo_303(2025, 1, db_conn)
         assert result.box_01_base == pytest.approx(500.0)
         assert result.box_03_cuota == pytest.approx(105.0)
-        assert result.box_10_intracom == pytest.approx(300.0)
+        assert result.box_59_intracom_entregas == pytest.approx(300.0)
         assert result.export_base == pytest.approx(200.0)
 
     def test_iva_soportado_greater_than_devengado_gives_refund(self, db_conn):

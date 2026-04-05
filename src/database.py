@@ -365,6 +365,18 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_audit_log_period
                 ON tax_audit_log(year, quarter, model, computed_at);
+
+            CREATE TABLE IF NOT EXISTS social_security_payments (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_date TEXT NOT NULL,
+                amount_eur   REAL NOT NULL,
+                description  TEXT NOT NULL DEFAULT '',
+                source_file  TEXT NOT NULL DEFAULT '',
+                imported_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ss_payments_date
+                ON social_security_payments(payment_date);
         """)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)

@@ -89,7 +89,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, tax, audit)
+│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, SS, tax, audit)
+│   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results + AuditEntry
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
@@ -109,6 +110,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
+│   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
 │   ├── tax_validation.py          # Tax validation tab (gestor-filed vs DB-computed comparison)
 │   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
@@ -129,6 +131,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │       ├── in/                    # Invoices received (PDFs)
 │       └── out/                   # Invoices produced (PDFs)
 ├── tmp/
+│   ├── social_security_bank_export.xlsx  # Bank export for SS cuotas (git-ignored, configurable)
 │   └── validation/
 │       └── validation.yaml        # Gestor-filed AEAT reference data (git-ignored)
 └── logs/                          # Rotating daily log files
@@ -202,6 +205,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
 - **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly
+- **social_security_payments** — Seguridad Social cuota payments imported from bank account exports. Deduplication key: `(payment_date, amount_eur)`. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
@@ -224,6 +228,48 @@ Required permissions for restricted keys (`rk_live_...`):
 - **Read balance transactions** — fee details
 
 The dashboard includes a connection tester and permission checker under **Configuration → Stripe API**.
+
+---
+
+## Seguridad Social (Social Security Cuotas)
+
+The **Seguridad Social** tab imports monthly autónomo quota payments debited from your bank account and feeds them automatically into **Modelo 130** as deductible expenses.
+
+### Data source
+
+Cuota payments are not issued as invoices — they appear as bank debits. Export your bank statement (the rows corresponding to Seguridad Social payments) to Excel or CSV and import via this tab.
+
+### Setup
+
+1. Export the relevant rows from your bank's online portal to `.xlsx` or `.csv`.
+2. Place the file anywhere accessible (default: `tmp/social_security_bank_export.xlsx`).
+3. Configure the column names in `config.json`:
+
+```json
+{
+  "social_security": {
+    "bank_export_file": "tmp/social_security_bank_export.xlsx",
+    "date_column": "Fecha",
+    "amount_column": "Importe",
+    "description_column": "Concepto",
+    "sheet_name": 0,
+    "skiprows": 0
+  }
+}
+```
+
+4. Open the **Seguridad Social** tab, verify the column mapping with **Preview file columns**, then click **Import from file**.
+
+### How it works
+
+- Amounts are stored as **positive values** in the `social_security_payments` table (debits from the bank export are negative; the importer takes the absolute value).
+- Deduplication is by `(payment_date, amount_eur)` — re-importing the same file is safe.
+- The **Modelo 130** engine sums all SS payments from January 1 through the end of the selected quarter (YTD) and includes them in **box 02 — gastos deducibles**, alongside OCR-extracted expense invoices and manual entries. Legal basis: cuotas de autónomo are fully deductible under Art. 30 LIRPF (*régimen de estimación directa*).
+- The audit trail (Tax Audit tab) records `ss_gastos` and the full list of individual payments as named inputs to the `box_02_gastos` cell.
+
+### Quarterly breakdown
+
+The tab shows per-year totals and, when a year is selected, a quarterly breakdown (Q1–Q4) so you can reconcile against the TGSS monthly receipts.
 
 ---
 
@@ -282,15 +328,16 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
 
 OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax models alongside Stripe transactions:
 
-| Model | Invoice contribution |
-|-------|---------------------|
-| **Modelo 303** box_28 | IVA soportado from expense invoices (`direction='in'`) |
-| **Modelo 303** box_01 | Base from income invoices classified as `IVA_ES_21` |
-| **Modelo 130** box_01 | Subtotal from non-Stripe income invoices (`direction='out'`) |
-| **Modelo 130** box_02 | Subtotal from expense invoices (weighted by `deductible_pct`) |
-| **Modelo 130** box_07 | IRPF withheld (`irpf_amount`) on outgoing invoices |
-| **Modelo 347** | Spanish-client invoice income alongside Stripe |
-| **Modelo 349** | EU B2B invoice income alongside Stripe |
+| Model | Source | Contribution |
+|-------|--------|-------------|
+| **Modelo 303** box_28 | Expense invoices (`direction='in'`) | IVA soportado deducible |
+| **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
+| **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD |
+| **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct`) YTD |
+| **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
+| **Modelo 130** box_07 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
+| **Modelo 347** | Income invoices | Spanish-client invoice income alongside Stripe |
+| **Modelo 349** | Income invoices | EU B2B invoice income alongside Stripe |
 
 Geographic classification is auto-derived from the vendor NIF (expenses) or client NIF (income) at OCR extraction time. Existing rows are backfilled automatically on database init.
 

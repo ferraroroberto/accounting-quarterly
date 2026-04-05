@@ -10,6 +10,7 @@ import streamlit as st
 
 from src.database import get_invoice_stats, get_latest_stripe_sync_at, get_transaction_count_db, init_db
 from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
+from src.social_security import get_ss_count
 
 # Initialise database and FX table on startup
 init_db()
@@ -57,10 +58,15 @@ with st.sidebar:
     st.caption(f"Income (out):   {_inv_stats['out']['count']}")
     st.caption(f"  Income last extracted: {_out_last[:10] if _out_last else 'n/a'}")
 
+    st.markdown("**Seguridad Social** `Bank export`")
+    st.caption("SS cuota payments imported from bank account exports.")
+    _ss_count = get_ss_count()
+    st.caption(f"SS payments stored: {_ss_count}")
+
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr,
- tab_invoice_explorer, tab_tax, tab_validation, tab_audit) = st.tabs([
+ tab_invoice_explorer, tab_ss, tab_tax, tab_validation, tab_audit) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -70,6 +76,7 @@ with st.sidebar:
     "Invoice Upload",
     "Invoice OCR",
     "Invoice Explorer",
+    "Seguridad Social",
     "Tax Obligations",
     "Tax Validation",
     "Tax Audit",
@@ -142,6 +149,11 @@ with tab_welcome:
          "Browse and filter all OCR-extracted invoices in a single table. "
          "Filter by vendor, client, direction, date range, subtotal, category, "
          "and invoice type. Export filtered results to CSV."),
+        ("Seguridad Social",
+         "Import Seguridad Social cuota payments from a bank account export (Excel or CSV). "
+         "Stores payments in the `social_security_payments` table and automatically includes "
+         "them as deductible expenses in **Modelo 130** (box 02 — gastos deducibles YTD). "
+         "Supports quarterly breakdown and CSV export."),
         ("Tax Obligations",
          "Spanish autónomo tax filing assistant. Run **Calculate tax** to persist "
          "Modelo 303 (IVA), 130 (IRPF advance), OSS, 349 (intra-EU), and 347 "
@@ -171,6 +183,7 @@ with tab_welcome:
 
 # --- Tab imports and rendering ---
 from app.quarter_report import render as render_quarter_report
+from app.social_security_tab import render as render_social_security
 from app.tax_obligations import render as render_tax_obligations
 from app.transaction_browser import render as render_transaction_browser
 from app.history import render as render_history
@@ -205,6 +218,9 @@ with tab_invoice_ocr:
 
 with tab_invoice_explorer:
     render_invoice_explorer()
+
+with tab_ss:
+    render_social_security()
 
 with tab_tax:
     render_tax_obligations()

@@ -464,6 +464,7 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
 def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo130Result:
     """Compute Modelo 130 (quarterly IRPF advance) for the given quarter."""
+    import calendar as _calendar
     import json as _json
     result = Modelo130Result(year=year, quarter=quarter)
     # Stripe income (transactions table)
@@ -486,8 +487,32 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     )
     n_expense_invs = len(expense_invs_ytd)
 
+    # Social Security cuotas paid via bank account, YTD — fully deductible (Art. 30 LIRPF)
+    month_end = quarter * 3
+    last_day = _calendar.monthrange(year, month_end)[1]
+    ss_start = f"{year}-01-01"
+    ss_end = f"{year}-{month_end:02d}-{last_day:02d}"
+    _ss_rows = db_conn.execute(
+        """SELECT id, payment_date, amount_eur, description
+           FROM social_security_payments
+           WHERE payment_date >= ? AND payment_date <= ?
+           ORDER BY payment_date""",
+        (ss_start, ss_end),
+    ).fetchall()
+    ss_gastos = round(sum(float(r["amount_eur"]) for r in _ss_rows), 2)
+    ss_records = [
+        {
+            "source": "social_security",
+            "date": r["payment_date"],
+            "description": r["description"] or "Cuota Seguridad Social",
+            "amount_eur": round(float(r["amount_eur"]), 2),
+        }
+        for r in _ss_rows
+    ]
+
     result.box_02_gastos = round(
         inv_gastos
+        + ss_gastos
         + _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", db_conn, ytd=True),
         2,
     )
@@ -585,11 +610,14 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
            ytd_through_quarter=quarter,
            records=stripe_income_records + income_inv_records),
         _a("box_02_gastos",
-           "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + entradas manuales",
+           "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + SS cuotas + entradas manuales",
            f"SUM(subtotal_eur * deductible_pct/100) FROM invoices WHERE direction='in' YTD "
+           f"+ SUM(amount_eur) FROM social_security_payments YTD "
            f"+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES' AND quarter<=Q{quarter}",
            result.box_02_gastos,
            inv_gastos=round(inv_gastos, 2),
+           ss_gastos=ss_gastos,
+           ss_records=ss_records,
            records=expense_inv_records),
         _a("box_03_rendimiento",
            "Rendimiento neto previo (antes de difícil justificación)",

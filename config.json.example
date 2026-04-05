@@ -15,5 +15,18 @@
   "accounting_api": {
     "company_id": "",
     "enabled": false
+  },
+  "tax": {
+    "regime": "estimacion_directa_simplificada",
+    "vat_registered": true,
+    "oss_registered": true,
+    "oss_registration_country": "ES",
+    "irpf_retention_rate": 0.15,
+    "activity_start_date": "2022-01-01",
+    "nif": "XXXXXXXX",
+    "fiscal_year_start_month": 1,
+    "vat_proration_percentage": 100,
+    "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
+    "default_vat_treatment_eu_newsletter": "OSS_EU"
   }
 }

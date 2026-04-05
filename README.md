@@ -57,10 +57,14 @@ Stripe API (live charges)
    (rules from classification_rules.json)
           │
           ▼
+   Classify VAT treatment
+   (activity × geography → IVA_ES_21 / IVA_EU_B2B / OSS_EU / IVA_EXPORT)
+          │
+          ▼
    Persist classifications to SQLite
           │
           ▼
-   Aggregate, display, export
+   Aggregate, display, export, compute tax models
 ```
 
 Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API. Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
@@ -80,12 +84,14 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
 │   ├── config.py                  # Load/save config.json
 │   ├── rules_engine.py            # Load/save classification_rules.json
-│   ├── classifier.py              # Activity and geographic classification
+│   ├── classifier.py              # Activity, geographic and VAT classification
 │   ├── aggregator.py              # Monthly/quarterly aggregations and totals
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices)
+│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, tax)
+│   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results
+│   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, calendar
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # Gemini-powered PDF extraction for Spanish accounting
 │   ├── logger.py                  # Rotating file logger
@@ -97,9 +103,10 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── transaction_browser.py     # Browse/filter transactions + geographic overrides
 │   ├── history.py                 # Timeline charts across all quarters
 │   ├── currency.py                # FX rate management, charts, and conversion tool
-│   ├── configuration.py           # Rules editor, Stripe API key, cache management
+│   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
-│   └── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
+│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
+│   └── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py
@@ -107,7 +114,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_database.py
 │   ├── test_fx_rates.py
 │   ├── test_rules_engine.py
-│   └── test_aggregator.py
+│   ├── test_aggregator.py
+│   └── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
@@ -182,10 +190,12 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 
 Transaction data is stored in a SQLite database (`data/accounting.db`):
 
-- **transactions** — Stripe payment records with classification and FX conversion data
+- **transactions** — Stripe payment records with classification, FX conversion, and VAT treatment data
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
 - **invoices** — AI-extracted invoice records (vendor, client, IVA, IRPF, totals)
+- **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
+- **tax_filing_status** — Filing status and computed amounts per model/quarter
 
 Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load.
 
@@ -204,6 +214,61 @@ Required permissions for restricted keys (`rk_live_...`):
 - **Read balance transactions** — fee details
 
 The dashboard includes a connection tester and permission checker under **Configuration → Stripe API**.
+
+---
+
+## Tax Obligations (Spanish Autónomo)
+
+The **Tax Obligations** tab turns the classified transaction data into pre-filled Spanish tax filings. It covers the standard obligations for an autónomo in *régimen de estimación directa simplificada*.
+
+### Supported models
+
+| Model | Name | Frequency | What it computes |
+|-------|------|-----------|-----------------|
+| **Modelo 303** | Declaración IVA Trimestral | Quarterly | IVA collected (devengado) vs. IVA paid (soportado); net to pay or refund |
+| **Modelo 130** | Pago Fraccionado IRPF | Quarterly | 20% advance on YTD net profit, minus retenciones and prior payments |
+| **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Intra-EU B2B operations grouped by buyer VAT ID |
+| **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country |
+| **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 |
+
+### VAT treatment classification
+
+Each transaction is automatically assigned a VAT treatment based on activity × geography:
+
+| Activity | Geography | Treatment | IVA |
+|----------|-----------|-----------|-----|
+| Any | OUTSIDE_EU | `IVA_EXPORT` | 0% |
+| Any | SPAIN | `IVA_ES_21` | 21% |
+| COACHING / ILLUSTRATIONS | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% (reverse charge) |
+| NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` | Buyer country rate |
+
+### Tax configuration
+
+Add a `tax` section to `config.json` (see `config.json.example`), or use the **Configuration → Tax Settings** tab:
+
+```json
+{
+  "tax": {
+    "regime": "estimacion_directa_simplificada",
+    "nif": "YOUR_NIF",
+    "irpf_retention_rate": 0.15,
+    "vat_registered": true,
+    "oss_registered": true,
+    "oss_registration_country": "ES",
+    "activity_start_date": "YYYY-MM-DD",
+    "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
+    "default_vat_treatment_eu_newsletter": "OSS_EU"
+  }
+}
+```
+
+> **IRPF retention rate:** Use `0.15` (15%) after the first 3 years of activity, or `0.07` (7%) during the first 3 years. Configurable per the slider in Tax Settings.
+
+### Manual entries
+
+Items that cannot be derived from Stripe (IVA soportado on expenses, deductible costs, retenciones received from Spanish clients) are entered via the **Manual Entries** sub-tab and stored in `quarterly_tax_entries`.
+
+> **Disclaimer:** This tool pre-fills tax data for review purposes only. It does not constitute tax advice. Always review outputs with a qualified gestor or asesor fiscal before filing.
 
 ---
 

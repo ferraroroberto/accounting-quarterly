@@ -7,15 +7,22 @@ from datetime import datetime
 import pytest
 
 from src.classifier import classify_vat
-from src.database import _get_connection, init_db
+from src.database import (
+    TAX_SNAPSHOT_QUARTER_ANNUAL,
+    _get_connection,
+    init_db,
+    load_tax_snapshots_for_period,
+)
 from src.models import ClassifiedPayment
 from src.tax_engine import (
+    compute_and_persist_tax_snapshots,
     compute_modelo_130,
     compute_modelo_303,
     compute_modelo_347,
     compute_modelo_349,
     compute_oss_return,
 )
+from src.tax_snapshot_codec import decode_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +291,18 @@ class TestModelo349:
         assert len(result.rows) == 1
         assert result.rows[0].total_amount == pytest.approx(500.0)
         assert result.total == pytest.approx(500.0)
+
+
+class TestTaxSnapshotPersistence:
+    def test_persist_and_load_roundtrip(self, db_conn):
+        _insert_tx(db_conn)
+        ts = compute_and_persist_tax_snapshots(2025, 1, db_conn)
+        assert len(ts) > 0
+        rows = load_tax_snapshots_for_period(2025, 1, db_conn)
+        by_model = {r["model"]: r for r in rows}
+        assert set(by_model) >= {"303", "130", "OSS", "347", "349"}
+        assert by_model["347"]["quarter"] == TAX_SNAPSHOT_QUARTER_ANNUAL
+        m303 = decode_snapshot("303", by_model["303"]["payload_json"])
+        assert m303.box_01_base == pytest.approx(100.0)
+        m347 = decode_snapshot("347", by_model["347"]["payload_json"])
+        assert m347.year == 2025

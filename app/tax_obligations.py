@@ -3,28 +3,31 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime
-from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
-from src.config import load_config, reload_config
+from src.config import reload_config
 from src.database import (
     add_tax_entry,
     delete_tax_entry,
-    get_all_filing_statuses,
     get_tax_entries,
+    load_tax_snapshots_for_period,
     upsert_filing_status,
     _get_connection,
 )
 from src.tax_engine import (
-    compute_modelo_130,
-    compute_modelo_303,
-    compute_modelo_347,
-    compute_modelo_349,
-    compute_oss_return,
+    compute_and_persist_tax_snapshots,
     get_tax_calendar,
 )
-from src.tax_models import TaxDeadline
+from src.tax_snapshot_codec import decode_snapshot
+from src.tax_models import (
+    Modelo130Result,
+    Modelo303Result,
+    Modelo347Result,
+    OSSReturnResult,
+    TaxDeadline,
+)
 
 _DISCLAIMER = (
     "> **This tool pre-fills tax data for review purposes only. It does not constitute tax advice. "
@@ -54,6 +57,25 @@ def _fmt_eur(value: float | None) -> str:
 
 def _get_conn() -> sqlite3.Connection:
     return _get_connection()
+
+
+def _load_snapshot_bundle(year: int, quarter: int) -> dict[str, tuple[Any, str]]:
+    """Decode stored tax snapshots for the period (quarterly + annual 347)."""
+    conn = _get_conn()
+    try:
+        rows = load_tax_snapshots_for_period(year, quarter, conn)
+        out: dict[str, tuple[Any, str]] = {}
+        for row in rows:
+            m = row["model"]
+            obj = decode_snapshot(m, row["payload_json"])
+            out[m] = (obj, row["computed_at"])
+        return out
+    finally:
+        conn.close()
+
+
+def _missing_snapshot_banner() -> None:
+    st.info("No saved calculation for this year and quarter. Click **Calculate tax** above.")
 
 
 # ---------------------------------------------------------------------------
@@ -103,14 +125,16 @@ def _render_tax_calendar(year: int) -> None:
 # Sub-section B: Modelo 303
 # ---------------------------------------------------------------------------
 
-def _render_modelo_303(year: int, quarter: int) -> None:
+def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("B. Modelo 303 — IVA Trimestral")
-    conn = _get_conn()
-    try:
-        result = compute_modelo_303(year, quarter, conn)
-    finally:
-        conn.close()
+    pair = bundle.get("303")
+    if not pair:
+        _missing_snapshot_banner()
+        return
+    result, computed_at = pair
+    assert isinstance(result, Modelo303Result)
 
+    st.caption(f"Stored calculation: {computed_at}")
     st.markdown(f"**Period:** {_quarter_label(quarter)} {year}")
     st.divider()
 
@@ -162,14 +186,17 @@ def _render_modelo_303(year: int, quarter: int) -> None:
 # Sub-section C: Modelo 130
 # ---------------------------------------------------------------------------
 
-def _render_modelo_130(year: int, quarter: int, config: dict) -> None:
+def _render_modelo_130(year: int, quarter: int, config: dict,
+                       bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("C. Modelo 130 — IRPF Trimestral")
-    conn = _get_conn()
-    try:
-        result = compute_modelo_130(year, quarter, conn)
-    finally:
-        conn.close()
+    pair = bundle.get("130")
+    if not pair:
+        _missing_snapshot_banner()
+        return
+    result, computed_at = pair
+    assert isinstance(result, Modelo130Result)
 
+    st.caption(f"Stored calculation: {computed_at}")
     irpf_rate = config.get("tax", {}).get("irpf_retention_rate", 0.15)
     st.markdown(f"**Period:** {_quarter_label(quarter)} {year} — YTD cumulative | IRPF retention rate: {irpf_rate:.0%}")
     st.divider()
@@ -254,19 +281,22 @@ def _render_manual_entries(year: int, quarter: int) -> None:
 # Sub-section E: OSS Return
 # ---------------------------------------------------------------------------
 
-def _render_oss_return(year: int, quarter: int) -> None:
+def _render_oss_return(year: int, quarter: int, bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("E. OSS Return (One Stop Shop)")
-    conn = _get_conn()
-    try:
-        result = compute_oss_return(year, quarter, conn)
-    finally:
-        conn.close()
+    pair = bundle.get("OSS")
+    if not pair:
+        _missing_snapshot_banner()
+        return
+    result, computed_at = pair
+    assert isinstance(result, OSSReturnResult)
+
+    st.caption(f"Stored calculation: {computed_at}")
+    st.markdown(f"**Period:** {_quarter_label(quarter)} {year}")
 
     if not result.rows:
         st.info("No OSS transactions in this period.")
+        _save_filing_button("OSS", year, quarter, result.total_vat)
         return
-
-    st.markdown(f"**Period:** {_quarter_label(quarter)} {year}")
 
     import pandas as pd
     rows = [
@@ -306,14 +336,16 @@ def _render_oss_return(year: int, quarter: int) -> None:
 # Sub-section F: Modelo 347
 # ---------------------------------------------------------------------------
 
-def _render_modelo_347(year: int) -> None:
+def _render_modelo_347(year: int, bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("F. Modelo 347 — Operaciones con Terceros (Annual)")
-    conn = _get_conn()
-    try:
-        result = compute_modelo_347(year, conn)
-    finally:
-        conn.close()
+    pair = bundle.get("347")
+    if not pair:
+        _missing_snapshot_banner()
+        return
+    result, computed_at = pair
+    assert isinstance(result, Modelo347Result)
 
+    st.caption(f"Stored calculation: {computed_at} (annual snapshot for {year})")
     if not result.rows:
         st.info(f"No Spain counterparties exceed the €{result.threshold:,.2f} threshold in {year}.")
         return
@@ -349,7 +381,8 @@ def _save_filing_button(model: str, year: int, quarter: int | None, amount: floa
     if col2.button(f"Save Computed ({model} {period_label})", key=f"btn_{key}"):
         upsert_filing_status(year=year, model=model, quarter=quarter,
                              status="COMPUTED", amount_eur=amount, notes=notes)
-        st.success(f"Modelo {model} {period_label} saved as COMPUTED (€{amount:.2f}).")
+        amt = f"€{amount:,.2f}" if amount is not None else "—"
+        st.success(f"Modelo {model} {period_label} saved as COMPUTED ({amt}).")
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +395,6 @@ def render() -> None:
     st.divider()
 
     config = reload_config()
-    tax_cfg = config.get("tax", {})
 
     if "tax" not in config:
         st.warning(
@@ -370,14 +402,32 @@ def render() -> None:
             "(NIF, regime, OSS registration, etc.)."
         )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([2, 2, 2])
     current_year = date.today().year
     year = col1.selectbox("Year", list(range(current_year, current_year - 5, -1)), index=0,
                           key="tax_year")
     quarter = col2.selectbox("Quarter", [1, 2, 3, 4],
                              format_func=_quarter_label, index=0, key="tax_quarter")
+    with col3:
+        st.markdown("")  # align button with selectboxes
+        if st.button("Calculate tax", key="tax_calc_all", type="primary"):
+            conn = _get_conn()
+            try:
+                with st.spinner("Computing and saving tax obligations…"):
+                    compute_and_persist_tax_snapshots(year, quarter, conn)
+            finally:
+                conn.close()
+            st.success("Tax calculations saved to the database.")
+            st.rerun()
+
+    st.caption(
+        "Obligation figures are read from **saved snapshots** in SQLite. They update only when you click "
+        "**Calculate tax** (after you sync or change transactions and manual entries)."
+    )
 
     st.divider()
+
+    snapshot_bundle = _load_snapshot_bundle(year, quarter)
 
     (tab_calendar, tab_303, tab_130, tab_manual,
      tab_oss, tab_347) = st.tabs([
@@ -393,16 +443,16 @@ def render() -> None:
         _render_tax_calendar(year)
 
     with tab_303:
-        _render_modelo_303(year, quarter)
+        _render_modelo_303(year, quarter, snapshot_bundle)
 
     with tab_130:
-        _render_modelo_130(year, quarter, config)
+        _render_modelo_130(year, quarter, config, snapshot_bundle)
 
     with tab_manual:
         _render_manual_entries(year, quarter)
 
     with tab_oss:
-        _render_oss_return(year, quarter)
+        _render_oss_return(year, quarter, snapshot_bundle)
 
     with tab_347:
-        _render_modelo_347(year)
+        _render_modelo_347(year, snapshot_bundle)

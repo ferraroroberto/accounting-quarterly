@@ -99,3 +99,22 @@ This document outlines the findings from reviewing the automated tax logic in `s
 > **Assessment: CORRECT. Resolved by Model 130 fix.**
 > - The validator now computes `box_05_base` using the corrected rendimiento neto (after the 5% deduction), so the 20% calculation will match the gestor's filing.
 > - Two new validation lines (03b, 03c) have been added to show the 5% deduction transparently.
+
+---
+
+## Additional Spanish Tax Law Considerations (Autónomos & Stripe)
+
+**1. Model 130 - Exemption Rule (70% Withholding)**
+- **Spanish Tax Law:** Autónomos are exempt from filing Model 130 if at least 70% of their income in the previous year was subject to IRPF withholding (retenciones).
+- **Relevance to Stripe:** Because B2C digital sales and international B2B payments processed via Stripe do not have IRPF withheld at source, the withholding percentage will almost certainly be 0% (or well below 70%).
+- **Conclusion:** **Valid assumption.** Model 130 is strictly mandatory for this business profile. No change needed, but worth documenting this operational assumption.
+
+**2. Model 303 & 349 - Treatment of Stripe Processing Fees**
+- **Spanish Tax Law:** Stripe operates its European entity out of Ireland. The fees they charge for payment processing are considered B2B Intra-Community Services. Under the "Reverse Charge" mechanism (*Inversión del Sujeto Pasivo*), these fees must be declared in Model 303 simultaneously as *IVA Devengado* (Boxes 10/11) and *IVA Soportado* (Boxes 36/37), netting to zero. Furthermore, the total fee volume must be declared in Model 349 as an intra-community acquisition of services.
+- **Impact on Logic:** The automated extraction must ensure that Stripe fees are not just silently deducted from the payout, but explicitly logged as an EU B2B expense. If they are ignored or treated as a domestic expense, both M303 and M349 will be incomplete.
+- **Recommendation:** Check if the data loader explicitly parses Stripe fees and categorizes them as an intra-community service.
+
+**3. Model 369 vs 303 - EU B2C Sales of Digital Services (OSS)**
+- **Spanish Tax Law:** Sales of "electronically supplied services" (such as digital newsletters, automated coaching programs, or digital illustrations) to non-business consumers (B2C) in other EU countries are subject to the VAT rate of the consumer's country. These must be declared through the One-Stop Shop (OSS) system using **Model 369**, rather than regular Spanish VAT on Model 303.
+- **Impact on Logic:** If the system simply dumps all EU Stripe sales into M303 or M349 (which is for B2B), the filing will be incorrect. The logic must differentiate between B2B EU (requires VAT ID -> M349) and B2C EU (no VAT ID -> M369/OSS).
+- **Recommendation:** Ensure the aggregation logic separates EU B2C transactions for a dedicated OSS / Model 369 report, and removes them from the general M303 Spanish quota.

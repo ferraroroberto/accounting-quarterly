@@ -89,9 +89,12 @@ class Modelo130Result:
     # Ingresos y gastos YTD
     box_01_ingresos: float = 0.0       # Ingresos computables YTD
     box_02_gastos: float = 0.0         # Gastos deducibles YTD
-    box_03_rendimiento: float = 0.0    # Box 01 - Box 02
+    box_03_rendimiento: float = 0.0    # Box 01 - Box 02 (rendimiento neto previo)
+    # Gastos de difícil justificación (5% of rendimiento neto previo, capped €2,000/year)
+    gastos_dificil_justificacion: float = 0.0
+    rendimiento_neto: float = 0.0      # box_03 - gastos_dificil_justificacion
     # Cálculo
-    box_05_base: float = 0.0           # 20% × Box 03
+    box_05_base: float = 0.0           # 20% × rendimiento_neto
     box_07_retenciones: float = 0.0    # Retenciones soportadas YTD
     box_14_pagos_anteriores: float = 0.0  # Previous quarters paid
     box_16_resultado: float = 0.0      # max(0, Box 05 - Box 07 - Box 14)
@@ -112,6 +115,7 @@ class Modelo349Result:
     quarter: int
     rows: list[Modelo349Row] = field(default_factory=list)
     total: float = 0.0
+    notes: str = ""
 
 
 @dataclass

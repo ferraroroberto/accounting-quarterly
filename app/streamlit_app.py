@@ -31,27 +31,31 @@ with st.sidebar:
         "generates Excel reports, and tracks invoice uploads."
     )
     st.markdown("---")
-    st.markdown("**Data source:** `API`")
-    st.caption("Stripe transactions are loaded live from the Stripe API.")
+    st.markdown("**Stripe data:** `API`")
+    st.caption("Stripe transactions are loaded from the Stripe API.")
     tx_count = get_transaction_count_db()
     st.caption(f"Transactions stored: {tx_count}")
     stripe_last_sync = get_latest_stripe_sync_at()
     stripe_last_sync_text = stripe_last_sync.strftime("%Y-%m-%d %H:%M") if stripe_last_sync else "n/a"
     st.caption(f"Stripe last update: {stripe_last_sync_text}")
 
+    st.markdown("**FX data:** `API`")
+    st.caption("FX rates loaded from the ECB (Frankfurter API).")
     fx_count = get_rate_count()
     st.caption(f"FX rates stored: {fx_count}")
     fx_last_sync = get_latest_fx_sync_at()
     fx_last_update_text = fx_last_sync.strftime("%Y-%m-%d %H:%M:%S") if fx_last_sync else "n/a"
     st.caption(f"FX last update: {fx_last_update_text}")
 
-    st.markdown("---")
-    st.markdown("**Invoices (OCR)**")
+    st.markdown("**Invoices data** `OCR`")
+    st.caption("Invoices are extracted from PDF files using OCR.")
     _inv_stats = get_invoice_stats()
     _in_last = _inv_stats["in"]["last_extracted_at"]
     _out_last = _inv_stats["out"]["last_extracted_at"]
-    st.caption(f"Expenses (in):  {_inv_stats['in']['count']} · last {_in_last[:10] if _in_last else 'n/a'}")
-    st.caption(f"Income (out):   {_inv_stats['out']['count']} · last {_out_last[:10] if _out_last else 'n/a'}")
+    st.caption(f"Expenses (in):  {_inv_stats['in']['count']}")
+    st.caption(f"  Expenses last extracted: {_in_last[:10] if _in_last else 'n/a'}")
+    st.caption(f"Income (out):   {_inv_stats['out']['count']}")
+    st.caption(f"  Income last extracted: {_out_last[:10] if _out_last else 'n/a'}")
 
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,

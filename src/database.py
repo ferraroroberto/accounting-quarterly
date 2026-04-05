@@ -63,6 +63,19 @@ def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
             log.warning("⚠️ DB migration skipped for %s: %s", col, exc)
 
 
+def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
+    """Add missing columns to the `invoices` table (e.g. file_hash added later)."""
+    existing = _get_table_columns(conn, "invoices")
+    additions = {"file_hash": "TEXT"}
+    for col, ddl in additions.items():
+        if col not in existing:
+            try:
+                conn.execute(f"ALTER TABLE invoices ADD COLUMN {col} {ddl}")
+                log.info("ℹ️ Migrated DB: added invoices.%s", col)
+            except Exception as exc:
+                log.warning("⚠️ DB migration skipped for invoices.%s: %s", col, exc)
+
+
 def init_db(db_path: Optional[str | Path] = None) -> None:
     """Create tables if they don't exist."""
     conn = _get_connection(db_path)
@@ -116,8 +129,46 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
                 api_response TEXT,
                 UNIQUE(filename, direction)
             );
+
+            CREATE TABLE IF NOT EXISTS invoices (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+                invoice_number TEXT,
+                invoice_date TEXT,
+                vendor_name TEXT,
+                vendor_nif TEXT,
+                vendor_address TEXT,
+                client_name TEXT,
+                client_nif TEXT,
+                client_address TEXT,
+                description TEXT,
+                subtotal_eur REAL,
+                iva_rate REAL,
+                iva_amount REAL,
+                irpf_rate REAL,
+                irpf_amount REAL,
+                total_eur REAL,
+                currency TEXT DEFAULT 'EUR',
+                original_currency TEXT,
+                original_amount REAL,
+                fx_rate REAL,
+                payment_method TEXT,
+                category TEXT,
+                notes TEXT,
+                raw_json TEXT,
+                file_hash TEXT,
+                extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(filename, direction)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_invoices_direction
+                ON invoices(direction);
+            CREATE INDEX IF NOT EXISTS idx_invoices_date
+                ON invoices(invoice_date);
         """)
         _ensure_transactions_schema(conn)
+        _ensure_invoices_schema(conn)
         conn.commit()
         log.info("ℹ️ Database initialised at %s", _DB_PATH)
     finally:
@@ -512,5 +563,156 @@ def get_uploaded_files(direction: str,
             (direction,),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# invoices table helpers
+# ---------------------------------------------------------------------------
+
+def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
+    """Insert or replace a parsed invoice record. Returns the record id."""
+    import uuid
+    conn = _get_connection(db_path)
+    try:
+        record_id = data.get("id") or str(uuid.uuid4())
+        conn.execute("""
+            INSERT INTO invoices (
+                id, filename, direction, invoice_number, invoice_date,
+                vendor_name, vendor_nif, vendor_address,
+                client_name, client_nif, client_address,
+                description, subtotal_eur, iva_rate, iva_amount,
+                irpf_rate, irpf_amount, total_eur,
+                currency, original_currency, original_amount, fx_rate,
+                payment_method, category, notes, raw_json, file_hash
+            ) VALUES (
+                :id, :filename, :direction, :invoice_number, :invoice_date,
+                :vendor_name, :vendor_nif, :vendor_address,
+                :client_name, :client_nif, :client_address,
+                :description, :subtotal_eur, :iva_rate, :iva_amount,
+                :irpf_rate, :irpf_amount, :total_eur,
+                :currency, :original_currency, :original_amount, :fx_rate,
+                :payment_method, :category, :notes, :raw_json, :file_hash
+            )
+            ON CONFLICT(filename, direction) DO UPDATE SET
+                invoice_number = excluded.invoice_number,
+                invoice_date = excluded.invoice_date,
+                vendor_name = excluded.vendor_name,
+                vendor_nif = excluded.vendor_nif,
+                vendor_address = excluded.vendor_address,
+                client_name = excluded.client_name,
+                client_nif = excluded.client_nif,
+                client_address = excluded.client_address,
+                description = excluded.description,
+                subtotal_eur = excluded.subtotal_eur,
+                iva_rate = excluded.iva_rate,
+                iva_amount = excluded.iva_amount,
+                irpf_rate = excluded.irpf_rate,
+                irpf_amount = excluded.irpf_amount,
+                total_eur = excluded.total_eur,
+                currency = excluded.currency,
+                original_currency = excluded.original_currency,
+                original_amount = excluded.original_amount,
+                fx_rate = excluded.fx_rate,
+                payment_method = excluded.payment_method,
+                category = excluded.category,
+                notes = excluded.notes,
+                raw_json = excluded.raw_json,
+                file_hash = excluded.file_hash,
+                extracted_at = datetime('now')
+        """, {
+            "id": record_id,
+            "filename": data.get("filename", ""),
+            "direction": data.get("direction", "in"),
+            "invoice_number": data.get("invoice_number"),
+            "invoice_date": data.get("invoice_date"),
+            "vendor_name": data.get("vendor_name"),
+            "vendor_nif": data.get("vendor_nif"),
+            "vendor_address": data.get("vendor_address"),
+            "client_name": data.get("client_name"),
+            "client_nif": data.get("client_nif"),
+            "client_address": data.get("client_address"),
+            "description": data.get("description"),
+            "subtotal_eur": data.get("subtotal_eur"),
+            "iva_rate": data.get("iva_rate"),
+            "iva_amount": data.get("iva_amount"),
+            "irpf_rate": data.get("irpf_rate"),
+            "irpf_amount": data.get("irpf_amount"),
+            "total_eur": data.get("total_eur"),
+            "currency": data.get("currency", "EUR"),
+            "original_currency": data.get("original_currency"),
+            "original_amount": data.get("original_amount"),
+            "fx_rate": data.get("fx_rate"),
+            "payment_method": data.get("payment_method"),
+            "category": data.get("category"),
+            "notes": data.get("notes"),
+            "raw_json": data.get("raw_json"),
+            "file_hash": data.get("file_hash"),
+        })
+        conn.commit()
+        return record_id
+    finally:
+        conn.close()
+
+
+def get_invoices(direction: Optional[str] = None,
+                 db_path: Optional[str | Path] = None) -> list[dict]:
+    """Return all invoice records, optionally filtered by direction."""
+    conn = _get_connection(db_path)
+    try:
+        if direction:
+            rows = conn.execute(
+                "SELECT * FROM invoices WHERE direction = ? ORDER BY invoice_date DESC, extracted_at DESC",
+                (direction,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM invoices ORDER BY invoice_date DESC, extracted_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_invoice_by_filename(filename: str, direction: str,
+                             db_path: Optional[str | Path] = None) -> Optional[dict]:
+    """Return a single invoice record by filename+direction, or None."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM invoices WHERE filename = ? AND direction = ?",
+            (filename, direction),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_invoice_hash(filename: str, direction: str,
+                     db_path: Optional[str | Path] = None) -> Optional[str]:
+    """Return the stored MD5 hash for a file, or None if not extracted yet."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT file_hash FROM invoices WHERE filename = ? AND direction = ?",
+            (filename, direction),
+        ).fetchone()
+        return row["file_hash"] if row else None
+    finally:
+        conn.close()
+
+
+def delete_invoice(filename: str, direction: str,
+                   db_path: Optional[str | Path] = None) -> bool:
+    """Delete an invoice record. Returns True if a row was deleted."""
+    conn = _get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "DELETE FROM invoices WHERE filename = ? AND direction = ?",
+            (filename, direction),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()

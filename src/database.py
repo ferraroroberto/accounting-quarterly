@@ -215,6 +215,18 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_status_key
                 ON tax_filing_status(year, model, COALESCE(quarter, -1));
+
+            CREATE TABLE IF NOT EXISTS tax_computation_snapshots (
+                year         INTEGER NOT NULL,
+                quarter      INTEGER NOT NULL,
+                model        TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (year, quarter, model)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tax_snapshots_year
+                ON tax_computation_snapshots(year);
         """)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)
@@ -979,6 +991,43 @@ def get_all_filing_statuses(year: int,
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# Quarter value for annual-only snapshots (e.g. Modelo 347).
+TAX_SNAPSHOT_QUARTER_ANNUAL = 0
+
+
+def upsert_tax_snapshot_conn(
+    conn: sqlite3.Connection,
+    year: int,
+    quarter: int,
+    model: str,
+    payload_json: str,
+    computed_at: str,
+) -> None:
+    """Insert or replace one stored tax computation snapshot."""
+    conn.execute(
+        """INSERT INTO tax_computation_snapshots (year, quarter, model, payload_json, computed_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(year, quarter, model) DO UPDATE SET
+             payload_json = excluded.payload_json,
+             computed_at = excluded.computed_at""",
+        (year, quarter, model, payload_json, computed_at),
+    )
+
+
+def load_tax_snapshots_for_period(
+    year: int,
+    quarter: int,
+    conn: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Load snapshots for quarterly models for ``quarter``, plus annual Modelo 347 (``quarter`` 0)."""
+    return conn.execute(
+        """SELECT model, quarter, payload_json, computed_at
+           FROM tax_computation_snapshots
+           WHERE year = ? AND (quarter = ? OR (model = '347' AND quarter = ?))""",
+        (year, quarter, TAX_SNAPSHOT_QUARTER_ANNUAL),
+    ).fetchall()
 
 
 def upsert_vat_treatment(payment_id: str, vat_treatment: str,

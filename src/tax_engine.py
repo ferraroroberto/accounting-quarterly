@@ -435,3 +435,54 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
 
     deadlines.sort(key=lambda d: d.deadline)
     return deadlines
+
+
+def compute_and_persist_tax_snapshots(
+    year: int, quarter: int, db_conn: sqlite3.Connection,
+) -> str:
+    """Run all obligation engines for the selected period and persist JSON snapshots.
+
+    Quarterly models (303, 130, OSS, 349) use ``quarter``; Modelo 347 is annual and is
+    stored with ``quarter`` = ``TAX_SNAPSHOT_QUARTER_ANNUAL`` (0).
+
+    Returns the shared ISO ``computed_at`` timestamp written on every snapshot row.
+    """
+    from datetime import datetime
+
+    from src.database import TAX_SNAPSHOT_QUARTER_ANNUAL, upsert_tax_snapshot_conn
+    from src.tax_snapshot_codec import encode_snapshot
+
+    computed_at = datetime.now().isoformat(timespec="seconds")
+
+    r303 = compute_modelo_303(year, quarter, db_conn)
+    upsert_tax_snapshot_conn(
+        db_conn, year, quarter, "303", encode_snapshot("303", r303), computed_at,
+    )
+
+    r130 = compute_modelo_130(year, quarter, db_conn)
+    upsert_tax_snapshot_conn(
+        db_conn, year, quarter, "130", encode_snapshot("130", r130), computed_at,
+    )
+
+    r_oss = compute_oss_return(year, quarter, db_conn)
+    upsert_tax_snapshot_conn(
+        db_conn, year, quarter, "OSS", encode_snapshot("OSS", r_oss), computed_at,
+    )
+
+    r349 = compute_modelo_349(year, quarter, db_conn)
+    upsert_tax_snapshot_conn(
+        db_conn, year, quarter, "349", encode_snapshot("349", r349), computed_at,
+    )
+
+    r347 = compute_modelo_347(year, db_conn)
+    upsert_tax_snapshot_conn(
+        db_conn,
+        year,
+        TAX_SNAPSHOT_QUARTER_ANNUAL,
+        "347",
+        encode_snapshot("347", r347),
+        computed_at,
+    )
+
+    db_conn.commit()
+    return computed_at

@@ -82,7 +82,10 @@ with tab_welcome:
         "This dashboard automates the classification and reporting of Stripe "
         "payments for quarterly accounting. Transactions are fetched from the "
         "**Stripe API**, classified by activity type and geographic region, "
-        "converted to EUR using ECB exchange rates, and aggregated into reports."
+        "converted to EUR using ECB exchange rates, and aggregated into reports. "
+        "Use **Tax Obligations** to save computed Spanish filing figures to SQLite, "
+        "and **Tax Validation** to compare those engine outputs with gestor-filed "
+        "AEAT reference data."
     )
 
     st.markdown("---")
@@ -139,10 +142,14 @@ with tab_welcome:
          "Filter by vendor, client, direction, date range, subtotal, category, "
          "and invoice type. Export filtered results to CSV."),
         ("Tax Obligations",
-         "Spanish autónomo tax filing assistant. Computes Modelo 303 (IVA), "
-         "Modelo 130 (IRPF advance), OSS Return, Modelo 349 (intra-EU), and "
-         "Modelo 347 (annual counterparty operations). Shows a tax calendar "
-         "with deadlines and filing status."),
+         "Spanish autónomo tax filing assistant. Run **Calculate tax** to persist "
+         "Modelo 303 (IVA), 130 (IRPF advance), OSS, 349 (intra-EU), and 347 "
+         "(annual) snapshots in SQLite; the UI reads stored results until you "
+         "recalculate. Includes a tax calendar with deadlines and filing status."),
+        ("Tax Validation",
+         "Cross-check gestor-filed AEAT figures (from `tmp/validation/validation.yaml`) "
+         "against database-computed values for Modelo 130, 303, 349, and 390 — "
+         "line-by-line casilla comparison with OK / high / low status."),
     ]
 
     for name, description in tabs_info:

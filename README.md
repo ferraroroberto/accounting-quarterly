@@ -1,6 +1,6 @@
 # Stripe Accounting Quarterly Automation
 
-Automated Stripe payment classification and quarterly reporting system. Classifies payments by activity type (Coaching, Newsletter, Illustrations) and geographic region (Spain, EU-not-Spain, Outside-EU), then produces Excel reports and a Streamlit dashboard.
+Automated Stripe payment classification and quarterly reporting system. Classifies payments by activity type (Coaching, Newsletter, Illustrations) and geographic region (Spain, EU-not-Spain, Outside-EU), then produces Excel reports, Spanish tax obligation snapshots, gestor-vs-database **Tax Validation**, and a Streamlit dashboard.
 
 ---
 
@@ -64,7 +64,7 @@ Stripe API (live charges)
    Persist classifications to SQLite
           │
           ▼
-   Aggregate, display, export, compute tax models
+   Aggregate, display, export; save tax snapshots; validate vs. filed AEAT data
 ```
 
 Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API. Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
@@ -202,8 +202,9 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
+- **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
 
-Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load.
+Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load. Tax obligation figures shown in the Tax Obligations tab are read from stored snapshots until you run **Calculate tax** again.
 
 ---
 
@@ -226,6 +227,10 @@ The dashboard includes a connection tester and permission checker under **Config
 ## Tax Obligations (Spanish Autónomo)
 
 The **Tax Obligations** tab turns the classified transaction data into pre-filled Spanish tax filings. It covers the standard obligations for an autónomo in *régimen de estimación directa simplificada*.
+
+### Stored calculations
+
+Computed figures are **not** recalculated on every page load. Click **Calculate tax** to run the engines and persist results to the `tax_computation_snapshots` table in SQLite (per selected year and quarter; Modelo **347** is annual and stored with quarter `0`). After you sync Stripe data, change manual tax entries, or adjust classifications, run **Calculate tax** again to refresh.
 
 ### Supported models
 
@@ -285,7 +290,7 @@ The **Tax Validation** tab cross-checks the figures your gestor filed with AEAT 
 ### How it works
 
 1. Filed reference data is stored in `tmp/validation/validation.yaml` (gitignored — never committed).
-2. At startup the tab loads that file, runs the same tax-engine computations used in Tax Obligations, and builds a line-by-line comparison for each casilla (PDF box).
+2. The tab loads that file, runs the same tax-engine computations as in Tax Obligations (against your current SQLite data), and builds a line-by-line comparison for each casilla (PDF box).
 3. Each line gets a status:
 
 | Status | Icon | Meaning |

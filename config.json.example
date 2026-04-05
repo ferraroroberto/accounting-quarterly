@@ -16,6 +16,14 @@
     "company_id": "",
     "enabled": false
   },
+  "social_security": {
+    "bank_export_file": "tmp/social_security_bank_export.xlsx",
+    "date_column": "Fecha",
+    "amount_column": "Importe",
+    "description_column": "Concepto",
+    "sheet_name": 0,
+    "skiprows": 0
+  },
   "tax": {
     "regime": "estimacion_directa_simplificada",
     "vat_registered": true,

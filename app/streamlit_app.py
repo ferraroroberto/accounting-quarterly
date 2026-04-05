@@ -60,7 +60,7 @@ with st.sidebar:
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr,
- tab_invoice_explorer, tab_tax) = st.tabs([
+ tab_invoice_explorer, tab_tax, tab_validation) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -71,6 +71,7 @@ with st.sidebar:
     "Invoice OCR",
     "Invoice Explorer",
     "Tax Obligations",
+    "Tax Validation",
 ])
 
 # --- Welcome tab ---
@@ -165,6 +166,7 @@ from app.configuration import render as render_configuration
 from app.invoice_upload import render as render_invoice_upload
 from app.invoice_ocr_tab import render as render_invoice_ocr
 from app.invoice_explorer import render as render_invoice_explorer
+from app.tax_validation import render as render_tax_validation
 
 with tab_report:
     render_quarter_report()
@@ -192,3 +194,6 @@ with tab_invoice_explorer:
 
 with tab_tax:
     render_tax_obligations()
+
+with tab_validation:
+    render_tax_validation()

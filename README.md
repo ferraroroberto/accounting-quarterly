@@ -85,8 +85,9 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite operations (transactions, FX rates, upload log)
+│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices)
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
+│   ├── invoice_ocr.py             # Gemini-powered PDF extraction for Spanish accounting
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard
@@ -97,7 +98,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── history.py                 # Timeline charts across all quarters
 │   ├── currency.py                # FX rate management, charts, and conversion tool
 │   ├── configuration.py           # Rules editor, Stripe API key, cache management
-│   └── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
+│   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
+│   └── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py
@@ -183,6 +185,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **transactions** — Stripe payment records with classification and FX conversion data
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
+- **invoices** — AI-extracted invoice records (vendor, client, IVA, IRPF, totals)
 
 Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load.
 
@@ -250,3 +253,40 @@ ACCOUNTING_TOKEN=your_token_here
 ACCOUNTING_USER=your_user_here
 ACCOUNTING_PASSWORD=your_password_here
 ```
+
+---
+
+## Invoice OCR (AI Extraction)
+
+The **Invoice OCR** tab (after Invoice Upload) uses Google Gemini to extract Spanish accounting data from any PDF — invoices, receipts, tickets, foreign bills — and stores the results in the `invoices` SQLite table.
+
+Extracted fields: invoice number, date, vendor/client NIF, IVA rate and amount, IRPF retention, total in EUR, original currency, payment method, and expense category.
+
+PDFs in `data/invoices/in/` are treated as **expenses** (IVA soportado); PDFs in `data/invoices/out/` as **income** (IVA repercutido). Re-extraction is skipped automatically when the PDF has not changed (MD5 hash comparison).
+
+### Google API key (AI Studio — recommended)
+
+The simplest option: get a free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and add it to `.env`:
+
+```
+GOOGLE_API_KEY=AIzaSy...
+```
+
+Model used: `gemini-3.1-flash-lite-preview`.
+
+### Vertex AI (GCP service account)
+
+If you manage the API key through a GCP project (service account bound key), the Generative Language API must be enabled and unrestricted. Two pre-requisites in the GCP console:
+
+1. **Enable the API** — visit `https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=YOUR_PROJECT` and click Enable.
+2. **Remove API restrictions** on the key — Credentials → find the key → API restrictions → "Don't restrict key" (or add Generative Language API to the allowed list).
+
+For ADC-based auth (service account JSON), download the key file and set:
+
+```
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLOUD_LOCATION=us-central1   # or europe-west1, etc.
+```
+
+When `GOOGLE_APPLICATION_CREDENTIALS` is set the module switches to Vertex AI mode automatically (no API key needed).

@@ -217,9 +217,25 @@ def _get_vat_treatment(row: dict) -> str:
 
 
 def _get_vat_base(row: dict) -> float:
+    """Return the ex-VAT taxable base for a transaction row.
+
+    Stripe amounts are VAT-inclusive (the customer paid the gross amount).
+    For Spain (IVA_ES_21) and EU B2C (OSS_EU) we extract the base by
+    dividing by (1 + rate).  For exports and EU B2B (ISP) the full net
+    amount is the income base — no VAT was charged.
+    """
     if row.get("vat_base_eur") is not None:
         return row["vat_base_eur"]
-    return _net_amount(row)
+    net = _net_amount(row)
+    treatment = _get_vat_treatment(row)
+    if treatment == "IVA_ES_21":
+        return round(net / 1.21, 2)
+    if treatment == "OSS_EU":
+        cc = (row.get("oss_country") or row.get("card_country") or "").upper()
+        rate = OSS_RATES.get(cc, OSS_RATES["DEFAULT_EU"])
+        return round(net / (1 + rate), 2)
+    # IVA_EXPORT, IVA_EU_B2B, EXEMPT, UNKNOWN — full net amount is income base
+    return net
 
 
 def _get_vat_amount(row: dict) -> float:
@@ -277,44 +293,60 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result = Modelo303Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
-    # Counters and record lists for audit trail
-    n_es21 = n_eu_b2b = n_oss = n_export = 0
-    recs_es21: list[dict] = []
-    recs_eu_b2b: list[dict] = []
-    recs_oss: list[dict] = []
-    recs_export: list[dict] = []
+    # Aggregate Stripe transactions by (geo_region, activity_type, treatment).
+    # The gestor works with the quarterly summary (one line per geo/activity),
+    # not individual transaction rows.
+    # Key: (geo_region, activity_type, treatment, oss_country_or_empty)
+    _agg: dict[tuple, dict] = {}
 
     for row in rows:
         treatment = _get_vat_treatment(row)
-        base = _get_vat_base(row)
+        base = _get_vat_base(row)   # ex-VAT base (VAT-inclusive extraction applied)
         vat = _get_vat_amount(row)
-        _rec = {
-            "source": "stripe",
-            "date": str(row.get("created_date", ""))[:10],
-            "description": str(row.get("email_meta") or row.get("id", ""))[:50],
-            "base_eur": round(base, 2),
-            "vat_eur": round(vat, 2),
-            "geo_region": row.get("geo_region") or "",
-        }
+        geo = row.get("geo_region") or "UNKNOWN"
+        act = row.get("activity_type") or "UNKNOWN"
+        oss_cc = (row.get("oss_country") or row.get("card_country") or "").upper() if treatment == "OSS_EU" else ""
+        key = (geo, act, treatment, oss_cc)
+        if key not in _agg:
+            _agg[key] = {"n": 0, "gross_eur": 0.0, "base_eur": 0.0, "vat_eur": 0.0}
+        _agg[key]["n"] += 1
+        _agg[key]["gross_eur"] = round(_agg[key]["gross_eur"] + _net_amount(row), 2)
+        _agg[key]["base_eur"] = round(_agg[key]["base_eur"] + base, 2)
+        _agg[key]["vat_eur"] = round(_agg[key]["vat_eur"] + vat, 2)
 
         if treatment == "IVA_ES_21":
             result.box_01_base += base
             result.box_03_cuota += vat
-            n_es21 += 1
-            recs_es21.append(_rec)
         elif treatment == "IVA_EU_B2B":
             result.box_59_intracom_entregas += base
-            n_eu_b2b += 1
-            recs_eu_b2b.append(_rec)
         elif treatment == "OSS_EU":
             result.oss_base += base
             result.oss_vat += vat
-            n_oss += 1
-            recs_oss.append({**_rec, "oss_country": row.get("oss_country") or row.get("card_country") or ""})
         elif treatment == "IVA_EXPORT":
             result.export_base += base
-            n_export += 1
-            recs_export.append(_rec)
+
+    # Build aggregated audit records (one entry per geo/activity bucket)
+    def _agg_rec(k: tuple, v: dict) -> dict:
+        geo, act, treatment, oss_cc = k
+        rec = {
+            "source": "stripe_aggregado",
+            "geo_region": geo,
+            "activity": act,
+            "vat_treatment": treatment,
+            "n_transactions": v["n"],
+            "gross_eur": v["gross_eur"],
+            "base_eur": v["base_eur"],
+            "vat_eur": v["vat_eur"],
+        }
+        if oss_cc:
+            rec["oss_country"] = oss_cc
+        return rec
+
+    recs_es21  = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_ES_21"]
+    recs_eu_b2b = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_EU_B2B"]
+    recs_oss   = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "OSS_EU"]
+    recs_export = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_EXPORT"]
+    n_es21, n_eu_b2b, n_oss, n_export = len(recs_es21), len(recs_eu_b2b), len(recs_oss), len(recs_export)
 
     # Deductible IVA: sum from expense invoices for the quarter
     expense_invs = _load_expense_invoices_for_quarter(year, quarter, db_conn)
@@ -561,16 +593,31 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             cell=cell, label=label, formula=formula, value=value,
             inputs_json=_json.dumps(inputs),
         )
-    # Build record lists for audit trail
+    # Build aggregated Stripe income records for audit trail (one per geo/activity bucket).
+    # Mirrors the Quarter Report view the gestor uses.
+    _stripe_agg: dict[tuple, dict] = {}
+    for r in rows:
+        treatment = _get_vat_treatment(r)
+        geo = r.get("geo_region") or "UNKNOWN"
+        act = r.get("activity_type") or "UNKNOWN"
+        key = (geo, act, treatment)
+        if key not in _stripe_agg:
+            _stripe_agg[key] = {"n": 0, "gross_eur": 0.0, "base_eur": 0.0}
+        _stripe_agg[key]["n"] += 1
+        _stripe_agg[key]["gross_eur"] = round(_stripe_agg[key]["gross_eur"] + _net_amount(r), 2)
+        _stripe_agg[key]["base_eur"] = round(_stripe_agg[key]["base_eur"] + _get_vat_base(r), 2)
+
     stripe_income_records = [
         {
-            "source": "stripe",
-            "date": r.get("created_date", "")[:10],
-            "description": str(r.get("email_meta") or r.get("id", ""))[:50],
-            "vat_treatment": _get_vat_treatment(r),
-            "base_eur": round(_get_vat_base(r), 2),
+            "source": "stripe_agregado",
+            "geo_region": k[0],
+            "activity": k[1],
+            "vat_treatment": k[2],
+            "n_transactions": v["n"],
+            "gross_eur": v["gross_eur"],
+            "base_eur_irpf": v["base_eur"],
         }
-        for r in rows
+        for k, v in _stripe_agg.items()
     ]
     income_inv_records = [
         {

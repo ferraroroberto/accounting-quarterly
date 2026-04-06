@@ -302,6 +302,25 @@ Each transaction is automatically assigned a VAT treatment based on activity × 
 | COACHING / ILLUSTRATIONS | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% (reverse charge) |
 | NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` | Buyer country rate |
 
+### VAT-inclusive pricing (Stripe amounts)
+
+Stripe records the gross amount charged to the customer, which for Spain and EU sales **includes VAT**. The engine extracts the taxable base by dividing the net received amount by `(1 + rate)`:
+
+| Treatment | Base formula | Example |
+|-----------|-------------|---------|
+| `IVA_ES_21` | `net ÷ 1.21` | €121 gross → €100.00 base + €21.00 IVA |
+| `OSS_EU` | `net ÷ (1 + country_rate)` | €120 (AT, 20%) → €100.00 base + €20.00 IVA |
+| `IVA_EXPORT` | `net` (no VAT) | €100 gross = €100.00 base |
+| `IVA_EU_B2B` | `net` (reverse charge) | Full amount is income base |
+
+If `vat_base_eur` is already set on a transaction (manual override), that value is used directly and no extraction is performed.
+
+For **Modelo 130** (IRPF), income reported in Box 01 is the ex-VAT base — IVA collected is a pass-through to AEAT and is not part of your rendimiento.
+
+### Aggregated audit records
+
+The audit trail in the Tax Audit tab mirrors the **Quarter Report** view that the gestor receives: one aggregated line per (geo_region × activity × VAT treatment) bucket, rather than one line per individual Stripe transaction. The totals are identical — only the presentation changes.
+
 ### Tax configuration
 
 Add a `tax` section to `config.json` (see `config.json.example`), or use the **Configuration → Tax Settings** tab:
@@ -428,6 +447,7 @@ The UI shows a summary table plus an expandable drill-down per cell. Each expand
 |------|--------------|--------|
 | `box_29_base_soportado` (M303) | `box_28_iva_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
 | `box_48_resultado` (M303) | 100% proration assumed | User must enter only the deductible portion of IVA in manual entries |
+| `box_01_ingresos` (M130) | Ex-VAT base extracted from VAT-inclusive Stripe amounts | Correct for estimación directa — IVA is a pass-through, not income |
 
 ---
 

@@ -14,6 +14,20 @@ from src.tax_validator import (
     run_all_validations,
 )
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_validations() -> list[ModelValidationResult]:
+    """Run all validations once and cache the results for 5 minutes.
+
+    Creates and closes its own DB connection so the result is picklable
+    (sqlite3.Connection objects cannot be cached by Streamlit).
+    """
+    conn = _get_connection()
+    try:
+        return run_all_validations(conn)
+    finally:
+        conn.close()
+
 _STATUS_ICONS = {
     "OK":      "✅",
     "DB_HIGH": "⬆️",
@@ -139,12 +153,14 @@ def render() -> None:
         "from the database. Differences may indicate missing invoices, unclassified transactions, "
         "missing expense entries, or data not yet loaded into the DB."
     )
+
+    col_info, col_btn = st.columns([5, 1])
+    with col_btn:
+        if st.button("↺ Refresh", help="Clear cached results and re-run all validations"):
+            _cached_validations.clear()
+
     with st.spinner("Running validations…"):
-        conn = _get_connection()
-        try:
-            results = run_all_validations(conn)
-        finally:
-            conn.close()
+        results = _cached_validations()
 
     if results:
         periods = ", ".join(f"**{r.period}** (M{r.model})" for r in results)

@@ -401,6 +401,25 @@ The classification system was validated against historical known totals covering
 
 ---
 
+## Performance & Caching
+
+Streamlit re-runs the entire app script on every user interaction (widget change, tab switch). To avoid re-querying SQLite on every render, key data-loading paths are wrapped with `@st.cache_data(ttl=300)`:
+
+| Cached function | Where | What it avoids |
+|----------------|-------|----------------|
+| `_cached_validations()` | `app/tax_validation.py` | 39–45 DB queries per Tax Validation tab render (4 quarters × multiple model computations) |
+| `_load_invoices_df()` | `app/invoice_explorer.py` | Full `invoices` table scan + type conversions on every filter interaction |
+| `_sidebar_stats()` | `app/streamlit_app.py` | 5 DB queries on every widget interaction across all tabs |
+
+**Cache TTL:** 5 minutes. Results auto-refresh after 5 minutes, or immediately via the **↺ Refresh** button present in the Tax Validation and Invoice Explorer tabs.
+
+**Invalidation rules:**
+- Tax Validation: click **↺ Refresh** after running **Calculate tax** or loading new data to see updated figures
+- Invoice Explorer: click **↺ Refresh** after extracting new invoices via OCR to see them in the table
+- Sidebar stats: auto-refresh every 5 minutes (no manual control needed)
+
+---
+
 ## Invoice Upload
 
 The Invoice Upload tab supports uploading invoice PDFs to the accounting partner API (IntegraLOOP/BILOOP).

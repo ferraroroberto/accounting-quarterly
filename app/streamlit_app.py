@@ -15,6 +15,21 @@ from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
 init_db()
 init_fx_table()
 
+
+# ── Cached sidebar stats (5-minute TTL) ─────────────────────────────────────
+# These functions run on every Streamlit re-render (every widget interaction).
+# Caching them avoids 5 DB round-trips per render.
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _sidebar_stats() -> dict:
+    return {
+        "tx_count": get_transaction_count_db(),
+        "stripe_last_sync": get_latest_stripe_sync_at(),
+        "fx_count": get_rate_count(),
+        "fx_last_sync": get_latest_fx_sync_at(),
+        "inv_stats": get_invoice_stats(),
+    }
+
 st.set_page_config(
     page_title="Stripe Accounting Dashboard",
     page_icon="S",
@@ -31,25 +46,23 @@ with st.sidebar:
         "generates Excel reports, and tracks invoice uploads."
     )
     st.markdown("---")
+    _stats = _sidebar_stats()
+
     st.markdown("**Stripe data:** `API`")
     st.caption("Stripe transactions are loaded from the Stripe API.")
-    tx_count = get_transaction_count_db()
-    st.caption(f"Transactions stored: {tx_count}")
-    stripe_last_sync = get_latest_stripe_sync_at()
-    stripe_last_sync_text = stripe_last_sync.strftime("%Y-%m-%d %H:%M") if stripe_last_sync else "n/a"
-    st.caption(f"Stripe last update: {stripe_last_sync_text}")
+    st.caption(f"Transactions stored: {_stats['tx_count']}")
+    _stripe_sync = _stats["stripe_last_sync"]
+    st.caption(f"Stripe last update: {_stripe_sync.strftime('%Y-%m-%d %H:%M') if _stripe_sync else 'n/a'}")
 
     st.markdown("**FX data:** `API`")
     st.caption("FX rates loaded from the ECB (Frankfurter API).")
-    fx_count = get_rate_count()
-    st.caption(f"FX rates stored: {fx_count}")
-    fx_last_sync = get_latest_fx_sync_at()
-    fx_last_update_text = fx_last_sync.strftime("%Y-%m-%d %H:%M:%S") if fx_last_sync else "n/a"
-    st.caption(f"FX last update: {fx_last_update_text}")
+    st.caption(f"FX rates stored: {_stats['fx_count']}")
+    _fx_sync = _stats["fx_last_sync"]
+    st.caption(f"FX last update: {_fx_sync.strftime('%Y-%m-%d %H:%M:%S') if _fx_sync else 'n/a'}")
 
     st.markdown("**Invoices data** `OCR`")
     st.caption("Invoices are extracted from PDF files using OCR.")
-    _inv_stats = get_invoice_stats()
+    _inv_stats = _stats["inv_stats"]
     _in_last = _inv_stats["in"]["last_extracted_at"]
     _out_last = _inv_stats["out"]["last_extracted_at"]
     st.caption(f"Expenses (in):  {_inv_stats['in']['count']}")

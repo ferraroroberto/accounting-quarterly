@@ -10,19 +10,19 @@ import streamlit as st
 from src.database import get_invoices
 
 
-def render() -> None:
-    """Render the Invoice Explorer tab."""
-    st.subheader("Invoice Explorer")
-    st.caption("Browse, filter and export all OCR-extracted invoices.")
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_invoices_df() -> pd.DataFrame:
+    """Load all invoices from DB and normalise types — cached for 5 minutes.
 
+    The heavy work (SQL query + type conversions) happens once; every filter
+    interaction in the UI reuses this DataFrame without touching the database.
+    """
     all_invoices = get_invoices()
     if not all_invoices:
-        st.info("No invoices extracted yet. Use the **Invoice OCR** tab to extract invoices first.")
-        return
+        return pd.DataFrame()
 
     df = pd.DataFrame(all_invoices)
 
-    # ── Normalise types ──────────────────────────────────────────────────────
     if "invoice_date" in df.columns:
         df["invoice_date"] = pd.to_datetime(df["invoice_date"], errors="coerce")
     if "extracted_at" in df.columns:
@@ -30,6 +30,24 @@ def render() -> None:
     for num_col in ("subtotal_eur", "iva_amount", "irpf_amount", "total_eur"):
         if num_col in df.columns:
             df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+
+    return df
+
+
+def render() -> None:
+    """Render the Invoice Explorer tab."""
+    st.subheader("Invoice Explorer")
+    st.caption("Browse, filter and export all OCR-extracted invoices.")
+
+    col_cap, col_btn = st.columns([5, 1])
+    with col_btn:
+        if st.button("↺ Refresh", key="inv_refresh", help="Reload invoices from the database"):
+            _load_invoices_df.clear()
+
+    df = _load_invoices_df()
+    if df.empty:
+        st.info("No invoices extracted yet. Use the **Invoice OCR** tab to extract invoices first.")
+        return
 
     # ── Sidebar-style filters in an expander ─────────────────────────────────
     with st.expander("Filters", expanded=True):

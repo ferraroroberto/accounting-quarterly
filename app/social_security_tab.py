@@ -94,7 +94,7 @@ def render() -> None:
                     df_preview = pd.read_csv(file_path, nrows=5, skiprows=skiprows, dtype=str)
                 df_preview.columns = [str(c).strip() for c in df_preview.columns]
                 st.markdown(f"**Columns found:** {list(df_preview.columns)}")
-                st.dataframe(df_preview, use_container_width=True)
+                st.dataframe(df_preview, width="stretch")
             except Exception as exc:
                 st.error(f"Could not read file: {exc}")
 
@@ -158,7 +158,7 @@ def render() -> None:
         count = len(df_yr)
         summary_data.append({"Year": yr, "Payments": count, "Total (€)": round(total, 2)})
 
-    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
 
     # -------------------------------------------------------------------------
     # Detail table with optional year filter
@@ -185,7 +185,7 @@ def render() -> None:
                 "Payments": len(df_q),
                 "Total (€)": round(df_q["amount_eur"].sum(), 2),
             })
-        st.dataframe(pd.DataFrame(q_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(q_data), width="stretch", hide_index=True)
 
     # Full detail table
     display_cols = ["id", "payment_date", "amount_eur", "description", "source_file", "imported_at"]
@@ -199,7 +199,7 @@ def render() -> None:
         "imported_at": "Imported at",
     }).sort_values("Date", ascending=False)
 
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    st.dataframe(df_display, width="stretch", hide_index=True)
 
     # CSV export
     csv_bytes = df_display.to_csv(index=False).encode()

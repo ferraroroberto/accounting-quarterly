@@ -10,7 +10,7 @@ In plan mode:
 - Investigate the codebase as needed (read files, search, run read-only commands)
 - Resolve ambiguity through questions before proposing a plan
 - Present the plan only when you're confident it reflects what I actually want
-- Stay in plan mode across rejections — if I push back, revise and re-present, don't bail out to execution
+- Stay in plan mode across rejections â€” if I push back, revise and re-present, don't bail out to execution
 
 Recommended setting in `.claude/settings.json`:
 ```json
@@ -20,7 +20,7 @@ Recommended setting in `.claude/settings.json`:
 Exit plan mode only after I explicitly approve. Approval transitions straight to execution in the same turn.
 
 ## Asking questions
-Ask whenever a decision would be expensive to undo or genuinely ambiguous. One sharp question beats three filler ones. Use multi-choice (2-4 options) when the choice space is bounded — much faster for me to answer than prose.
+Ask whenever a decision would be expensive to undo or genuinely ambiguous. One sharp question beats three filler ones. Use multi-choice (2-4 options) when the choice space is bounded â€” much faster for me to answer than prose.
 
 **Always ask before assuming** any of these:
 - File or module location for new code
@@ -33,7 +33,7 @@ Ask whenever a decision would be expensive to undo or genuinely ambiguous. One s
 - Error and empty-state handling
 - Whether to add tests, and at what level
 
-**Don't ask about** things you can determine by reading the code, things I've already specified, or process meta-questions like "is the plan ready?" — that's what plan approval is for.
+**Don't ask about** things you can determine by reading the code, things I've already specified, or process meta-questions like "is the plan ready?" â€” that's what plan approval is for.
 
 If multiple reasonable approaches exist, present them as options with tradeoffs. Don't pick silently.
 
@@ -43,13 +43,13 @@ If multiple reasonable approaches exist, present them as options with tradeoffs.
 - When renaming a symbol, search separately for: direct calls, type references, string literals, dynamic imports, re-exports, and tests.
 
 ## General conventions
-- **Project layout** is documented in this repo's `README.md`. Don't assume `/app/`, `/src/`, `launch_app.bat`, or any specific paths exist — read the README first.
-- **Config & secrets:** project config in `config.json` or similar; secrets always in `.env`, never committed. The canonical name for the env file is `.env` (not `venv` or anything else — `.venv` is the venv directory).
-- **Logging:** use the language's logging facility. In Python that's `logging`, not `print()`. Emojis are welcome in log messages: ℹ️ ⚠️ ❌ ✅
+- **Project layout** is documented in this repo's `README.md`. Don't assume `/app/`, `/src/`, `launch_app.bat`, or any specific paths exist â€” read the README first.
+- **Config & secrets:** project config in `config.json` or similar; secrets always in `.env`, never committed. The canonical name for the env file is `.env` (not `venv` or anything else â€” `.venv` is the venv directory).
+- **Logging:** use the language's logging facility. In Python that's `logging`, not `print()`. Emojis are welcome in log messages: â„¹ï¸ âš ï¸ âŒ âœ…
 - **Naming:** snake_case for files/functions (Python), PascalCase for classes, UPPER_CASE for constants.
-- **Imports:** stdlib → third-party → local.
-- **Versioning policy:** follow the existing style in `requirements.txt` / `package.json` — keep `==` where the file uses pins, keep `>=` where it uses lower bounds. Don't change the policy unless explicitly asked.
-- **Virtual environment:** use the existing `.venv`. Never create `venv`. Never activate — invoke via `& .\.venv\Scripts\python.exe ...` on Windows, `./.venv/bin/python ...` on POSIX.
+- **Imports:** stdlib â†’ third-party â†’ local.
+- **Versioning policy:** follow the existing style in `requirements.txt` / `package.json` â€” keep `==` where the file uses pins, keep `>=` where it uses lower bounds. Don't change the policy unless explicitly asked.
+- **Virtual environment:** use the existing `.venv`. Never create `venv`. Never activate â€” invoke via `& .\.venv\Scripts\python.exe ...` on Windows, `./.venv/bin/python ...` on POSIX.
 - **No hardcoded paths or credentials.**
 - **Type hints** on all public Python functions. Use `Optional[T]`, never bare `None` returns.
 - Implement only what was asked. No nice-to-haves.
@@ -58,7 +58,7 @@ If multiple reasonable approaches exist, present them as options with tradeoffs.
 *Apply only if this project uses Streamlit.*
 
 - `st.set_page_config(layout="wide", page_title="...")` MUST be the first Streamlit call.
-- Use `width="stretch"` (and `width="content"` where appropriate) in new and modified code. **Never** introduce new `use_container_width=True` — it is deprecated. When you touch existing code that uses `use_container_width`, migrate it.
+- Use `width="stretch"` (and `width="content"` where appropriate) in new and modified code. **Never** introduce new `use_container_width=True` â€” it is deprecated. When you touch existing code that uses `use_container_width`, migrate it.
 - All mutable state in `st.session_state`. No module-level globals.
 - `@st.cache_data` for DataFrames/files; `@st.cache_resource` for DB clients/models.
 - Every widget needs a stable, explicit `key=`.
@@ -67,10 +67,10 @@ If multiple reasonable approaches exist, present them as options with tradeoffs.
 - **App layout:** main file (e.g. `app.py`) handles only page config, shared state, sidebar, and tab/radio routing. Each tab/mode lives in its own file exposing a `main(...)` (or `render_*`) function. Default to `st.tabs()`; use a sidebar radio only when asked.
 
 ## Phased execution for larger work
-Multi-file refactors don't go in a single response. Break into phases of ≤5 files each. Complete phase 1, run verification, wait for my approval, then phase 2. Same rule for any task you'd estimate at >30 minutes of work.
+Multi-file refactors don't go in a single response. Break into phases of â‰¤5 files each. Complete phase 1, run verification, wait for my approval, then phase 2. Same rule for any task you'd estimate at >30 minutes of work.
 
 ## Verification (before declaring a task done)
-Examples — adapt to the project's actual tooling:
+Examples â€” adapt to the project's actual tooling:
 
 Windows / PowerShell:
 - Syntax: `& .\.venv\Scripts\python.exe -m py_compile <file>`
@@ -93,7 +93,7 @@ For feature work and refactors (not trivial fixes):
 For one-line fixes and typos: skip the changelog.
 
 ## Git
-Never auto-commit or push. Never stage files without being asked. When a task is done, ask: "Shall I prepare the commit message?" When asked, provide a ready-to-copy block:
+Never auto-commit or push, never stage files without being asked. When a task is done, prepare a relevant  commit message, ready to copy for the user. Never add `Co-Authored-By: Claude` (or any other LLM/AI attribution trailer) to commit messages. 
 
 ```bash
 git add <files>

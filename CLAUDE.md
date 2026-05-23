@@ -85,14 +85,17 @@ POSIX:
 If no checker exists for a project, say so explicitly. Don't claim "tests pass" when there are no tests.
 
 ## Documentation discipline
-The `docs/` folder is for **work that is already done** — retrospective changelogs, design records, reference material. Never put plans, roadmaps, TODOs, or "future work" docs in `docs/`. If you find yourself writing one, that content belongs in a GitHub issue instead.
+The `docs/` folder is for **durable reference material** a future reader (you, or a cold LLM) will actually re-open — design records, architecture overviews, integration guides, shared playbooks. Filenames describe the topic, not a date.
 
-For feature work and refactors (not trivial fixes):
-- Update `README.md` if usage, config, or output changed
-- If the project already has a `docs/` folder, add `docs/YYYY-MM-DD-short-description.md` with: what was done, files modified, validation run
-- Don't create a `docs/` folder just to file a changelog entry on a one-off task
+Never put in `docs/`:
+- Plans, roadmaps, TODOs, "future work" → those are GitHub issues.
+- Dated per-PR changelog files (`docs/YYYY-MM-DD-*.md`) → the issue + the PR that closes it + `git log` already capture what was done, files modified, and validation run. Don't write a third copy.
 
-For one-line fixes and typos: skip the changelog.
+For feature work and refactors:
+- Update `README.md` if usage, config, or output changed.
+- If the change introduces a durable concept worth re-reading (a new integration, a non-obvious architectural decision, a shared pattern), add a topic-named doc — `docs/<topic>.md`, not `docs/YYYY-MM-DD-<topic>.md`.
+
+For one-line fixes and typos: just commit.
 
 ## Planning future work
 Plans, roadmaps, and proposed features live as **GitHub issues** on this repo, not as files in the tree. One issue per topic (group closely-related items; split when in doubt). Issues should be self-contained enough to hand off to an LLM or a human cold.

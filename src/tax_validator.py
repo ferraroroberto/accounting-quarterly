@@ -248,6 +248,16 @@ def validate_modelo_390(
     agg_vol_total   = round(agg["base_21"] + agg["intracom"] + agg["export"] + agg["oss"], 2)
     m130 = compute_modelo_130(year, 4, conn)
 
+    # M130 cross-check filed reference: the annual income computed for Modelo 390
+    # must be reconciled against the income the gestor actually filed on Modelo 130,
+    # not against any Modelo 390 volume figure. Box 01 of Modelo 130 is cumulative
+    # YTD, so the Q4 filing carries the full-year filed income.
+    m130_filing = _find_filing(filings, "130", year, 4)
+    m130_filed_ingresos = (
+        m130_filing.get("values", {}).get("01_ingresos_ytd")
+        if m130_filing else None
+    )
+
     if filing is None:
         return ModelValidationResult(
             model="390", period=period, filed_date="—",
@@ -286,7 +296,7 @@ def validate_modelo_390(
         ValidationLine("108",    "Total volumen de operaciones",
                         v.get("108_total_volumen"),  agg_vol_total),
         ValidationLine("130/01", "Ingresos anuales computables (M130 cross-check)",
-                        v.get("108_total_volumen"),  m130.box_01_ingresos),
+                        m130_filed_ingresos,  m130.box_01_ingresos),
     ]
     return result
 

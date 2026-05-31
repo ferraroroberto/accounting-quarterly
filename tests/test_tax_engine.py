@@ -189,12 +189,14 @@ class TestModelo130:
                    converted_amount=1000.0, activity_type="COACHING")
         result = compute_modelo_130(2025, 1, db_conn)
         assert result.box_14_pagos_anteriores == 0.0
-        assert result.box_01_ingresos == pytest.approx(1000.0)
-        # 5% of 1000 = 50 gastos de difícil justificación
-        assert result.gastos_dificil_justificacion == pytest.approx(50.0)
-        assert result.rendimiento_neto == pytest.approx(950.0)
-        # 20% of 950 = 190
-        assert result.box_05_base == pytest.approx(190.0)
+        # €1000 gross IVA_ES_21 → ex-VAT income base 1000 / 1.21 = 826.45
+        assert result.box_01_ingresos == pytest.approx(826.45)
+        # 5% of 826.45 = 41.32 gastos de difícil justificación
+        assert result.gastos_dificil_justificacion == pytest.approx(41.32)
+        # 826.45 − 41.32 = 785.13
+        assert result.rendimiento_neto == pytest.approx(785.13)
+        # 20% of 785.13 = 157.03
+        assert result.box_05_base == pytest.approx(157.03)
 
     def test_retenciones_greater_than_20pct_net_gives_zero(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
@@ -234,13 +236,15 @@ class TestModelo130:
         )
         db_conn.commit()
         result = compute_modelo_130(2025, 2, db_conn)
-        assert result.box_01_ingresos == pytest.approx(2000.0)  # YTD
+        # Two €1000 gross IVA_ES_21 tx → ex-VAT base each 1000 / 1.21 = 826.45,
+        # YTD income = 826.45 + 826.45 = 1652.90
+        assert result.box_01_ingresos == pytest.approx(1652.90)  # YTD
         assert result.box_14_pagos_anteriores == pytest.approx(190.0)
-        # rendimiento neto previo = 2000, 5% = 100, rendimiento neto = 1900
-        # 20% of 1900 = 380 - 190 prior = 190
-        assert result.gastos_dificil_justificacion == pytest.approx(100.0)
-        assert result.rendimiento_neto == pytest.approx(1900.0)
-        assert result.box_16_resultado == pytest.approx(190.0)
+        # rendimiento neto previo = 1652.90, 5% = 82.65, rendimiento neto = 1570.25
+        # 20% of 1570.25 = 314.05 - 190 prior = 124.05
+        assert result.gastos_dificil_justificacion == pytest.approx(82.65)
+        assert result.rendimiento_neto == pytest.approx(1570.25)
+        assert result.box_16_resultado == pytest.approx(124.05)
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +307,7 @@ class TestTaxSnapshotPersistence:
         assert set(by_model) >= {"303", "130", "OSS", "347", "349"}
         assert by_model["347"]["quarter"] == TAX_SNAPSHOT_QUARTER_ANNUAL
         m303 = decode_snapshot("303", by_model["303"]["payload_json"])
-        assert m303.box_01_base == pytest.approx(100.0)
+        # €100 gross IVA_ES_21 → ex-VAT base 100 / 1.21 = 82.64
+        assert m303.box_01_base == pytest.approx(82.64)
         m347 = decode_snapshot("347", by_model["347"]["payload_json"])
         assert m347.year == 2025

@@ -521,7 +521,18 @@ ACCOUNTING_PASSWORD=your_password_here
 
 ## Invoice OCR (AI Extraction)
 
-The **Invoice OCR** tab uses Google Gemini to extract Spanish accounting data from any PDF — invoices, receipts, tickets, foreign bills — and stores the results in the `invoices` SQLite table.
+The **Invoice OCR** tab extracts Spanish accounting data from any PDF — invoices, receipts, tickets, foreign bills — and stores the results in the `invoices` SQLite table.
+
+### Extraction provider
+
+Extraction runs through one of two interchangeable backends, selected by `invoice_ocr.provider` in `config.json` (or the `INVOICE_OCR_PROVIDER` env var, or the `provider=` argument to `extract_invoice()`). Both backends share the same prompt and post-parsing, so the stored fields are identical regardless of provider.
+
+| Provider | How it calls | Credentials |
+|----------|-------------|-------------|
+| `gemini` (default) | Direct `google-genai` SDK to Gemini / Vertex AI | `GOOGLE_API_KEY` or Vertex ADC (`GOOGLE_APPLICATION_CREDENTIALS`) |
+| `hub` | local-llm-hub at `http://127.0.0.1:8000` via the Anthropic SDK and a `document` content block, model alias `gemini_pro` | none (the hub holds the Google session) |
+
+The `hub` path keeps all LLM access flowing through the local-llm-hub (central LAN access and observability) and needs no Google key on this machine. It is fully implemented but parked behind the flag until the hub's PDF-attachment reliability bug ([local-llm-hub#63](https://github.com/ferraroroberto/local-llm-hub/issues/63)) is fixed; once that lands, switch the default by setting `invoice_ocr.provider` to `hub`. Override the hub endpoint/alias with `LLM_HUB_BASE_URL` / `LLM_HUB_MODEL` if needed.
 
 ### Invoice directories
 

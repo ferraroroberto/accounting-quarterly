@@ -39,12 +39,13 @@ HUB_MODEL = "gemini_pro"  # stable alias — never the display name
 # Default provider for extraction. Override via config (invoice_ocr.provider)
 # or the INVOICE_OCR_PROVIDER env var.
 #
-# NOTE: this stays "gemini" until local-llm-hub#63 is fixed. The "hub" path is
-# fully implemented and works, but the hub's underlying Antigravity (`agy`)
-# CLI intermittently fails to read the attached PDF ("document not provided /
-# could not be accessed"), so routing every extraction through it would break
-# invoice OCR. Flip to "hub" once #63 is green — it is the only change needed.
-DEFAULT_PROVIDER = "gemini"
+# Defaults to "hub": every LLM call flows through local-llm-hub for central LAN
+# access and observability, and no Google credentials are needed on this machine.
+# The hub's PDF-attachment reliability bug (local-llm-hub#63) is fixed — the hub
+# now passes attachment dirs via `agy --add-dir`, so document/PDF blocks ingest
+# deterministically. The legacy "gemini" (Vertex / API-key) path remains fully
+# intact as a selectable fallback.
+DEFAULT_PROVIDER = "hub"
 
 _EXTRACTION_PROMPT = """
 You are an expert Spanish accountant and OCR assistant specialising in AEAT compliance.

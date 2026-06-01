@@ -17,7 +17,7 @@
     "enabled": false
   },
   "invoice_ocr": {
-    "provider": "gemini"
+    "provider": "hub"
   },
   "social_security": {
     "bank_export_file": "tmp/social_security_bank_export.xlsx",

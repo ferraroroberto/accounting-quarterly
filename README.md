@@ -96,7 +96,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
-│   ├── invoice_ocr.py             # Gemini-powered PDF extraction for Spanish accounting
+│   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard
@@ -108,7 +108,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── currency.py                # FX rate management, charts, and conversion tool
 │   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
-│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (Gemini OCR)
+│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub / Gemini)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
@@ -529,10 +529,10 @@ Extraction runs through one of two interchangeable backends, selected by `invoic
 
 | Provider | How it calls | Credentials |
 |----------|-------------|-------------|
-| `gemini` (default) | Direct `google-genai` SDK to Gemini / Vertex AI | `GOOGLE_API_KEY` or Vertex ADC (`GOOGLE_APPLICATION_CREDENTIALS`) |
-| `hub` | local-llm-hub at `http://127.0.0.1:8000` via the Anthropic SDK and a `document` content block, model alias `gemini_pro` | none (the hub holds the Google session) |
+| `hub` (default) | local-llm-hub at `http://127.0.0.1:8000` via the Anthropic SDK and a `document` content block, model alias `gemini_pro` | none (the hub holds the Google session) |
+| `gemini` | Direct `google-genai` SDK to Gemini / Vertex AI | `GOOGLE_API_KEY` or Vertex ADC (`GOOGLE_APPLICATION_CREDENTIALS`) |
 
-The `hub` path keeps all LLM access flowing through the local-llm-hub (central LAN access and observability) and needs no Google key on this machine. It is fully implemented but parked behind the flag until the hub's PDF-attachment reliability bug ([local-llm-hub#63](https://github.com/ferraroroberto/local-llm-hub/issues/63)) is fixed; once that lands, switch the default by setting `invoice_ocr.provider` to `hub`. Override the hub endpoint/alias with `LLM_HUB_BASE_URL` / `LLM_HUB_MODEL` if needed.
+The `hub` path is the default: it keeps all LLM access flowing through the local-llm-hub (central LAN access and observability) and needs no Google key on this machine. It became the default once the hub's PDF-attachment reliability bug ([local-llm-hub#63](https://github.com/ferraroroberto/local-llm-hub/issues/63)) was fixed — the hub now passes attachment dirs via `agy --add-dir`, so document/PDF blocks ingest deterministically. Override the hub endpoint/alias with `LLM_HUB_BASE_URL` / `LLM_HUB_MODEL` if needed. To fall back to the legacy direct Gemini/Vertex path, set `invoice_ocr.provider` to `gemini` (or `INVOICE_OCR_PROVIDER=gemini`).
 
 ### Invoice directories
 

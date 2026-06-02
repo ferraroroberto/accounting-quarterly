@@ -9,7 +9,6 @@ from typing import Optional
 from src.logger import get_logger
 from src.models import ClassifiedPayment
 from src.tax_models import (
-    OSS_RATES,
     AuditEntry,
     Modelo130Result,
     Modelo303Result,
@@ -22,6 +21,12 @@ from src.tax_models import (
     TaxDeadline,
     VATTreatment,
     _tax_deadline_date,
+)
+from src.vat_rules import (
+    oss_rate,
+    vat_amount_on_base,
+    vat_base_from_inclusive,
+    vat_treatment,
 )
 
 log = get_logger(__name__)
@@ -198,22 +203,22 @@ def _net_amount(row: dict) -> float:
 
 
 def _get_vat_treatment(row: dict) -> str:
-    """Return stored vat_treatment, or derive it on-the-fly if missing."""
+    """Return stored vat_treatment, or derive it on-the-fly if missing.
+
+    The fallback derivation delegates to the shared treatment matrix in
+    ``src.vat_rules`` so the classifier and the engine cannot diverge. No
+    ``config`` is passed here, so the EU B2B fallback is the default
+    ``IVA_EU_B2B`` (matching the historical engine behaviour).
+    """
     stored = row.get("vat_treatment")
     if stored and stored != "UNKNOWN":
         return stored
     # Derive from activity × geo (fallback for rows not yet VAT-classified)
-    geo = row.get("geo_region") or "UNKNOWN"
-    activity = row.get("activity_type") or "UNKNOWN"
-    if geo == "OUTSIDE_EU":
-        return "IVA_EXPORT"
-    if geo == "SPAIN":
-        return "IVA_ES_21"
-    if geo == "EU_NOT_SPAIN":
-        if activity == "NEWSLETTER":
-            return "OSS_EU"
-        return "IVA_EU_B2B"
-    return "UNKNOWN"
+    return vat_treatment(row.get("activity_type"), row.get("geo_region"))
+
+
+def _oss_country_code(row: dict) -> str:
+    return (row.get("oss_country") or row.get("card_country") or "").upper()
 
 
 def _get_vat_base(row: dict) -> float:
@@ -226,30 +231,17 @@ def _get_vat_base(row: dict) -> float:
     """
     if row.get("vat_base_eur") is not None:
         return row["vat_base_eur"]
-    net = _net_amount(row)
-    treatment = _get_vat_treatment(row)
-    if treatment == "IVA_ES_21":
-        return round(net / 1.21, 2)
-    if treatment == "OSS_EU":
-        cc = (row.get("oss_country") or row.get("card_country") or "").upper()
-        rate = OSS_RATES.get(cc, OSS_RATES["DEFAULT_EU"])
-        return round(net / (1 + rate), 2)
-    # IVA_EXPORT, IVA_EU_B2B, EXEMPT, UNKNOWN — full net amount is income base
-    return net
+    return vat_base_from_inclusive(
+        _net_amount(row), _get_vat_treatment(row), _oss_country_code(row)
+    )
 
 
 def _get_vat_amount(row: dict) -> float:
     if row.get("vat_amount_eur") is not None:
         return row["vat_amount_eur"]
-    treatment = _get_vat_treatment(row)
-    base = _get_vat_base(row)
-    if treatment == "IVA_ES_21":
-        return round(base * 0.21, 2)
-    if treatment == "OSS_EU":
-        cc = (row.get("oss_country") or row.get("card_country") or "").upper()
-        rate = OSS_RATES.get(cc, OSS_RATES["DEFAULT_EU"])
-        return round(base * rate, 2)
-    return 0.0
+    return vat_amount_on_base(
+        _get_vat_base(row), _get_vat_treatment(row), _oss_country_code(row)
+    )
 
 
 def _get_tax_entries_total(
@@ -816,7 +808,7 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         by_country[cc]["vat"] += vat
 
     for country, data in sorted(by_country.items()):
-        rate = OSS_RATES.get(country, OSS_RATES["DEFAULT_EU"])
+        rate = oss_rate(country)
         result.rows.append(OSSCountryRow(
             country=country,
             transactions=data["count"],

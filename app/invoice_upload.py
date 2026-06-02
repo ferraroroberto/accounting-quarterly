@@ -36,6 +36,87 @@ def _get_new_invoices(all_files: list[str], uploaded: list[dict]) -> list[str]:
     return [f for f in all_files if f not in uploaded_names]
 
 
+def _render_upload_panel(
+    direction: str,
+    doc_type: str,
+    invoice_dir: str,
+    client: "AccountingAPIClient | None",
+    api_enabled: bool,
+) -> None:
+    """Render one invoice-upload tab (scan → metrics → upload → history).
+
+    ``direction`` is ``"in"`` (received) or ``"out"`` (produced); ``doc_type`` is
+    the accounting-partner document type (``"buy_invoices"`` / ``"sell_invoices"``).
+    """
+    label = "Invoices Received" if direction == "in" else "Invoices Produced"
+    st.subheader(label)
+    st.caption(f"Directory: `{invoice_dir}`")
+
+    dir_path = ROOT / invoice_dir
+    dir_path.mkdir(parents=True, exist_ok=True)
+
+    all_files = _scan_invoices(invoice_dir)
+    uploaded = get_uploaded_files(direction)
+    new_files = _get_new_invoices(all_files, uploaded)
+
+    col_total, col_uploaded, col_new = st.columns(3)
+    col_total.metric("Total PDFs", len(all_files))
+    col_uploaded.metric("Already Uploaded", len(uploaded))
+    col_new.metric("New (pending)", len(new_files))
+
+    if new_files:
+        st.markdown("**New invoices to upload:**")
+        for f in new_files:
+            st.markdown(f"- `{f}`")
+
+        if st.button(
+            f"Upload new invoices ({direction.capitalize()})",
+            key=f"upload_{direction}",
+            disabled=not api_enabled,
+        ):
+            if not client:
+                st.error("Accounting API client not configured.")
+            else:
+                token = st.session_state.get("inv_api_token") or (os.getenv("ACCOUNTING_TOKEN") or "")
+                if not token:
+                    st.error("No token available. Set ACCOUNTING_TOKEN or fetch token.")
+                else:
+                    progress = st.progress(0, text="Uploading...")
+                    uploaded_count = 0
+                    for i, filename in enumerate(new_files):
+                        try:
+                            path = str((dir_path / filename).resolve())
+                            res = client.upload_document(
+                                token=token,
+                                doc_type=doc_type,
+                                file_path=path,
+                                date=datetime.now(),
+                                year=datetime.now().year,
+                                overwrite=0,
+                            )
+                            record_upload(filename, direction, api_response=str(res)[:2000])
+                            uploaded_count += 1
+                            progress.progress((i + 1) / len(new_files), text=f"Uploaded {filename}")
+                        except AccountingAPIError as exc:
+                            log.error("Invoice upload failed for %s: %s", filename, exc)
+                            record_upload(filename, direction, api_response=f"ERROR: {exc}")
+                            st.error(f"{filename}: {exc}")
+                    progress.empty()
+                    st.success(f"Uploaded {uploaded_count}/{len(new_files)} invoices")
+                    st.rerun()
+    else:
+        st.success("All invoices have been uploaded.")
+
+    if uploaded:
+        st.markdown("---")
+        st.markdown("**Upload history:**")
+        st.dataframe(
+            pd.DataFrame(uploaded),
+            width="stretch",
+            hide_index=True,
+        )
+
+
 def render():
     """Render the Invoice Upload tab."""
     cfg = load_config()
@@ -214,129 +295,7 @@ def render():
     in_tab, out_tab = st.tabs(["Invoices Received (In)", "Invoices Produced (Out)"])
 
     with in_tab:
-        st.subheader("Invoices Received")
-        st.caption(f"Directory: `{invoice_in_dir}`")
-
-        in_dir_path = ROOT / invoice_in_dir
-        in_dir_path.mkdir(parents=True, exist_ok=True)
-
-        all_in = _scan_invoices(invoice_in_dir)
-        uploaded_in = get_uploaded_files("in")
-        new_in = _get_new_invoices(all_in, uploaded_in)
-
-        col_total, col_uploaded, col_new = st.columns(3)
-        col_total.metric("Total PDFs", len(all_in))
-        col_uploaded.metric("Already Uploaded", len(uploaded_in))
-        col_new.metric("New (pending)", len(new_in))
-
-        if new_in:
-            st.markdown("**New invoices to upload:**")
-            for f in new_in:
-                st.markdown(f"- `{f}`")
-
-            if st.button("Upload new invoices (In)", key="upload_in", disabled=not api_enabled):
-                if not client:
-                    st.error("Accounting API client not configured.")
-                else:
-                    token = st.session_state.get("inv_api_token") or (os.getenv("ACCOUNTING_TOKEN") or "")
-                    if not token:
-                        st.error("No token available. Set ACCOUNTING_TOKEN or fetch token.")
-                    else:
-                        progress = st.progress(0, text="Uploading...")
-                        uploaded_count = 0
-                        for i, filename in enumerate(new_in):
-                            try:
-                                path = str((in_dir_path / filename).resolve())
-                                res = client.upload_document(
-                                    token=token,
-                                    doc_type="buy_invoices",
-                                    file_path=path,
-                                    date=datetime.now(),
-                                    year=datetime.now().year,
-                                    overwrite=0,
-                                )
-                                record_upload(filename, "in", api_response=str(res)[:2000])
-                                uploaded_count += 1
-                                progress.progress((i + 1) / len(new_in), text=f"Uploaded {filename}")
-                            except AccountingAPIError as exc:
-                                log.error("Invoice upload failed for %s: %s", filename, exc)
-                                record_upload(filename, "in", api_response=f"ERROR: {exc}")
-                                st.error(f"{filename}: {exc}")
-                        progress.empty()
-                        st.success(f"Uploaded {uploaded_count}/{len(new_in)} invoices")
-                        st.rerun()
-        else:
-            st.success("All invoices have been uploaded.")
-
-        if uploaded_in:
-            st.markdown("---")
-            st.markdown("**Upload history:**")
-            st.dataframe(
-                pd.DataFrame(uploaded_in),
-                width="stretch",
-                hide_index=True,
-            )
+        _render_upload_panel("in", "buy_invoices", invoice_in_dir, client, api_enabled)
 
     with out_tab:
-        st.subheader("Invoices Produced")
-        st.caption(f"Directory: `{invoice_out_dir}`")
-
-        out_dir_path = ROOT / invoice_out_dir
-        out_dir_path.mkdir(parents=True, exist_ok=True)
-
-        all_out = _scan_invoices(invoice_out_dir)
-        uploaded_out = get_uploaded_files("out")
-        new_out = _get_new_invoices(all_out, uploaded_out)
-
-        col_total, col_uploaded, col_new = st.columns(3)
-        col_total.metric("Total PDFs", len(all_out))
-        col_uploaded.metric("Already Uploaded", len(uploaded_out))
-        col_new.metric("New (pending)", len(new_out))
-
-        if new_out:
-            st.markdown("**New invoices to upload:**")
-            for f in new_out:
-                st.markdown(f"- `{f}`")
-
-            if st.button("Upload new invoices (Out)", key="upload_out", disabled=not api_enabled):
-                if not client:
-                    st.error("Accounting API client not configured.")
-                else:
-                    token = st.session_state.get("inv_api_token") or (os.getenv("ACCOUNTING_TOKEN") or "")
-                    if not token:
-                        st.error("No token available. Set ACCOUNTING_TOKEN or fetch token.")
-                    else:
-                        progress = st.progress(0, text="Uploading...")
-                        uploaded_count = 0
-                        for i, filename in enumerate(new_out):
-                            try:
-                                path = str((out_dir_path / filename).resolve())
-                                res = client.upload_document(
-                                    token=token,
-                                    doc_type="sell_invoices",
-                                    file_path=path,
-                                    date=datetime.now(),
-                                    year=datetime.now().year,
-                                    overwrite=0,
-                                )
-                                record_upload(filename, "out", api_response=str(res)[:2000])
-                                uploaded_count += 1
-                                progress.progress((i + 1) / len(new_out), text=f"Uploaded {filename}")
-                            except AccountingAPIError as exc:
-                                log.error("Invoice upload failed for %s: %s", filename, exc)
-                                record_upload(filename, "out", api_response=f"ERROR: {exc}")
-                                st.error(f"{filename}: {exc}")
-                        progress.empty()
-                        st.success(f"Uploaded {uploaded_count}/{len(new_out)} invoices")
-                        st.rerun()
-        else:
-            st.success("All invoices have been uploaded.")
-
-        if uploaded_out:
-            st.markdown("---")
-            st.markdown("**Upload history:**")
-            st.dataframe(
-                pd.DataFrame(uploaded_out),
-                width="stretch",
-                hide_index=True,
-            )
+        _render_upload_panel("out", "sell_invoices", invoice_out_dir, client, api_enabled)

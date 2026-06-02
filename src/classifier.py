@@ -172,43 +172,21 @@ def classify_vat(payment: ClassifiedPayment, config: Optional[dict] = None) -> C
     The payment is returned with updated VAT fields (mutated copy via model_copy).
     """
     from src.tax_models import OSS_RATES
+    from src.vat_rules import vat_amount_on_base, vat_treatment
 
-    tax_cfg = (config or {}).get("tax", {})
     activity = payment.activity_type
     geo = payment.geo_region
-    base = payment.net_amount  # net_amount already in EUR
+    base = payment.net_amount  # net_amount already in EUR (taxable base, not gross)
 
-    treatment: str
-    vat_amount = 0.0
+    treatment = vat_treatment(activity, geo, config)
     oss_country: Optional[str] = None
+    cc = (payment.card_country or "").upper()
 
-    if geo == "OUTSIDE_EU":
-        treatment = "IVA_EXPORT"
+    if treatment == "OSS_EU":
+        # Use card_country for OSS country assignment (only when it has a known rate)
+        oss_country = cc if cc in OSS_RATES else None
 
-    elif geo == "SPAIN":
-        treatment = "IVA_ES_21"
-        vat_amount = round(base * 0.21, 2)
-
-    elif geo == "EU_NOT_SPAIN":
-        if activity == "NEWSLETTER":
-            treatment = "OSS_EU"
-            # Use card_country for OSS country assignment
-            cc = (payment.card_country or "").upper()
-            oss_country = cc if cc in OSS_RATES else None
-            rate = OSS_RATES.get(cc, OSS_RATES["DEFAULT_EU"])
-            vat_amount = round(base * rate, 2)
-        else:
-            # COACHING and ILLUSTRATIONS default to B2B reverse charge
-            eu_b2b_treatment = tax_cfg.get(
-                f"default_vat_treatment_eu_{activity.lower()}", "IVA_EU_B2B"
-            )
-            treatment = eu_b2b_treatment
-            # 0% for reverse charge
-            vat_amount = 0.0
-
-    else:
-        # UNKNOWN geo
-        treatment = "UNKNOWN"
+    vat_amount = vat_amount_on_base(base, treatment, cc)
 
     return payment.model_copy(update={
         "vat_treatment": treatment,

@@ -94,24 +94,9 @@ def _render_model_section(result: ModelValidationResult) -> None:
 
     df = _lines_to_df(result.lines)
 
-    # Colour the Status column using pandas Styler
-    def colour_status(row):
-        colour = _STATUS_COLOURS.get(row["_status"], "#888888")
-        styles = [""] * len(row)
-        idx = list(row.index).index("Status")
-        styles[idx] = f"color: {colour}; font-weight: bold"
-        # Also colour diff column
-        diff_idx = list(row.index).index("Diff (DB − filed)")
-        styles[diff_idx] = f"color: {colour}"
-        return styles
-
     display_df = df.drop(columns=["_status"])
-    styled = (
-        display_df.style
-        .apply(colour_status, axis=1, subset=None)  # can't easily apply on drop, use lambda
-    )
 
-    # Fallback: just render plain table with colour in Status cell via map
+    # Colour the Status and Diff columns via per-cell map
     def highlight_status(val: str) -> str:
         for key, colour in _STATUS_COLOURS.items():
             if key in val:

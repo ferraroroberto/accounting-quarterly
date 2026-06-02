@@ -27,16 +27,7 @@ OSS_RATES: dict[str, float] = {
     "DEFAULT_EU": 0.21,
 }
 
-TAX_DEADLINES: dict[str, dict | str] = {
-    "303": {1: "April 20", 2: "July 20", 3: "October 20", 4: "January 30 (next year)"},
-    "130": {1: "April 20", 2: "July 20", 3: "October 20", 4: "January 30 (next year)"},
-    "390": "January 30 (following year)",
-    "347": "February 28 (following year)",
-    "349": {1: "April 20", 2: "July 20", 3: "October 20", 4: "January 20 (next year)"},
-    "OSS": {1: "April 30", 2: "July 31", 3: "October 31", 4: "January 31 (next year)"},
-}
-
-# Actual deadline dates per model / quarter for status computation
+# Deadline dates per model / quarter for status computation
 def _tax_deadline_date(model: str, year: int, quarter: int) -> date:
     """Return the actual deadline date for a given tax model, year, and quarter."""
     if model in ("303", "130", "349"):

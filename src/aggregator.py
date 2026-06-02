@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
 from datetime import date
 from typing import Optional
@@ -79,11 +80,6 @@ def build_monthly_table(
     for y, m in relevant_months:
         a = agg_map.get((y, m), MonthlyAggregation(year=y, month=m, geo_region=geo_filter))
         month_start = date(y, m, 1)
-        if m == 12:
-            month_end = date(y + 1, 1, 1)
-        else:
-            month_end = date(y, m + 1, 1)
-        import calendar
         last_day = calendar.monthrange(y, m)[1]
         month_end = date(y, m, last_day)
 

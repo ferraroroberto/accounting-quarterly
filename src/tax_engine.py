@@ -403,13 +403,12 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         + _get_tax_entries_total(year, quarter, "IVA_SOPORTADO", db_conn, ytd=False),
         2,
     )
-    result.box_29_base_soportado = round(
-        inv_base_soportado
-        + (result.box_28_iva_soportado - inv_iva_soportado) / 0.21
-        if (result.box_28_iva_soportado - inv_iva_soportado) > 0
-        else inv_base_soportado,
-        2,
-    )
+    manual_iva = result.box_28_iva_soportado - inv_iva_soportado
+    if manual_iva > 0:
+        manual_base = manual_iva / 0.21
+        result.box_29_base_soportado = round(inv_base_soportado + manual_base, 2)
+    else:
+        result.box_29_base_soportado = round(inv_base_soportado, 2)
 
     # Round accumulations
     result.box_01_base = round(result.box_01_base, 2)

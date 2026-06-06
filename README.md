@@ -583,16 +583,6 @@ GOOGLE_API_KEY=AIzaSy...
 
 Model used: `gemini-3.1-flash-lite-preview`.
 
----
-
-## Invoice Explorer
-
-The **Invoice Explorer** tab provides a filterable, exportable view of all OCR-extracted invoices in a single table.
-
-**Filters available:** direction (in/out), category, invoice type, vendor name (text search), client name (text search), invoice date range, subtotal range, and a "rectificativas only" toggle.
-
-Live summary metrics (matching count, total expenses, total income) update as filters change. Results can be exported to CSV.
-
 ### Vertex AI (GCP service account)
 
 If you manage the API key through a GCP project (service account bound key), the Generative Language API must be enabled and unrestricted. Two pre-requisites in the GCP console:
@@ -609,3 +599,13 @@ GOOGLE_CLOUD_LOCATION=us-central1   # or europe-west1, etc.
 ```
 
 When `GOOGLE_APPLICATION_CREDENTIALS` is set the module switches to Vertex AI mode automatically (no API key needed).
+
+---
+
+## Invoice Explorer
+
+The **Invoice Explorer** tab provides a filterable, exportable view of all OCR-extracted invoices in a single table.
+
+**Filters available:** direction (in/out), category, invoice type, vendor name (text search), client name (text search), invoice date range, subtotal range, and a "rectificativas only" toggle.
+
+Live summary metrics (matching count, total expenses, total income) update as filters change. Results can be exported to CSV.

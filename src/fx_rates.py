@@ -8,6 +8,7 @@ from typing import Optional
 
 import requests
 
+from src.database import _get_connection, _get_table_columns
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -19,13 +20,6 @@ FRANKFURTER_BASES = [
     "https://api.frankfurter.dev",
 ]
 SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF"]
-
-_DB_PATH = Path(__file__).parent.parent / "data" / "accounting.db"
-
-
-def _get_table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return {r["name"] for r in rows}
 
 
 def _ensure_fx_schema(conn: sqlite3.Connection) -> None:
@@ -61,14 +55,6 @@ def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30
             continue
     assert last_exc is not None
     raise last_exc
-
-
-def _get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
-    path = Path(db_path) if db_path else _DB_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def init_fx_table(db_path: Optional[str | Path] = None) -> None:

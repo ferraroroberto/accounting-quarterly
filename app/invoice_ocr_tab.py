@@ -1,4 +1,4 @@
-"""Invoice OCR tab — extract accounting data from PDFs via Gemini."""
+"""Invoice OCR tab — extract accounting data from PDFs via the configured OCR backend."""
 from __future__ import annotations
 
 import json
@@ -58,7 +58,7 @@ def _needs_extraction(filename: str, direction: str, invoice_dir: str) -> bool:
 
 
 def _extract_and_save(filename: str, direction: str, invoice_dir: str) -> dict:
-    """Run Gemini extraction and persist to DB. Returns the extracted data dict."""
+    """Run extraction via the configured OCR backend and persist to DB. Returns the extracted data dict."""
     from src.invoice_ocr import extract_invoice
 
     pdf_path = _resolve_dir(invoice_dir) / filename
@@ -242,7 +242,7 @@ def _render_invoice_fields(rec: dict) -> None:
             st.markdown("**Notes**")
             st.info(rec["notes"])
 
-    with st.expander("Raw Gemini JSON", expanded=False):
+    with st.expander("Raw extraction JSON", expanded=False):
         raw = rec.get("raw_json") or "{}"
         try:
             st.json(json.loads(raw))
@@ -293,7 +293,7 @@ def render() -> None:
 
     st.info(
         "Upload invoices (PDFs) to the `data/invoices/in` or `data/invoices/out` directories, "
-        "then click **Extract** to parse them via Gemini and store the accounting data in the "
+        "then click **Extract** to parse them via the configured OCR backend and store the accounting data in the "
         "`invoices` table.\n\n"
         "- **In (expenses):** invoices you received — IVA soportado, deductible costs.\n"
         "- **Out (income):** invoices you issued — IVA repercutido, income."

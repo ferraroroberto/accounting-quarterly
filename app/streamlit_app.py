@@ -155,7 +155,8 @@ with tab_welcome:
          "have already been uploaded, and sends only new ones."),
         ("Invoice OCR",
          "AI-powered extraction of Spanish accounting data from any PDF "
-         "(invoice, receipt, ticket). Uses Google Gemini to parse vendor, "
+         "(invoice, receipt, ticket). Routes through the configured OCR backend "
+         "(local-llm-hub by default, Gemini as fallback) to parse vendor, "
          "client, IVA, IRPF, and totals, and stores results in the `invoices` "
          "table. Supports in (expenses) and out (income) documents."),
         ("Invoice Explorer",

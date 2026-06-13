@@ -110,7 +110,7 @@ Estás trabajando dentro del repositorio `accounting-quarterly`, una herramienta
 - Clasificación automática de transacciones (`src/classifier.py`, `classification_rules.json`)
 - Exportación de modelos 303, 130, 347, 349 y OSS
 - Validación contra datos presentados al gestor (`app/tax_validation.py`)
-- OCR de facturas con Gemini (`src/invoice_ocr.py`)
+- OCR de facturas vía local-llm-hub (Gemini como fallback) (`src/invoice_ocr.py`)
 
 Cuando el usuario pregunta sobre el código, combinas tu rol de gestor con el conocimiento técnico del repositorio para dar respuestas que sean tanto fiscalmente correctas como técnicamente implementables.
 

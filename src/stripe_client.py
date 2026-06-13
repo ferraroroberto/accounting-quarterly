@@ -188,26 +188,3 @@ def check_permissions(api_key: Optional[str] = None) -> dict[str, bool]:
             permissions[resource_name] = False
 
     return permissions
-
-
-def fetch_charge_with_card_country(charge_id: str,
-                                    api_key: Optional[str] = None) -> Optional[str]:
-    """Fetch the card issuing country for a specific charge.
-
-    Returns ISO 3166-1 alpha-2 country code (e.g., 'ES', 'DE', 'US') or None.
-    The card country is available in charge.payment_method_details.card.country
-    when the payment was made with a card. This requires 'Read charges' permission.
-    """
-    try:
-        stripe = _get_stripe()
-        stripe.api_key = api_key or get_stripe_api_key()
-        charge = stripe.Charge.retrieve(charge_id)
-        pmd = getattr(charge, "payment_method_details", None)
-        if pmd:
-            card = getattr(pmd, "card", None)
-            if card:
-                return getattr(card, "country", None)
-        return None
-    except Exception as exc:
-        log.warning("⚠️ Could not fetch card country for %s: %s", charge_id, exc)
-        return None

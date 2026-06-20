@@ -1,11 +1,11 @@
 """Single source of truth for the VAT treatment decision matrix and rates.
 
 The activity × geography → ``vat_treatment`` matrix, the OSS rate lookup, and
-the VAT-inclusive base extraction were previously implemented twice — once on
-the Pydantic model in :func:`src.classifier.classify_vat`, and again as a
-fallback in ``src.tax_engine._get_vat_treatment`` / ``_get_vat_base`` /
-``_get_vat_amount``. Divergence between the two copies would produce inconsistent
-figures between what gets stored on a transaction and what the engine recomputes.
+the VAT-inclusive base extraction live here once and are consumed by
+``src.tax_engine._get_vat_treatment`` / ``_get_vat_base`` / ``_get_vat_amount``,
+which derive each transaction's figures lazily from this matrix. Keeping the
+rules in a single module prevents the divergence that a second, parallel copy
+would reintroduce.
 
 This module holds the rules once. It depends only on ``src.tax_models`` (for the
 OSS rate table) so it can be imported from both the classifier and the tax engine

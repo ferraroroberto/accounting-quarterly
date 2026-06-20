@@ -7,7 +7,6 @@ from datetime import date, datetime
 from typing import Optional
 
 from src.logger import get_logger
-from src.models import ClassifiedPayment
 from src.tax_models import (
     AuditEntry,
     Modelo130Result,
@@ -19,7 +18,6 @@ from src.tax_models import (
     OSSCountryRow,
     OSSReturnResult,
     TaxDeadline,
-    VATTreatment,
     _tax_deadline_date,
 )
 from src.vat_rules import (
@@ -32,22 +30,6 @@ from src.vat_rules import (
 log = get_logger(__name__)
 
 _DUE_SOON_DAYS = 15
-
-
-# ---------------------------------------------------------------------------
-# VAT treatment helpers
-# ---------------------------------------------------------------------------
-
-def compute_vat_treatment(payment: ClassifiedPayment, config: dict) -> VATTreatment:
-    """Compute VAT treatment for a single payment."""
-    from src.classifier import classify_vat
-    updated = classify_vat(payment, config)
-    return VATTreatment(
-        treatment=updated.vat_treatment or "UNKNOWN",
-        vat_base_eur=updated.vat_base_eur or 0.0,
-        vat_amount_eur=updated.vat_amount_eur or 0.0,
-        oss_country=updated.oss_country,
-    )
 
 
 # ---------------------------------------------------------------------------

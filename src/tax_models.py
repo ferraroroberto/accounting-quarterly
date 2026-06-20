@@ -7,10 +7,6 @@ from datetime import date
 from typing import Any, Literal, Optional
 
 
-VATTreatmentType = Literal[
-    "IVA_ES_21", "IVA_EU_B2B", "IVA_EU_B2C", "OSS_EU", "IVA_EXPORT", "EXEMPT", "UNKNOWN"
-]
-
 FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "FILED"]
 
 TaxModel = Literal["303", "390", "130", "100", "347", "349", "OSS"]
@@ -43,14 +39,6 @@ def _tax_deadline_date(model: str, year: int, quarter: int) -> date:
     if model == "347":
         return date(year + 1, 2, 28)
     return date(year, 12, 31)
-
-
-@dataclass
-class VATTreatment:
-    treatment: VATTreatmentType
-    vat_base_eur: float
-    vat_amount_eur: float
-    oss_country: Optional[str] = None
 
 
 @dataclass

@@ -54,17 +54,15 @@ def compute_vat_treatment(payment: ClassifiedPayment, config: dict) -> VATTreatm
 # Internal DB helpers
 # ---------------------------------------------------------------------------
 
-def _load_classified_for_quarter(
-    year: int, quarter: int, conn: sqlite3.Connection
+def _load_classified_range(
+    start: str, end: str, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Load classified transactions for a specific quarter from an open connection."""
-    month_start = (quarter - 1) * 3 + 1
-    month_end = quarter * 3
-    start = f"{year}-{month_start:02d}-01"
-    # End of last month of quarter
-    import calendar
-    last_day = calendar.monthrange(year, month_end)[1]
-    end = f"{year}-{month_end:02d}-{last_day:02d}T23:59:59"
+    """Load classified transactions in ``[start, end]`` from an open connection.
+
+    Shared loader for the quarter- and YTD-scoped wrappers below: the SELECT,
+    table, ``activity_type`` filter and ordering are identical between them —
+    only the ``start`` bound differs.
+    """
     rows = conn.execute(
         """SELECT id, created_date, converted_amount, converted_amount_refunded,
                   activity_type, geo_region, card_country, email_meta,
@@ -78,23 +76,28 @@ def _load_classified_for_quarter(
     return [dict(r) for r in rows]
 
 
+def _classified_quarter_end(year: int, quarter: int) -> str:
+    """End bound (inclusive, end-of-day) for transaction queries up to ``quarter``."""
+    import calendar
+    month_end = quarter * 3
+    last_day = calendar.monthrange(year, month_end)[1]
+    return f"{year}-{month_end:02d}-{last_day:02d}T23:59:59"
+
+
+def _load_classified_for_quarter(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Load classified transactions for a specific quarter from an open connection."""
+    month_start = (quarter - 1) * 3 + 1
+    start = f"{year}-{month_start:02d}-01"
+    end = _classified_quarter_end(year, quarter)
+    return _load_classified_range(start, end, conn)
+
+
 def _load_classified_ytd(year: int, quarter: int, conn: sqlite3.Connection) -> list[dict]:
     """Load classified transactions from Q1 through the given quarter."""
-    month_end = quarter * 3
-    import calendar
-    last_day = calendar.monthrange(year, month_end)[1]
-    end = f"{year}-{month_end:02d}-{last_day:02d}T23:59:59"
-    rows = conn.execute(
-        """SELECT id, created_date, converted_amount, converted_amount_refunded,
-                  activity_type, geo_region, card_country, email_meta,
-                  vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id
-           FROM transactions
-           WHERE created_date >= ? AND created_date <= ?
-             AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
-           ORDER BY created_date""",
-        (f"{year}-01-01", end),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    end = _classified_quarter_end(year, quarter)
+    return _load_classified_range(f"{year}-01-01", end, conn)
 
 
 def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
@@ -108,11 +111,15 @@ def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
     )
 
 
-def _load_expense_invoices_for_quarter(
-    year: int, quarter: int, conn: sqlite3.Connection
+def _load_expense_invoices_range(
+    start: str, end: str, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Expense invoices (direction='in') for the quarter, keyed by supply_date || invoice_date."""
-    start, end = _invoice_date_range(year, quarter)
+    """Expense invoices (direction='in') in ``[start, end]``, keyed by supply_date || invoice_date.
+
+    Shared loader for the quarter- and YTD-scoped wrappers below: the 14-column
+    projection, ``direction='in'`` filter, COALESCE date keying and ordering are
+    identical — only the ``start`` bound differs.
+    """
     rows = conn.execute(
         """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
                   subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
@@ -129,25 +136,46 @@ def _load_expense_invoices_for_quarter(
     return [dict(r) for r in rows]
 
 
+def _load_expense_invoices_for_quarter(
+    year: int, quarter: int, conn: sqlite3.Connection
+) -> list[dict]:
+    """Expense invoices (direction='in') for the quarter, keyed by supply_date || invoice_date."""
+    start, end = _invoice_date_range(year, quarter)
+    return _load_expense_invoices_range(start, end, conn)
+
+
 def _load_expense_invoices_ytd(
     year: int, quarter: int, conn: sqlite3.Connection
 ) -> list[dict]:
     """Expense invoices (direction='in') from Q1 through the given quarter (YTD)."""
-    import calendar
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
+    _, end = _invoice_date_range(year, quarter)
+    return _load_expense_invoices_range(f"{year}-01-01", end, conn)
+
+
+def _load_income_invoices_range(
+    start: str, end: str, conn: sqlite3.Connection
+) -> list[dict]:
+    """Income invoices (direction='out') in ``[start, end]``, keyed by supply_date || invoice_date.
+
+    These are manually-issued invoices (bank transfer, etc.) NOT processed through
+    Stripe — Stripe income already lives in the ``transactions`` table.
+
+    Shared loader for the quarter- and YTD-scoped wrappers below: the projection,
+    ``direction='out'`` filter, COALESCE date keying and ordering are identical —
+    only the ``start`` bound differs. Kept separate from the expense loader
+    because the projection differs (client_nif/client_name vs vendor_nif/vendor_name).
+    """
     rows = conn.execute(
         """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
                   subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
                   total_eur, category, geo_region, vat_treatment,
-                  COALESCE(deductible_pct, 100.0) AS deductible_pct,
-                  vendor_nif, vendor_name, description
+                  client_nif, client_name, description
            FROM invoices
-           WHERE direction = 'in'
+           WHERE direction = 'out'
              AND COALESCE(supply_date, invoice_date) >= ?
              AND COALESCE(supply_date, invoice_date) <= ?
            ORDER BY tx_date""",
-        (f"{year}-01-01", f"{year}-{month_end:02d}-{last_day:02d}"),
+        (start, end),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -155,27 +183,9 @@ def _load_expense_invoices_ytd(
 def _load_income_invoices_ytd(
     year: int, quarter: int, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Income invoices (direction='out') from Q1 through the given quarter (YTD).
-
-    These are manually-issued invoices (bank transfer, etc.) NOT processed through
-    Stripe — Stripe income already lives in the ``transactions`` table.
-    """
-    import calendar
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    rows = conn.execute(
-        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
-                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
-                  total_eur, category, geo_region, vat_treatment,
-                  client_nif, client_name, description
-           FROM invoices
-           WHERE direction = 'out'
-             AND COALESCE(supply_date, invoice_date) >= ?
-             AND COALESCE(supply_date, invoice_date) <= ?
-           ORDER BY tx_date""",
-        (f"{year}-01-01", f"{year}-{month_end:02d}-{last_day:02d}"),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    """Income invoices (direction='out') from Q1 through the given quarter (YTD)."""
+    _, end = _invoice_date_range(year, quarter)
+    return _load_income_invoices_range(f"{year}-01-01", end, conn)
 
 
 def _load_income_invoices_for_quarter(
@@ -183,19 +193,7 @@ def _load_income_invoices_for_quarter(
 ) -> list[dict]:
     """Income invoices (direction='out') for the quarter only."""
     start, end = _invoice_date_range(year, quarter)
-    rows = conn.execute(
-        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
-                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
-                  total_eur, category, geo_region, vat_treatment,
-                  client_nif, client_name, description
-           FROM invoices
-           WHERE direction = 'out'
-             AND COALESCE(supply_date, invoice_date) >= ?
-             AND COALESCE(supply_date, invoice_date) <= ?
-           ORDER BY tx_date""",
-        (start, end),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    return _load_income_invoices_range(start, end, conn)
 
 
 def _net_amount(row: dict) -> float:

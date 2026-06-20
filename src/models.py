@@ -64,7 +64,8 @@ class ClassifiedPayment(Payment):
     classification_rule: str = ""
     geo_rule: str = ""
 
-    # VAT treatment fields (populated by classify_vat)
+    # VAT treatment fields — derived lazily by the tax engine (src.vat_rules),
+    # not populated on the live classification path; kept for ad-hoc use.
     vat_treatment: Optional[str] = None   # IVA_ES_21 | IVA_EU_B2B | OSS_EU | IVA_EXPORT | …
     vat_base_eur: Optional[float] = None  # taxable base (= net_amount for income, already EUR)
     vat_amount_eur: Optional[float] = None  # IVA collected

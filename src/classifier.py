@@ -160,47 +160,6 @@ def classify_batch(
     return classified, error_ids
 
 
-def classify_vat(payment: ClassifiedPayment, config: Optional[dict] = None) -> ClassifiedPayment:
-    """Assign vat_treatment, vat_base_eur, vat_amount_eur, and oss_country to a ClassifiedPayment.
-
-    Rules are derived from the activity × geography matrix in the tax specification.
-    The payment is returned with updated VAT fields (mutated copy via model_copy).
-    """
-    from src.tax_models import OSS_RATES
-    from src.vat_rules import vat_amount_on_base, vat_treatment
-
-    activity = payment.activity_type
-    geo = payment.geo_region
-    base = payment.net_amount  # net_amount already in EUR (taxable base, not gross)
-
-    treatment = vat_treatment(activity, geo, config)
-    oss_country: Optional[str] = None
-    cc = (payment.card_country or "").upper()
-
-    if treatment == "OSS_EU":
-        # Use card_country for OSS country assignment (only when it has a known rate)
-        oss_country = cc if cc in OSS_RATES else None
-
-    vat_amount = vat_amount_on_base(base, treatment, cc)
-
-    return payment.model_copy(update={
-        "vat_treatment": treatment,
-        "vat_base_eur": round(base, 2),
-        "vat_amount_eur": vat_amount,
-        "oss_country": oss_country,
-    })
-
-
-def classify_payment_with_vat(
-    payment: "Payment",
-    rules: Optional[dict] = None,
-    config: Optional[dict] = None,
-) -> ClassifiedPayment:
-    """Classify activity + geography, then add VAT treatment in one call."""
-    classified = classify_payment(payment, rules)
-    return classify_vat(classified, config)
-
-
 def validate_classifications(payments: list[ClassifiedPayment]) -> dict:
     """Validate indicator sums and return a report dict."""
     activity_errors = [

@@ -1271,24 +1271,3 @@ def load_audit_entries(
         return [dict(r) for r in rows]
     finally:
         conn.close()
-
-
-def upsert_vat_treatment(payment_id: str, vat_treatment: str,
-                         vat_base_eur: float, vat_amount_eur: float,
-                         oss_country: Optional[str] = None,
-                         buyer_vat_id: Optional[str] = None,
-                         db_path: Optional[str | Path] = None) -> None:
-    """Write VAT treatment fields back to the transactions table."""
-    conn = _get_connection(db_path)
-    try:
-        conn.execute(
-            """UPDATE transactions SET
-                   vat_treatment = ?, vat_base_eur = ?, vat_amount_eur = ?,
-                   oss_country = ?, buyer_vat_id = ?, updated_at = datetime('now')
-               WHERE id = ?""",
-            (vat_treatment, vat_base_eur, vat_amount_eur,
-             oss_country, buyer_vat_id, payment_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()

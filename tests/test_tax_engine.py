@@ -2,18 +2,15 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
 
 import pytest
 
-from src.classifier import classify_vat
 from src.database import (
     TAX_SNAPSHOT_QUARTER_ANNUAL,
     _get_connection,
     init_db,
     load_tax_snapshots_for_period,
 )
-from src.models import ClassifiedPayment
 from src.tax_engine import (
     compute_and_persist_tax_snapshots,
     compute_modelo_130,
@@ -28,22 +25,6 @@ from src.tax_snapshot_codec import decode_snapshot
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_cp(**kwargs) -> ClassifiedPayment:
-    defaults = dict(
-        id="test_01",
-        created_date=datetime(2025, 1, 15),
-        converted_amount=100.0,
-        converted_amount_refunded=0.0,
-        description="test",
-        fee=0.0,
-        currency="eur",
-        activity_type="COACHING",
-        geo_region="SPAIN",
-    )
-    defaults.update(kwargs)
-    return ClassifiedPayment(**defaults)
-
 
 def _insert_tx(conn: sqlite3.Connection, **kwargs) -> None:
     """Insert a minimal transaction row for tax engine tests."""
@@ -86,45 +67,6 @@ def db_conn(tmp_path):
     conn.row_factory = sqlite3.Row
     yield conn
     conn.close()
-
-
-# ---------------------------------------------------------------------------
-# VAT treatment classification tests
-# ---------------------------------------------------------------------------
-
-class TestClassifyVat:
-    def test_newsletter_eu_not_spain_is_oss(self):
-        cp = _make_cp(activity_type="NEWSLETTER", geo_region="EU_NOT_SPAIN", card_country="DE")
-        result = classify_vat(cp)
-        assert result.vat_treatment == "OSS_EU"
-        assert result.oss_country == "DE"
-        assert result.vat_amount_eur == pytest.approx(100.0 * 0.19, abs=0.01)
-
-    def test_coaching_eu_not_spain_is_b2b(self):
-        cp = _make_cp(activity_type="COACHING", geo_region="EU_NOT_SPAIN")
-        result = classify_vat(cp)
-        assert result.vat_treatment == "IVA_EU_B2B"
-        assert result.vat_amount_eur == 0.0
-
-    def test_any_outside_eu_is_export(self):
-        for activity in ("COACHING", "NEWSLETTER", "ILLUSTRATIONS"):
-            cp = _make_cp(activity_type=activity, geo_region="OUTSIDE_EU")
-            result = classify_vat(cp)
-            assert result.vat_treatment == "IVA_EXPORT"
-            assert result.vat_amount_eur == 0.0
-
-    def test_spain_is_iva_21(self):
-        cp = _make_cp(activity_type="COACHING", geo_region="SPAIN")
-        result = classify_vat(cp)
-        assert result.vat_treatment == "IVA_ES_21"
-        assert result.vat_amount_eur == pytest.approx(21.0, abs=0.01)
-
-    def test_oss_fallback_rate_for_unknown_country(self):
-        cp = _make_cp(activity_type="NEWSLETTER", geo_region="EU_NOT_SPAIN", card_country="XX")
-        result = classify_vat(cp)
-        assert result.vat_treatment == "OSS_EU"
-        # DEFAULT_EU = 21%
-        assert result.vat_amount_eur == pytest.approx(100.0 * 0.21, abs=0.01)
 
 
 # ---------------------------------------------------------------------------

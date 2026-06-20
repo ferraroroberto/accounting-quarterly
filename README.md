@@ -57,14 +57,11 @@ Stripe API (live charges)
    (rules from classification_rules.json)
           │
           ▼
-   Classify VAT treatment
-   (activity × geography → IVA_ES_21 / IVA_EU_B2B / OSS_EU / IVA_EXPORT)
-          │
-          ▼
    Persist classifications to SQLite
           │
           ▼
    Aggregate, display, export; save tax snapshots; validate vs. filed AEAT data
+   (VAT treatment derived on-the-fly by the tax engine — not stored per transaction)
 ```
 
 Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API. Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
@@ -202,7 +199,7 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 
 Transaction data is stored in a SQLite database (`data/accounting.db`):
 
-- **transactions** — Stripe payment records with classification, FX conversion, and VAT treatment data
+- **transactions** — Stripe payment records with classification and FX conversion data. The VAT columns (`vat_treatment`, `vat_base_eur`, `vat_amount_eur`) are reserved for manual overrides; they are normally NULL — VAT treatment is derived on-the-fly by the tax engine at computation time, not stored per transaction
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
 - **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly
@@ -294,7 +291,7 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 
 ### VAT treatment classification
 
-Each transaction is automatically assigned a VAT treatment based on activity × geography:
+VAT treatment is derived on-the-fly by the tax engine using each transaction's activity × geography — it is not stored per transaction. The mapping is:
 
 | Activity | Geography | Treatment | IVA |
 |----------|-----------|-----------|-----|

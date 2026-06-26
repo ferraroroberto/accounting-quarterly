@@ -8,7 +8,7 @@ from typing import Optional
 
 import requests
 
-from src.database import _get_connection, _get_table_columns
+from src.database import get_connection, _get_table_columns
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -59,7 +59,7 @@ def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30
 
 def init_fx_table(db_path: Optional[str | Path] = None) -> None:
     """Create the fx_rates table if it doesn't exist."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS fx_rates (
@@ -129,7 +129,7 @@ def store_rates(
     db_path: Optional[str | Path] = None,
 ) -> int:
     """Store rates dict into SQLite. Returns number of rows inserted/updated."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     count = 0
     try:
         _ensure_fx_schema(conn)
@@ -171,7 +171,7 @@ def get_rate(
 
     Returns the rate (1 EUR = rate CURRENCY) or None if not found.
     """
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         row = conn.execute(
@@ -199,7 +199,7 @@ def get_rate_with_fallback(
     if rate is not None:
         return rate
 
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         row = conn.execute(
@@ -256,7 +256,7 @@ def get_all_rates(
     db_path: Optional[str | Path] = None,
 ) -> list[tuple[str, float]]:
     """Get all stored rates for a currency, sorted by date."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         rows = conn.execute(
@@ -272,7 +272,7 @@ def get_stored_date_range(
     db_path: Optional[str | Path] = None,
 ) -> tuple[Optional[date], Optional[date]]:
     """Get the min and max dates stored in the fx_rates table."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         row = conn.execute(
@@ -290,7 +290,7 @@ def get_stored_date_range(
 
 def get_rate_count(db_path: Optional[str | Path] = None) -> int:
     """Get total number of FX rate entries stored."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         row = conn.execute("SELECT COUNT(*) as cnt FROM fx_rates").fetchone()
@@ -301,7 +301,7 @@ def get_rate_count(db_path: Optional[str | Path] = None) -> int:
 
 def get_latest_fx_sync_at(db_path: Optional[str | Path] = None) -> Optional[datetime]:
     """Get latest FX DB sync timestamp from stored rates."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_fx_schema(conn)
         row = conn.execute("SELECT MAX(updated_at) AS max_updated_at FROM fx_rates").fetchone()

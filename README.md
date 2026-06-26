@@ -328,7 +328,6 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
   "tax": {
     "regime": "estimacion_directa_simplificada",
     "nif": "YOUR_NIF",
-    "irpf_retention_rate": 0.15,
     "vat_registered": true,
     "oss_registered": true,
     "oss_registration_country": "ES",
@@ -339,15 +338,13 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
 }
 ```
 
-> **IRPF retention rate:** Use `0.15` (15%) after the first 3 years of activity, or `0.07` (7%) during the first 3 years. Configurable per the slider in Tax Settings.
-
 ### Invoice data in tax calculations
 
 OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax models alongside Stripe transactions:
 
 | Model | Source | Contribution |
 |-------|--------|-------------|
-| **Modelo 303** box_28 | Expense invoices (`direction='in'`) | IVA soportado deducible |
+| **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota) |
 | **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
 | **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD |
 | **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct`) YTD |
@@ -443,7 +440,7 @@ The UI shows a summary table plus an expandable drill-down per cell. Each expand
 
 | Cell | Approximation | Impact |
 |------|--------------|--------|
-| `box_29_base_soportado` (M303) | `box_28_iva_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
+| `box_28_base_soportado` (M303) | `box_29_cuota_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
 | `box_48_resultado` (M303) | 100% proration assumed | User must enter only the deductible portion of IVA in manual entries |
 | `box_01_ingresos` (M130) | Ex-VAT base extracted from VAT-inclusive Stripe amounts | Correct for estimación directa — IVA is a pass-through, not income |
 

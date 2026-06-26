@@ -1,6 +1,8 @@
 """Tax computation engine for Spanish autónomo obligations."""
 from __future__ import annotations
 
+import calendar
+import json
 import sqlite3
 from collections import defaultdict
 from datetime import date, datetime
@@ -60,7 +62,6 @@ def _load_classified_range(
 
 def _classified_quarter_end(year: int, quarter: int) -> str:
     """End bound (inclusive, end-of-day) for transaction queries up to ``quarter``."""
-    import calendar
     month_end = quarter * 3
     last_day = calendar.monthrange(year, month_end)[1]
     return f"{year}-{month_end:02d}-{last_day:02d}T23:59:59"
@@ -83,7 +84,6 @@ def _load_classified_ytd(year: int, quarter: int, conn: sqlite3.Connection) -> l
 
 
 def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
-    import calendar
     month_start = (quarter - 1) * 3 + 1
     month_end = quarter * 3
     last_day = calendar.monthrange(year, month_end)[1]
@@ -261,7 +261,6 @@ def _previous_modelo130_payments(year: int, quarter: int, conn: sqlite3.Connecti
 
 def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo303Result:
     """Compute Modelo 303 (quarterly VAT return) for the given quarter."""
-    import json as _json
     result = Modelo303Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
@@ -377,18 +376,19 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             n_inv_export += 1
             recs_export.append(_rec)
 
-    # Deductible IVA from manual entries (current quarter only) + invoices
-    result.box_28_iva_soportado = round(
+    # Deductible IVA from manual entries (current quarter only) + invoices.
+    # Casilla 29 = cuota (IVA amount); casilla 28 = its corresponding base.
+    result.box_29_cuota_soportado = round(
         inv_iva_soportado
         + _get_tax_entries_total(year, quarter, "IVA_SOPORTADO", db_conn, ytd=False),
         2,
     )
-    manual_iva = result.box_28_iva_soportado - inv_iva_soportado
+    manual_iva = result.box_29_cuota_soportado - inv_iva_soportado
     if manual_iva > 0:
         manual_base = manual_iva / 0.21
-        result.box_29_base_soportado = round(inv_base_soportado + manual_base, 2)
+        result.box_28_base_soportado = round(inv_base_soportado + manual_base, 2)
     else:
-        result.box_29_base_soportado = round(inv_base_soportado, 2)
+        result.box_28_base_soportado = round(inv_base_soportado, 2)
 
     # Round accumulations
     result.box_01_base = round(result.box_01_base, 2)
@@ -398,7 +398,7 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.oss_vat = round(result.oss_vat, 2)
     result.export_base = round(result.export_base, 2)
 
-    result.box_46_diferencia = round(result.box_03_cuota - result.box_28_iva_soportado, 2)
+    result.box_46_diferencia = round(result.box_03_cuota - result.box_29_cuota_soportado, 2)
     result.box_48_resultado = result.box_46_diferencia  # simplified (100% proration)
 
     # --- Audit trail ---
@@ -406,7 +406,7 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         return AuditEntry(
             model="303", year=year, quarter=quarter,
             cell=cell, label=label, formula=formula, value=value,
-            inputs_json=_json.dumps(inputs),
+            inputs_json=json.dumps(inputs),
         )
     result.audit = [
         _a("box_01_base",
@@ -424,23 +424,23 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
            "SUM(vat_base_eur) WHERE vat_treatment='IVA_EU_B2B'  [Art. 25 LIVA — ISP applies]",
            result.box_59_intracom_entregas,
            records=recs_eu_b2b),
-        _a("box_28_iva_soportado",
+        _a("box_28_base_soportado",
+           "Base IVA soportado (facturas + estimación 21% para entradas manuales)",
+           "SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21",
+           result.box_28_base_soportado,
+           inv_base_sum=round(inv_base_soportado, 2)),
+        _a("box_29_cuota_soportado",
            "IVA soportado deducible — todas las facturas recibidas del trimestre",
            "SUM(iva_amount * deductible_pct/100) FROM invoices WHERE direction='in' AND quarter=Q "
            "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='IVA_SOPORTADO' AND quarter=Q",
-           result.box_28_iva_soportado,
+           result.box_29_cuota_soportado,
            inv_iva_deductible=round(inv_iva_soportado, 2),
            records=recs_soportado),
-        _a("box_29_base_soportado",
-           "Base IVA soportado (facturas + estimación 21% para entradas manuales)",
-           "SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21",
-           result.box_29_base_soportado,
-           inv_base_sum=round(inv_base_soportado, 2)),
         _a("box_46_diferencia",
            "Diferencia (IVA devengado − IVA deducible)",
-           "box_03_cuota − box_28_iva_soportado",
+           "box_03_cuota − box_29_cuota_soportado",
            result.box_46_diferencia,
-           box_03_cuota=result.box_03_cuota, box_28_iva_soportado=result.box_28_iva_soportado),
+           box_03_cuota=result.box_03_cuota, box_29_cuota_soportado=result.box_29_cuota_soportado),
         _a("box_48_resultado",
            "Resultado a ingresar / devolver",
            "= box_46_diferencia  [100% prorrata; no prior-period compensation applied]",
@@ -467,8 +467,6 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
 def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo130Result:
     """Compute Modelo 130 (quarterly IRPF advance) for the given quarter."""
-    import calendar as _calendar
-    import json as _json
     result = Modelo130Result(year=year, quarter=quarter)
     # Stripe income (transactions table)
     rows = _load_classified_ytd(year, quarter, db_conn)
@@ -492,7 +490,7 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
     # Social Security cuotas paid via bank account, YTD — fully deductible (Art. 30 LIRPF)
     month_end = quarter * 3
-    last_day = _calendar.monthrange(year, month_end)[1]
+    last_day = calendar.monthrange(year, month_end)[1]
     ss_start = f"{year}-01-01"
     ss_end = f"{year}-{month_end:02d}-{last_day:02d}"
     _ss_rows = db_conn.execute(
@@ -562,7 +560,7 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         return AuditEntry(
             model="130", year=year, quarter=quarter,
             cell=cell, label=label, formula=formula, value=value,
-            inputs_json=_json.dumps(inputs),
+            inputs_json=json.dumps(inputs),
         )
     # Build aggregated Stripe income records for audit trail (one per geo/activity bucket).
     # Mirrors the Quarter Report view the gestor uses.
@@ -693,7 +691,6 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
 def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo349Result:
     """Compute Modelo 349 (intra-EU operations summary) for the given quarter."""
-    import json as _json
     result = Modelo349Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
@@ -751,7 +748,7 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             label=f"Entregas intracomunitarias — {r.buyer_vat_id}",
             formula="SUM(net_amount) for IVA_EU_B2B transactions grouped by buyer_vat_id",
             value=r.total_amount,
-            inputs_json=_json.dumps({"buyer_vat_id": r.buyer_vat_id, "buyer_name": r.buyer_name}),
+            inputs_json=json.dumps({"buyer_vat_id": r.buyer_vat_id, "buyer_name": r.buyer_name}),
         ))
     audit.append(AuditEntry(
         model="349", year=year, quarter=quarter,
@@ -759,7 +756,7 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         label="Total entregas intracomunitarias",
         formula="SUM(total_amount) across all operators",
         value=result.total,
-        inputs_json=_json.dumps({
+        inputs_json=json.dumps({
             "operator_count": len(result.rows),
             "negative_excluded": negative_excluded,
         }),
@@ -770,7 +767,6 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
 def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> OSSReturnResult:
     """Compute OSS quarterly return (B2C digital services to EU non-Spain customers)."""
-    import json as _json
     result = OSSReturnResult(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
@@ -811,7 +807,7 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             label=f"OSS base — {r.country} ({int(r.vat_rate * 100)}%)",
             formula="SUM(vat_base_eur) WHERE vat_treatment='OSS_EU' AND country=CC",
             value=r.base_eur,
-            inputs_json=_json.dumps({
+            inputs_json=json.dumps({
                 "country": r.country, "vat_rate": r.vat_rate, "transactions": r.transactions,
             }),
         ))
@@ -821,7 +817,7 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             label=f"OSS cuota — {r.country} ({int(r.vat_rate * 100)}%)",
             formula=f"base_eur × {r.vat_rate}  [tasa país destino — OSS Reglamento (UE) 904/2010]",
             value=r.vat_amount_eur,
-            inputs_json=_json.dumps({
+            inputs_json=json.dumps({
                 "country": r.country, "base_eur": r.base_eur, "vat_rate": r.vat_rate,
             }),
         ))
@@ -831,7 +827,7 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         label="Base total OSS (todos los países)",
         formula="SUM(base_eur) across all countries",
         value=result.total_base,
-        inputs_json=_json.dumps({"countries": len(result.rows), "transactions": result.total_transactions}),
+        inputs_json=json.dumps({"countries": len(result.rows), "transactions": result.total_transactions}),
     ))
     audit.append(AuditEntry(
         model="OSS", year=year, quarter=quarter,
@@ -839,7 +835,7 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
         label="Cuota total OSS (todos los países)",
         formula="SUM(vat_amount_eur) across all countries",
         value=result.total_vat,
-        inputs_json=_json.dumps({"total_base": result.total_base}),
+        inputs_json=json.dumps({"total_base": result.total_base}),
     ))
     result.audit = audit
     return result
@@ -847,7 +843,6 @@ def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
 def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Result:
     """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties)."""
-    import json as _json
     result = Modelo347Result(year=year)
 
     # Stripe transactions from Spanish counterparties
@@ -928,7 +923,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
             label=f"Operaciones con {r.counterparty_name}",
             formula=f"SUM(net_amount) WHERE geo_region='SPAIN' AND email_meta='{r.counterparty_name}' — threshold ≥ €{result.threshold:,.2f}",
             value=r.total_operations,
-            inputs_json=_json.dumps({
+            inputs_json=json.dumps({
                 "counterparty": r.counterparty_name,
                 "quarter_breakdown": r.quarter_breakdown,
             }),
@@ -939,7 +934,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         label="Resumen Modelo 347",
         formula=f"Counterparties >= €{result.threshold:,.2f} threshold",
         value=float(len(result.rows)),
-        inputs_json=_json.dumps({
+        inputs_json=json.dumps({
             "total_counterparties_spain": total_counterparties,
             "above_threshold": len(result.rows),
             "below_threshold": below_threshold,
@@ -1030,8 +1025,6 @@ def compute_and_persist_tax_snapshots(
 
     Returns the shared ISO ``computed_at`` timestamp written on every snapshot row.
     """
-    from datetime import datetime
-
     from src.database import (
         TAX_SNAPSHOT_QUARTER_ANNUAL,
         upsert_audit_entries_conn,

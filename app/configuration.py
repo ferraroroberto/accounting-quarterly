@@ -321,18 +321,6 @@ geographic classification instead of manual overrides.
                                           value=tax.get("vat_proration_percentage", 100),
                                           key="tax_vat_prorrata")
 
-        st.markdown("##### IRPF")
-        irpf_rate_pct = st.slider(
-            "IRPF retention rate",
-            min_value=0, max_value=30, step=1,
-            value=int(round(float(tax.get("irpf_retention_rate", 0.15)) * 100)),
-            format="%d%%",
-            key="tax_irpf_rate",
-            help="15% after first 3 years of activity; 7% during the first 3 years",
-        )
-        irpf_rate = irpf_rate_pct / 100.0
-        st.caption(f"Current rate: {irpf_rate_pct}%  |  {'🔵 Standard (post-3yr)' if irpf_rate_pct == 15 else '🟡 Reduced (first 3yr)' if irpf_rate_pct == 7 else '⚙️ Custom'}")
-
         st.markdown("##### EU VAT defaults")
         EU_B2B_OPTIONS = ["IVA_EU_B2B", "IVA_EU_B2C"]
         EU_NL_OPTIONS = ["OSS_EU", "IVA_EU_B2B"]
@@ -357,7 +345,6 @@ geographic classification instead of manual overrides.
                 "vat_registered": vat_registered,
                 "oss_registered": oss_registered,
                 "oss_registration_country": oss_country,
-                "irpf_retention_rate": round(irpf_rate, 4),
                 "activity_start_date": activity_start,
                 "nif": nif,
                 "fiscal_year_start_month": int(fiscal_year_start),

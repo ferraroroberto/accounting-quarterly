@@ -122,8 +122,8 @@ def load_bank_export(
 
 def get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
     """Return a sqlite3 connection with row_factory set."""
-    from src.database import _get_connection
-    return _get_connection(db_path)
+    from src.database import get_connection as _db_get_connection
+    return _db_get_connection(db_path)
 
 
 def upsert_ss_payments(

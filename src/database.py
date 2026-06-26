@@ -41,7 +41,7 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
 }
 
 
-def _get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
+def get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
     path = Path(db_path) if db_path else _DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
@@ -219,7 +219,7 @@ def _ensure_audit_schema(conn: sqlite3.Connection) -> None:
 
 def init_db(db_path: Optional[str | Path] = None) -> None:
     """Create tables if they don't exist."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS transactions (
@@ -391,7 +391,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
 def upsert_payments(payments: list[Payment], source: str = "csv",
                     db_path: Optional[str | Path] = None) -> tuple[int, int]:
     """Insert or update payments. Returns (inserted, updated) counts."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     inserted = 0
     updated = 0
     try:
@@ -498,7 +498,7 @@ def upsert_payments(payments: list[Payment], source: str = "csv",
 def upsert_classified(payments: list[ClassifiedPayment],
                       db_path: Optional[str | Path] = None) -> None:
     """Update classification columns for already-stored transactions."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_transactions_schema(conn)
         for p in payments:
@@ -526,7 +526,7 @@ def load_classified_payments(
     the classifier again. Classification columns default to UNKNOWN / empty
     string for rows that were never classified.
     """
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_transactions_schema(conn)
         query = "SELECT * FROM transactions WHERE 1=1"
@@ -570,7 +570,7 @@ def load_payments(start_date: Optional[datetime] = None,
                   end_date: Optional[datetime] = None,
                   db_path: Optional[str | Path] = None) -> list[Payment]:
     """Load payments from database, optionally filtered by date range."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         query = "SELECT * FROM transactions WHERE 1=1"
         params: list = []
@@ -604,7 +604,7 @@ def load_payments(start_date: Optional[datetime] = None,
 
 def get_latest_transaction_date(db_path: Optional[str | Path] = None) -> Optional[datetime]:
     """Get the most recent transaction date in the database."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute(
             "SELECT MAX(created_date) as max_date FROM transactions"
@@ -620,7 +620,7 @@ def get_transaction_date_bounds(
     db_path: Optional[str | Path] = None,
 ) -> tuple[Optional[datetime], Optional[datetime]]:
     """Return (min_created_date, max_created_date) from transactions."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute(
             "SELECT MIN(created_date) AS min_date, MAX(created_date) AS max_date FROM transactions"
@@ -635,7 +635,7 @@ def get_transaction_date_bounds(
 
 
 def get_transaction_count_db(db_path: Optional[str | Path] = None) -> int:
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute("SELECT COUNT(*) as cnt FROM transactions").fetchone()
         return row["cnt"]
@@ -645,7 +645,7 @@ def get_transaction_count_db(db_path: Optional[str | Path] = None) -> int:
 
 def get_latest_stripe_sync_at(db_path: Optional[str | Path] = None) -> Optional[datetime]:
     """Get the latest DB load timestamp for rows sourced from Stripe API."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_transactions_schema(conn)
         row = conn.execute(
@@ -672,7 +672,7 @@ def search_transactions_raw(
 
     Returns (sql, params, rows_as_dicts).
     """
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_transactions_schema(conn)
         cols = _get_table_columns(conn, "transactions")
@@ -747,7 +747,7 @@ def search_transactions_raw(
 def record_upload(filename: str, direction: str, api_response: str = "",
                   db_path: Optional[str | Path] = None) -> bool:
     """Record an invoice upload. Returns True if new, False if already uploaded."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         existing = conn.execute(
             "SELECT id FROM upload_log WHERE filename = ? AND direction = ?",
@@ -768,7 +768,7 @@ def record_upload(filename: str, direction: str, api_response: str = "",
 def get_uploaded_files(direction: str,
                        db_path: Optional[str | Path] = None) -> list[dict]:
     """Get list of already-uploaded invoice files."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         rows = conn.execute(
             "SELECT filename, uploaded_at, api_response FROM upload_log "
@@ -787,7 +787,7 @@ def get_uploaded_files(direction: str,
 def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
     """Insert or replace a parsed invoice record. Returns the record id."""
     import uuid
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         record_id = data.get("id") or str(uuid.uuid4())
         direction = data.get("direction", "in")
@@ -921,7 +921,7 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
 def get_invoices(direction: Optional[str] = None,
                  db_path: Optional[str | Path] = None) -> list[dict]:
     """Return all invoice records, optionally filtered by direction."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         if direction:
             rows = conn.execute(
@@ -940,7 +940,7 @@ def get_invoices(direction: Optional[str] = None,
 def get_invoice_by_filename(filename: str, direction: str,
                              db_path: Optional[str | Path] = None) -> Optional[dict]:
     """Return a single invoice record by filename+direction, or None."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute(
             "SELECT * FROM invoices WHERE filename = ? AND direction = ?",
@@ -954,7 +954,7 @@ def get_invoice_by_filename(filename: str, direction: str,
 def get_invoice_hash(filename: str, direction: str,
                      db_path: Optional[str | Path] = None) -> Optional[str]:
     """Return the stored MD5 hash for a file, or None if not extracted yet."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute(
             "SELECT file_hash FROM invoices WHERE filename = ? AND direction = ?",
@@ -968,7 +968,7 @@ def get_invoice_hash(filename: str, direction: str,
 def delete_invoice(filename: str, direction: str,
                    db_path: Optional[str | Path] = None) -> bool:
     """Delete an invoice record. Returns True if a row was deleted."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         cursor = conn.execute(
             "DELETE FROM invoices WHERE filename = ? AND direction = ?",
@@ -985,7 +985,7 @@ def delete_invoices_by_ids(ids: list[str],
     """Delete invoice records by their UUID ids. Returns number deleted."""
     if not ids:
         return 0
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         placeholders = ",".join("?" * len(ids))
         cursor = conn.execute(
@@ -999,7 +999,7 @@ def delete_invoices_by_ids(ids: list[str],
 
 def clear_invoices(db_path: Optional[str | Path] = None) -> int:
     """Delete ALL invoice records. Returns number of rows deleted."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         cursor = conn.execute("DELETE FROM invoices")
         conn.commit()
@@ -1018,7 +1018,7 @@ def get_invoice_stats(db_path: Optional[str | Path] = None) -> dict:
             "out": {"count": int, "last_extracted_at": str | None},
         }
     """
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         rows = conn.execute(
             """
@@ -1050,7 +1050,7 @@ def get_invoice_stats(db_path: Optional[str | Path] = None) -> dict:
 def get_tax_entries(year: int, quarter: int,
                     db_path: Optional[str | Path] = None) -> list[dict]:
     """Return all manual tax entries for the given year/quarter."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         rows = conn.execute(
             "SELECT * FROM quarterly_tax_entries WHERE year = ? AND quarter = ? ORDER BY id",
@@ -1065,7 +1065,7 @@ def add_tax_entry(year: int, quarter: int, entry_type: str, amount_eur: float,
                   description: str = "", notes: str = "",
                   db_path: Optional[str | Path] = None) -> int:
     """Insert a manual tax entry. Returns the new row id."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         cursor = conn.execute(
             """INSERT INTO quarterly_tax_entries
@@ -1081,7 +1081,7 @@ def add_tax_entry(year: int, quarter: int, entry_type: str, amount_eur: float,
 
 def delete_tax_entry(entry_id: int, db_path: Optional[str | Path] = None) -> bool:
     """Delete a manual tax entry by id. Returns True if deleted."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         cursor = conn.execute(
             "DELETE FROM quarterly_tax_entries WHERE id = ?", (entry_id,)
@@ -1095,7 +1095,7 @@ def delete_tax_entry(entry_id: int, db_path: Optional[str | Path] = None) -> boo
 def get_tax_entries_ytd(year: int, quarter: int, entry_type: str,
                         db_path: Optional[str | Path] = None) -> float:
     """Sum a given entry_type from Q1 through the given quarter (YTD)."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         row = conn.execute(
             """SELECT COALESCE(SUM(amount_eur), 0) AS total
@@ -1115,7 +1115,7 @@ def get_tax_entries_ytd(year: int, quarter: int, entry_type: str,
 def get_filing_status(year: int, model: str, quarter: Optional[int] = None,
                       db_path: Optional[str | Path] = None) -> Optional[dict]:
     """Return the filing status record for the given year/model/quarter, or None."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         if quarter is None:
             row = conn.execute(
@@ -1137,7 +1137,7 @@ def upsert_filing_status(year: int, model: str, quarter: Optional[int],
                          notes: str = "", filed_at: Optional[str] = None,
                          db_path: Optional[str | Path] = None) -> None:
     """Insert or update a filing status record."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         conn.execute(
             """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)
@@ -1157,7 +1157,7 @@ def upsert_filing_status(year: int, model: str, quarter: Optional[int],
 def get_all_filing_statuses(year: int,
                              db_path: Optional[str | Path] = None) -> list[dict]:
     """Return all filing status records for the given year."""
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         rows = conn.execute(
             "SELECT * FROM tax_filing_status WHERE year = ? ORDER BY model, quarter",
@@ -1249,7 +1249,7 @@ def load_audit_entries(
 
     If *computed_at* is None, returns entries from the most recent computation run.
     """
-    conn = _get_connection(db_path)
+    conn = get_connection(db_path)
     try:
         _ensure_audit_schema(conn)
         if computed_at is None:

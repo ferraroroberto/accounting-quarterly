@@ -7,7 +7,7 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
-from src.database import _get_connection
+from src.database import get_connection
 from src.tax_validator import (
     ModelValidationResult,
     ValidationLine,
@@ -22,7 +22,7 @@ def _cached_validations() -> list[ModelValidationResult]:
     Creates and closes its own DB connection so the result is picklable
     (sqlite3.Connection objects cannot be cached by Streamlit).
     """
-    conn = _get_connection()
+    conn = get_connection()
     try:
         return run_all_validations(conn)
     finally:

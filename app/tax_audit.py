@@ -6,7 +6,7 @@ import json
 import pandas as pd
 import streamlit as st
 
-from src.database import _get_connection, load_audit_entries
+from src.database import get_connection, load_audit_entries
 
 _MODEL_LABELS = {
     "303": "Modelo 303 — IVA Trimestral",

@@ -172,9 +172,9 @@ def validate_modelo_303(
         ValidationLine("27", "Total cuota IVA devengada",
                         v.get("27_total_cuota_devengada"), computed.box_03_cuota),
         ValidationLine("28", "Base IVA soportado interior corrientes",
-                        v.get("28_base_soportado"), computed.box_29_base_soportado),
+                        v.get("28_base_soportado"), computed.box_28_base_soportado),
         ValidationLine("29", "Cuota IVA soportado interior corrientes",
-                        v.get("29_cuota_soportado"), computed.box_28_iva_soportado),
+                        v.get("29_cuota_soportado"), computed.box_29_cuota_soportado),
         ValidationLine("46", "Resultado régimen general (devengado - deducible)",
                         v.get("46_resultado"), computed.box_46_diferencia),
         ValidationLine("59", "Entregas intracomunitarias de bienes y servicios",
@@ -240,8 +240,8 @@ def validate_modelo_390(
         agg["intracom"]        += m.box_59_intracom_entregas
         agg["export"]          += m.export_base
         agg["oss"]             += m.oss_base
-        agg["soportado_base"]  += m.box_29_base_soportado
-        agg["soportado_cuota"] += m.box_28_iva_soportado
+        agg["soportado_base"]  += m.box_28_base_soportado
+        agg["soportado_cuota"] += m.box_29_cuota_soportado
     agg = {k: round(v, 2) for k, v in agg.items()}
 
     agg_resultado   = round(agg["cuota_21"] - agg["soportado_cuota"], 2)

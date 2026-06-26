@@ -49,11 +49,11 @@ class Modelo303Result:
     box_01_base: float = 0.0          # Base imponible al 21% (IVA_ES_21)
     box_03_cuota: float = 0.0         # 21% × Box 01
     box_59_intracom_entregas: float = 0.0  # Casilla 59: Entregas intracomunitarias exentas (EU B2B sales)
-    # Deducible
-    box_28_iva_soportado: float = 0.0  # IVA soportado deducible (from quarterly_tax_entries)
-    box_29_base_soportado: float = 0.0
+    # Deducible (AEAT casillas: 28 = base, 29 = cuota — names match the form)
+    box_28_base_soportado: float = 0.0   # Casilla 28: Base imponible IVA soportado interior corriente
+    box_29_cuota_soportado: float = 0.0  # Casilla 29: Cuota IVA soportado deducible (invoices + quarterly_tax_entries)
     # Resultado
-    box_46_diferencia: float = 0.0    # Box 03 - Box 28
+    box_46_diferencia: float = 0.0    # Box 03 - Box 29
     box_48_resultado: float = 0.0     # Net to pay (positive) or refund (negative)
     # Informative
     oss_base: float = 0.0

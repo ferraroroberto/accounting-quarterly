@@ -11,16 +11,20 @@ import streamlit as st
 
 from app.data_loader import get_classified_for_period, quarter_dates
 from src.aggregator import calculate_grand_totals, calculate_regional_totals, get_transaction_count
+from src.database import get_transaction_date_bounds
 from src.excel_exporter import create_excel_report, generate_report_filename
 
 
 def render():
     """Render the History & Charts tab."""
     current_year = datetime.now().year
+    min_tx_dt, _ = get_transaction_date_bounds()
+    first_year = min_tx_dt.year if min_tx_dt else 2023
+    first_quarter = (min_tx_dt.month - 1) // 3 + 1 if min_tx_dt else 1
 
     all_quarters = []
-    for y in range(2023, current_year + 1):
-        start_q = 3 if y == 2023 else 1
+    for y in range(first_year, current_year + 1):
+        start_q = first_quarter if y == first_year else 1
         end_q = (datetime.now().month - 1) // 3 + 1 if y == current_year else 4
         for q in range(start_q, end_q + 1):
             all_quarters.append((y, q))

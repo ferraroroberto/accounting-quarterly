@@ -14,7 +14,7 @@ from src.database import (
     get_tax_entries,
     load_tax_snapshots_for_period,
     upsert_filing_status,
-    _get_connection,
+    get_connection,
 )
 from src.tax_engine import (
     compute_and_persist_tax_snapshots,
@@ -56,7 +56,7 @@ def _fmt_eur(value: float | None) -> str:
 
 
 def _get_conn() -> sqlite3.Connection:
-    return _get_connection()
+    return get_connection()
 
 
 def _load_snapshot_bundle(year: int, quarter: int) -> dict[str, tuple[Any, str]]:
@@ -154,13 +154,13 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
     st.divider()
     st.markdown("##### DEDUCIBLE (IVA paid on expenses)")
     col1, col2 = st.columns(2)
-    col1.metric("Box 28 — Cuota IVA soportado", _fmt_eur(result.box_28_iva_soportado))
-    col2.metric("Box 29 — Base correspondiente", _fmt_eur(result.box_29_base_soportado))
+    col1.metric("Box 28 — Base IVA soportado", _fmt_eur(result.box_28_base_soportado))
+    col2.metric("Box 29 — Cuota IVA soportado", _fmt_eur(result.box_29_cuota_soportado))
 
     st.divider()
     st.markdown("##### RESULTADO")
     col1, col2 = st.columns(2)
-    col1.metric("Box 46 — Diferencia (03 − 28)", _fmt_eur(result.box_46_diferencia))
+    col1.metric("Box 46 — Diferencia (03 − 29)", _fmt_eur(result.box_46_diferencia))
     result_val = result.box_48_resultado
     delta_color = "inverse" if result_val < 0 else "normal"
     col2.metric(
@@ -186,7 +186,7 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 # Sub-section C: Modelo 130
 # ---------------------------------------------------------------------------
 
-def _render_modelo_130(year: int, quarter: int, config: dict,
+def _render_modelo_130(year: int, quarter: int,
                        bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("C. Modelo 130 — IRPF Trimestral")
     pair = bundle.get("130")
@@ -197,8 +197,7 @@ def _render_modelo_130(year: int, quarter: int, config: dict,
     assert isinstance(result, Modelo130Result)
 
     st.caption(f"Stored calculation: {computed_at}")
-    irpf_rate = config.get("tax", {}).get("irpf_retention_rate", 0.15)
-    st.markdown(f"**Period:** {_quarter_label(quarter)} {year} — YTD cumulative | IRPF retention rate: {irpf_rate:.0%}")
+    st.markdown(f"**Period:** {_quarter_label(quarter)} {year} — YTD cumulative")
     st.divider()
 
     st.markdown("##### INGRESOS Y GASTOS (year-to-date)")
@@ -446,7 +445,7 @@ def render() -> None:
         _render_modelo_303(year, quarter, snapshot_bundle)
 
     with tab_130:
-        _render_modelo_130(year, quarter, config, snapshot_bundle)
+        _render_modelo_130(year, quarter, snapshot_bundle)
 
     with tab_manual:
         _render_manual_entries(year, quarter)

@@ -53,8 +53,7 @@ def _diff_badge(line: ValidationLine) -> str:
     d = line.diff
     if d is None:
         return "—"
-    sign = "+" if d >= 0 else ""
-    return f"{sign}€{d:,.2f}"
+    return f"{'+' if d >= 0 else '-'}€{abs(d):,.2f}"
 
 
 def _lines_to_df(lines: list[ValidationLine]) -> pd.DataFrame:

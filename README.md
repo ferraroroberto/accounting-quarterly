@@ -570,9 +570,13 @@ All fields required for AEAT compliance (Libro de IVA, SII, Modelo 303/347/349):
 - **Row-selection checkboxes** — select one or more records and click **Delete selected**.
 - **Clear invoice table** — wipes all records (with confirmation); PDF files are never touched.
 
-### Google API key (AI Studio — recommended)
+### Hub provider (default — no Google key needed)
 
-The simplest option: get a free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and add it to `.env`:
+The default `hub` provider routes all PDF extraction through local-llm-hub and needs no Google API key. If `invoice_ocr.provider` is unset (or set to `hub` in `config.json`), no further credential setup is required — stop here.
+
+### Google API key (legacy `gemini` provider)
+
+Only needed if you explicitly set `invoice_ocr.provider` to `gemini` (or `INVOICE_OCR_PROVIDER=gemini`). Get a free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and add it to `.env`:
 
 ```
 GOOGLE_API_KEY=AIzaSy...

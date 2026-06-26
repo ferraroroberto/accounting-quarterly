@@ -8,7 +8,6 @@
     "historical_start": "2023-07-01",
     "data_dir": "data",
     "logs_dir": "logs",
-    "input_mode": "stripe_api",
     "invoice_in_dir": "data/invoices/in",
     "invoice_out_dir": "data/invoices/out"
   },

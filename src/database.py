@@ -29,7 +29,7 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "stripe_invoice_id": "TEXT",
     "raw_source_type": "TEXT",
     "raw_source_json": "TEXT",
-    "source": "TEXT NOT NULL DEFAULT 'csv'",
+    "source": "TEXT NOT NULL DEFAULT 'api'",
     "loaded_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
     "updated_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
     # VAT / tax fields
@@ -240,7 +240,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
                 geo_region TEXT,
                 classification_rule TEXT,
                 geo_rule TEXT,
-                source TEXT NOT NULL DEFAULT 'csv',
+                source TEXT NOT NULL DEFAULT 'api',
                 loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -388,7 +388,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         conn.close()
 
 
-def upsert_payments(payments: list[Payment], source: str = "csv",
+def upsert_payments(payments: list[Payment], source: str = "api",
                     db_path: Optional[str | Path] = None) -> tuple[int, int]:
     """Insert or update payments. Returns (inserted, updated) counts."""
     conn = get_connection(db_path)

@@ -30,7 +30,7 @@ class Payment(BaseModel):
     stripe_balance_transaction_id: Optional[str] = None
     stripe_invoice_id: Optional[str] = None
     raw_source: Optional[dict[str, Any]] = None
-    raw_source_type: Optional[str] = None  # "stripe_api" | "stripe_csv" | etc.
+    raw_source_type: Optional[str] = None  # "stripe_api" | etc.
 
     @field_validator("currency", mode="before")
     @classmethod

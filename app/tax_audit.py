@@ -156,18 +156,20 @@ def render() -> None:
 
     col_year, col_quarter, col_model = st.columns([1, 1, 2])
     with col_year:
-        year = st.number_input("Year", min_value=2020, max_value=2030, value=2025, step=1)
+        year = st.number_input("Year", min_value=2020, max_value=2030, value=2025, step=1, key="audit_year")
     with col_quarter:
         quarter = st.selectbox(
             "Quarter",
             options=[1, 2, 3, 4, 0],
             format_func=lambda q: f"Q{q}" if q > 0 else "Annual (Q0 — Modelo 347)",
+            key="audit_quarter",
         )
     with col_model:
         model = st.selectbox(
             "Model",
             options=list(_MODEL_LABELS.keys()),
             format_func=lambda m: _MODEL_LABELS[m],
+            key="audit_model",
         )
 
     st.markdown(f"*{_MODEL_DESCRIPTIONS.get(model, '')}*")
@@ -192,4 +194,5 @@ def render() -> None:
             data=raw_json,
             file_name=f"audit_{model}_{year}_Q{quarter}_{computed_at or 'latest'}.json",
             mime="application/json",
+            key="audit_download_json",
         )

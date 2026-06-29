@@ -55,25 +55,25 @@ def render() -> None:
 
         # Direction
         directions = ["All"] + sorted(df["direction"].dropna().unique().tolist())
-        direction_sel = f1.selectbox("Direction", directions)
+        direction_sel = f1.selectbox("Direction", directions, key="inv_explorer_direction")
 
         # Category
         cats = sorted(df["category"].dropna().unique().tolist()) if "category" in df.columns else []
-        cat_sel = f2.multiselect("Category", cats)
+        cat_sel = f2.multiselect("Category", cats, key="inv_explorer_cat")
 
         # Invoice type
         if "invoice_type" in df.columns:
             types = sorted(df["invoice_type"].dropna().unique().tolist())
-            type_sel = f3.multiselect("Invoice type", types)
+            type_sel = f3.multiselect("Invoice type", types, key="inv_explorer_type")
         else:
             type_sel = []
 
         f4, f5 = st.columns(2)
 
         # Vendor name (free text)
-        vendor_q = f4.text_input("Vendor name contains")
+        vendor_q = f4.text_input("Vendor name contains", key="inv_explorer_vendor")
         # Client name (free text)
-        client_q = f5.text_input("Client name contains")
+        client_q = f5.text_input("Client name contains", key="inv_explorer_client")
 
         f6, f7 = st.columns(2)
 
@@ -82,8 +82,8 @@ def render() -> None:
         max_date = df["invoice_date"].max() if "invoice_date" in df.columns and not df["invoice_date"].isna().all() else None
 
         if min_date is not None and not pd.isna(min_date):
-            date_from = f6.date_input("Invoice date from", value=min_date.date(), min_value=min_date.date(), max_value=max_date.date())
-            date_to = f7.date_input("Invoice date to", value=max_date.date(), min_value=min_date.date(), max_value=max_date.date())
+            date_from = f6.date_input("Invoice date from", value=min_date.date(), min_value=min_date.date(), max_value=max_date.date(), key="inv_explorer_date_from")
+            date_to = f7.date_input("Invoice date to", value=max_date.date(), min_value=min_date.date(), max_value=max_date.date(), key="inv_explorer_date_to")
         else:
             date_from = None
             date_to = None
@@ -100,6 +100,7 @@ def render() -> None:
                     max_value=max_sub,
                     value=(min_sub, max_sub),
                     step=1.0,
+                    key="inv_explorer_subtotal",
                 )
             else:
                 sub_range = None
@@ -107,7 +108,7 @@ def render() -> None:
             sub_range = None
 
         # Rectificativas only
-        show_rect_only = f9.checkbox("Rectificativas only")
+        show_rect_only = f9.checkbox("Rectificativas only", key="inv_explorer_rectificativas")
 
     # ── Apply filters ─────────────────────────────────────────────────────────
     mask = pd.Series([True] * len(df), index=df.index)
@@ -177,4 +178,5 @@ def render() -> None:
         data=csv,
         file_name="invoices_filtered.csv",
         mime="text/csv",
+        key="inv_explorer_download",
     )

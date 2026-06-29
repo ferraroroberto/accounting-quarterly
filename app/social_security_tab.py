@@ -55,21 +55,23 @@ def render() -> None:
         file_path_str = st.text_input(
             "Bank export file path (.xlsx / .xls / .csv)",
             value=default_file,
+            key="ss_file_path",
             help="Path relative to the project root, or absolute. "
                  "Configure the default in config.json → social_security.bank_export_file",
         )
-        date_column = st.text_input("Date column name", value=default_date_col)
-        amount_column = st.text_input("Amount column name", value=default_amount_col)
+        date_column = st.text_input("Date column name", value=default_date_col, key="ss_date_col")
+        amount_column = st.text_input("Amount column name", value=default_amount_col, key="ss_amount_col")
     with col2:
         description_column = st.text_input(
-            "Description column name (optional)", value=default_desc_col
+            "Description column name (optional)", value=default_desc_col, key="ss_desc_col"
         )
         sheet_name_input = st.text_input(
             "Sheet name or index (0-based)",
             value=str(default_sheet),
+            key="ss_sheet_name",
             help="Use a sheet name like 'Sheet1' or a zero-based index like '0'.",
         )
-        skiprows = st.number_input("Skip rows at top of file", min_value=0, value=default_skiprows, step=1)
+        skiprows = st.number_input("Skip rows at top of file", min_value=0, value=default_skiprows, step=1, key="ss_skiprows")
 
     # Resolve sheet name to int if numeric
     try:
@@ -82,7 +84,7 @@ def render() -> None:
     file_path = _resolve(file_path_str)
 
     # Preview
-    if st.button("Preview file columns"):
+    if st.button("Preview file columns", key="ss_preview"):
         if not file_path.exists():
             st.error(f"File not found: `{file_path}`")
         else:
@@ -102,7 +104,7 @@ def render() -> None:
 
     col_imp, col_clear = st.columns([2, 1])
     with col_imp:
-        if st.button("Import from file", type="primary"):
+        if st.button("Import from file", type="primary", key="ss_import"):
             if not file_path.exists():
                 st.error(f"File not found: `{file_path}`")
             else:
@@ -129,7 +131,7 @@ def render() -> None:
                     log.exception("SS import error")
 
     with col_clear:
-        if st.button("Clear all SS payments", type="secondary"):
+        if st.button("Clear all SS payments", type="secondary", key="ss_clear"):
             clear_ss_payments()
             st.success("All Social Security payment rows cleared.")
             st.rerun()
@@ -165,7 +167,7 @@ def render() -> None:
     # -------------------------------------------------------------------------
     st.subheader("Payment detail")
 
-    selected_year = st.selectbox("Filter by year", options=["All"] + [str(y) for y in years_available])
+    selected_year = st.selectbox("Filter by year", options=["All"] + [str(y) for y in years_available], key="ss_filter_year")
 
     if selected_year == "All":
         df_view = df_all.copy()
@@ -208,6 +210,7 @@ def render() -> None:
         data=csv_bytes,
         file_name="social_security_payments.csv",
         mime="text/csv",
+        key="ss_download_csv",
     )
 
     # -------------------------------------------------------------------------
@@ -215,8 +218,8 @@ def render() -> None:
     # -------------------------------------------------------------------------
     with st.expander("Delete a payment row"):
         st.markdown("Enter the **ID** of the row you want to delete (visible in the table above).")
-        del_id = st.number_input("Row ID to delete", min_value=1, step=1)
-        if st.button("Delete row", type="secondary"):
+        del_id = st.number_input("Row ID to delete", min_value=1, step=1, key="ss_del_id")
+        if st.button("Delete row", type="secondary", key="ss_delete_row"):
             delete_ss_payment(int(del_id))
             st.success(f"Row {del_id} deleted.")
             st.rerun()

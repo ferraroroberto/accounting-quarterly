@@ -265,9 +265,9 @@ def _render_manual_entries(year: int, quarter: int) -> None:
             ["IVA_SOPORTADO", "GASTOS_DEDUCIBLES", "RETENCIONES_SOPORTADAS", "OTHER"],
         )
         amount = col2.number_input("Amount (€)", min_value=0.0, step=0.01, format="%.2f")
-        description = st.text_input("Description")
-        notes = st.text_area("Notes", height=70)
-        if st.form_submit_button("Add Entry"):
+        description = st.text_input("Description", key=f"add_entry_desc_{year}_{quarter}")
+        notes = st.text_area("Notes", height=70, key=f"add_entry_notes_{year}_{quarter}")
+        if st.form_submit_button("Add Entry", key=f"add_entry_submit_{year}_{quarter}"):
             if amount > 0:
                 add_tax_entry(year, quarter, entry_type, amount, description, notes)
                 st.success("Entry added.")

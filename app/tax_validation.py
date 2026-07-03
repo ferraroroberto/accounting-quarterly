@@ -140,7 +140,7 @@ def render() -> None:
 
     col_info, col_btn = st.columns([5, 1])
     with col_btn:
-        if st.button("↺ Refresh", help="Clear cached results and re-run all validations"):
+        if st.button("↺ Refresh", help="Clear cached results and re-run all validations", key="tv_refresh"):
             _cached_validations.clear()
 
     with st.spinner("Running validations…"):

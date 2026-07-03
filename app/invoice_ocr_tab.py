@@ -339,7 +339,7 @@ def render() -> None:
         # ── Clear table button (with confirmation) ───────────────────────────
         with st.expander("Danger zone", expanded=False):
             if not st.session_state.get("confirm_clear_invoices"):
-                if st.button("Clear invoice table", type="secondary"):
+                if st.button("Clear invoice table", type="secondary", key="inv_ocr_clear_start"):
                     st.session_state["confirm_clear_invoices"] = True
                     st.rerun()
             else:
@@ -348,12 +348,12 @@ def render() -> None:
                     "The PDF files themselves are not touched."
                 )
                 col_yes, col_no = st.columns(2)
-                if col_yes.button("Yes, delete everything", type="primary"):
+                if col_yes.button("Yes, delete everything", type="primary", key="inv_ocr_clear_confirm"):
                     n = clear_invoices()
                     st.session_state["confirm_clear_invoices"] = False
                     st.success(f"Deleted {n} record(s).")
                     st.rerun()
-                if col_no.button("Cancel"):
+                if col_no.button("Cancel", key="inv_ocr_clear_cancel"):
                     st.session_state["confirm_clear_invoices"] = False
                     st.rerun()
 
@@ -392,6 +392,7 @@ def render() -> None:
                     if st.button(
                         f"Delete {len(selected_indices)} selected record(s)",
                         type="primary",
+                        key="inv_ocr_delete_selected",
                     ):
                         ids_to_delete = [
                             df_display.iloc[i]["id"]

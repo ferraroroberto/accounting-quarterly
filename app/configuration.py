@@ -318,13 +318,23 @@ geographic classification instead of manual overrides.
         )
 
         st.markdown("##### EU VAT defaults")
-        EU_B2B_OPTIONS = ["IVA_EU_B2B", "IVA_EU_B2C"]
+        # IVA_EU_B2C is intentionally excluded: compute_modelo_303's aggregation
+        # (src/tax_engine.py) has no devengado box or audit-record bucket for it,
+        # so selecting it would silently drop the income from the quarterly VAT
+        # return. Only offer treatments the engine actually accounts for.
+        EU_B2B_OPTIONS = ["IVA_EU_B2B"]
         EU_NL_OPTIONS = ["OSS_EU", "IVA_EU_B2B"]
+        eu_coaching_val = tax.get("default_vat_treatment_eu_coaching", "IVA_EU_B2B")
+        if eu_coaching_val not in EU_B2B_OPTIONS:
+            # Stale config from before IVA_EU_B2C was removed as a selectable
+            # option (see comment above) — keep it selectable so the page
+            # doesn't crash, but it's no longer offered to new selections.
+            EU_B2B_OPTIONS = EU_B2B_OPTIONS + [eu_coaching_val]
         col1, col2 = st.columns(2)
         eu_coaching = col1.selectbox(
             "EU Coaching VAT treatment",
             EU_B2B_OPTIONS,
-            index=EU_B2B_OPTIONS.index(tax.get("default_vat_treatment_eu_coaching", "IVA_EU_B2B")),
+            index=EU_B2B_OPTIONS.index(eu_coaching_val),
             key="tax_eu_coaching",
         )
         eu_newsletter = col2.selectbox(

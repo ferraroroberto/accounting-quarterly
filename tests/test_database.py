@@ -1,19 +1,26 @@
 """Tests for the SQLite database layer."""
-import pytest
+import json
+import sqlite3
 from datetime import datetime
 
+import pytest
+
 from src.database import (
+    backfill_tax_snapshot_legacy_keys,
+    get_connection,
     get_latest_transaction_date,
     get_transaction_count_db,
     get_uploaded_files,
     init_db,
     load_classified_payments,
     load_payments,
+    load_tax_snapshots_for_period,
     record_upload,
     upsert_classified,
     upsert_payments,
 )
 from src.models import ClassifiedPayment, Payment
+from src.tax_snapshot_codec import decode_snapshot
 
 
 class TestDatabase:
@@ -167,3 +174,74 @@ class TestUploadLog:
 
         out_files = get_uploaded_files("out", db_path=tmp_db)
         assert len(out_files) == 1
+
+
+def _legacy_modelo303_payload() -> str:
+    """A Modelo 303 snapshot payload as it would have been written pre-e08a3ff9 (#42),
+    i.e. before box_28_iva_soportado -> box_29_cuota_soportado and
+    box_29_base_soportado -> box_28_base_soportado."""
+    return json.dumps({
+        "year": 2026, "quarter": 1,
+        "box_01_base": 100.0, "box_03_cuota": 21.0,
+        "box_59_intracom_entregas": 0.0,
+        "box_28_iva_soportado": 15.0,
+        "box_29_base_soportado": 60.0,
+        "box_46_diferencia": 6.0, "box_48_resultado": 6.0,
+        "oss_base": 0.0, "oss_vat": 0.0, "export_base": 0.0, "notes": "",
+    })
+
+
+class TestTaxSnapshotLegacyKeyMigration:
+    """Covers accounting-quarterly#58: stale pre-rename Modelo 303 snapshot rows
+    must not hard-crash the default Tax Obligations/Tax Validation view."""
+
+    def test_backfill_rewrites_legacy_keys_in_place(self, tmp_db):
+        init_db(tmp_db)
+        conn = get_connection(tmp_db)
+        conn.execute(
+            """INSERT INTO tax_computation_snapshots (year, quarter, model, payload_json, computed_at)
+               VALUES (2026, 1, '303', ?, '2026-01-01T00:00:00')""",
+            (_legacy_modelo303_payload(),),
+        )
+        conn.commit()
+
+        updated = backfill_tax_snapshot_legacy_keys(conn)
+        assert updated == 1
+
+        rows = load_tax_snapshots_for_period(2026, 1, conn)
+        payload = next(r["payload_json"] for r in rows if r["model"] == "303")
+        data = json.loads(payload)
+        assert "box_28_iva_soportado" not in data
+        assert "box_29_base_soportado" not in data
+        assert data["box_29_cuota_soportado"] == pytest.approx(15.0)
+        assert data["box_28_base_soportado"] == pytest.approx(60.0)
+        conn.close()
+
+    def test_init_db_migrates_stale_rows_on_startup(self, tmp_db):
+        init_db(tmp_db)
+        conn = get_connection(tmp_db)
+        conn.execute(
+            """INSERT INTO tax_computation_snapshots (year, quarter, model, payload_json, computed_at)
+               VALUES (2026, 1, '303', ?, '2026-01-01T00:00:00')""",
+            (_legacy_modelo303_payload(),),
+        )
+        conn.commit()
+        conn.close()
+
+        # Re-running init_db (as the app does on every startup) must self-heal
+        # the stale row so the default view decodes without a TypeError.
+        init_db(tmp_db)
+
+        conn = get_connection(tmp_db)
+        rows = load_tax_snapshots_for_period(2026, 1, conn)
+        payload = next(r["payload_json"] for r in rows if r["model"] == "303")
+        result = decode_snapshot("303", payload)
+        assert result.box_28_base_soportado == pytest.approx(60.0)
+        assert result.box_29_cuota_soportado == pytest.approx(15.0)
+        conn.close()
+
+    def test_decode_snapshot_tolerates_unmigrated_legacy_keys(self):
+        """Even without the startup migration, decode_snapshot alone must not crash."""
+        result = decode_snapshot("303", _legacy_modelo303_payload())
+        assert result.box_28_base_soportado == pytest.approx(60.0)
+        assert result.box_29_cuota_soportado == pytest.approx(15.0)

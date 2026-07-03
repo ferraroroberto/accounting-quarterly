@@ -285,41 +285,37 @@ geographic classification instead of manual overrides.
 
         tax = cfg.get("tax", {})
 
-        st.markdown("##### Identity")
-        col1, col2 = st.columns(2)
-        nif = col1.text_input("NIF / NIE", value=tax.get("nif", ""), key="tax_nif",
-                              help="Your Spanish tax ID (e.g. X5939179G)")
-        activity_start = col2.text_input(
-            "Activity start date (YYYY-MM-DD)",
-            value=tax.get("activity_start_date", ""),
-            key="tax_start_date",
-            help="Date you registered as autónomo — determines IRPF retention rate eligibility",
-        )
-
         st.markdown("##### Fiscal Regime")
         REGIME_OPTIONS = ["estimacion_directa_simplificada", "estimacion_directa_normal", "modulos"]
         regime_val = tax.get("regime", "estimacion_directa_simplificada")
         if regime_val not in REGIME_OPTIONS:
             REGIME_OPTIONS.append(regime_val)
-        regime = st.selectbox("Regime", REGIME_OPTIONS,
-                              index=REGIME_OPTIONS.index(regime_val), key="tax_regime")
-
-        col1, col2 = st.columns(2)
-        vat_registered = col1.checkbox("VAT registered (IVA)", value=tax.get("vat_registered", True),
-                                       key="tax_vat_reg")
-        oss_registered = col2.checkbox("OSS registered", value=tax.get("oss_registered", True),
-                                       key="tax_oss_reg")
+        regime = st.selectbox(
+            "Regime", REGIME_OPTIONS,
+            index=REGIME_OPTIONS.index(regime_val), key="tax_regime",
+            help="Gates the 5% gastos de difícil justificación in Modelo 130 "
+                 "(only estimación directa simplificada is eligible).",
+        )
 
         col1, col2, col3 = st.columns(3)
-        oss_country = col1.text_input("OSS registration country",
-                                      value=tax.get("oss_registration_country", "ES"),
-                                      key="tax_oss_country")
-        fiscal_year_start = col2.number_input("Fiscal year start month", min_value=1, max_value=12,
-                                              value=tax.get("fiscal_year_start_month", 1),
-                                              key="tax_fy_start")
-        vat_proration = col3.number_input("VAT proration % (prorrata)", min_value=0, max_value=100,
-                                          value=tax.get("vat_proration_percentage", 100),
-                                          key="tax_vat_prorrata")
+        vat_registered = col1.checkbox(
+            "VAT registered (IVA)", value=tax.get("vat_registered", True),
+            key="tax_vat_reg",
+            help="If off, Spanish sales are treated as exempt (no IVA devengado) "
+                 "and no input IVA is deducted in Modelo 303.",
+        )
+        oss_registered = col2.checkbox(
+            "OSS registered", value=tax.get("oss_registered", True),
+            key="tax_oss_reg",
+            help="If off, no OSS return is generated for EU B2C digital services.",
+        )
+        vat_proration = col3.number_input(
+            "VAT proration % (prorrata)", min_value=0, max_value=100,
+            value=tax.get("vat_proration_percentage", 100),
+            key="tax_vat_prorrata",
+            help="Prorrata general applied to deducible IVA (Modelo 303 casilla 29). "
+                 "100 = fully deductible.",
+        )
 
         st.markdown("##### EU VAT defaults")
         EU_B2B_OPTIONS = ["IVA_EU_B2B", "IVA_EU_B2C"]
@@ -344,10 +340,6 @@ geographic classification instead of manual overrides.
                 "regime": regime,
                 "vat_registered": vat_registered,
                 "oss_registered": oss_registered,
-                "oss_registration_country": oss_country,
-                "activity_start_date": activity_start,
-                "nif": nif,
-                "fiscal_year_start_month": int(fiscal_year_start),
                 "vat_proration_percentage": int(vat_proration),
                 "default_vat_treatment_eu_coaching": eu_coaching,
                 "default_vat_treatment_eu_newsletter": eu_newsletter,

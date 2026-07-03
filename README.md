@@ -327,16 +327,24 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
 {
   "tax": {
     "regime": "estimacion_directa_simplificada",
-    "nif": "YOUR_NIF",
     "vat_registered": true,
     "oss_registered": true,
-    "oss_registration_country": "ES",
-    "activity_start_date": "YYYY-MM-DD",
+    "vat_proration_percentage": 100,
     "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
     "default_vat_treatment_eu_newsletter": "OSS_EU"
   }
 }
 ```
+
+Every key above drives a computation:
+
+| Setting | Effect on computation |
+|---------|----------------------|
+| `regime` | Gates the 5% *gastos de difícil justificación* in Modelo 130 — only `estimacion_directa_simplificada` is eligible (Art. 30.2.4ª LIRPF). |
+| `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
+| `oss_registered` | When `false`, no OSS return is generated (an audit note records why). |
+| `vat_proration_percentage` | Prorrata general applied to deducible IVA (Modelo 303 casilla 28/29). `100` = fully deductible. |
+| `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` | Override the EU (`EU_NOT_SPAIN`) VAT treatment per activity. Defaults: `IVA_EU_B2B` for coaching, `OSS_EU` for newsletter. |
 
 ### Invoice data in tax calculations
 
@@ -441,7 +449,7 @@ The UI shows a summary table plus an expandable drill-down per cell. Each expand
 | Cell | Approximation | Impact |
 |------|--------------|--------|
 | `box_28_base_soportado` (M303) | `box_29_cuota_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
-| `box_48_resultado` (M303) | 100% proration assumed | User must enter only the deductible portion of IVA in manual entries |
+| `box_48_resultado` (M303) | Prorrata from `tax.vat_proration_percentage` (default 100%) applied to casilla 29 | Set the prorrata in Tax Settings; manual IVA entries should still reflect only genuinely deductible cuota |
 | `box_01_ingresos` (M130) | Ex-VAT base extracted from VAT-inclusive Stripe amounts | Correct for estimación directa — IVA is a pass-through, not income |
 
 ---

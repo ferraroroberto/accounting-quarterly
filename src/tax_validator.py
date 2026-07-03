@@ -17,6 +17,7 @@ from src.tax_engine import (
     compute_modelo_130,
     compute_modelo_303,
     compute_modelo_349,
+    load_app_config,
 )
 
 _YAML_PATH = Path(__file__).parent.parent / "tmp" / "validation" / "validation.yaml"
@@ -105,7 +106,7 @@ def validate_modelo_130(
     year: int, quarter: int, conn: sqlite3.Connection, filings: list[dict]
 ) -> ModelValidationResult:
     filing = _find_filing(filings, "130", year, quarter)
-    computed = compute_modelo_130(year, quarter, conn)
+    computed = compute_modelo_130(year, quarter, conn, load_app_config())
     period = f"{year} Q{quarter}"
 
     if filing is None:
@@ -151,7 +152,7 @@ def validate_modelo_303(
     year: int, quarter: int, conn: sqlite3.Connection, filings: list[dict]
 ) -> ModelValidationResult:
     filing = _find_filing(filings, "303", year, quarter)
-    computed = compute_modelo_303(year, quarter, conn)
+    computed = compute_modelo_303(year, quarter, conn, load_app_config())
     period = f"{year} Q{quarter}"
 
     if filing is None:
@@ -189,7 +190,7 @@ def validate_modelo_349(
     year: int, quarter: int, conn: sqlite3.Connection, filings: list[dict]
 ) -> ModelValidationResult:
     filing = _find_filing(filings, "349", year, quarter)
-    computed = compute_modelo_349(year, quarter, conn)
+    computed = compute_modelo_349(year, quarter, conn, load_app_config())
     period = f"{year} Q{quarter}"
 
     if filing is None:
@@ -230,11 +231,12 @@ def validate_modelo_390(
     filing = _find_filing(filings, "390", year, None)
     period = f"{year} Annual"
 
+    config = load_app_config()
     # Aggregate all 4 quarters
     agg = dict(base_21=0.0, cuota_21=0.0, intracom=0.0, export=0.0,
                oss=0.0, soportado_base=0.0, soportado_cuota=0.0)
     for q in range(1, 5):
-        m = compute_modelo_303(year, q, conn)
+        m = compute_modelo_303(year, q, conn, config)
         agg["base_21"]         += m.box_01_base
         agg["cuota_21"]        += m.box_03_cuota
         agg["intracom"]        += m.box_59_intracom_entregas
@@ -246,7 +248,7 @@ def validate_modelo_390(
 
     agg_resultado   = round(agg["cuota_21"] - agg["soportado_cuota"], 2)
     agg_vol_total   = round(agg["base_21"] + agg["intracom"] + agg["export"] + agg["oss"], 2)
-    m130 = compute_modelo_130(year, 4, conn)
+    m130 = compute_modelo_130(year, 4, conn, config)
 
     # M130 cross-check filed reference: the annual income computed for Modelo 390
     # must be reconciled against the income the gestor actually filed on Modelo 130,

@@ -40,31 +40,32 @@ def vat_treatment(
     The single rule set:
 
     - ``OUTSIDE_EU`` → ``IVA_EXPORT``
-    - ``SPAIN`` → ``IVA_ES_21``
-    - ``EU_NOT_SPAIN`` + ``NEWSLETTER`` → ``OSS_EU``
-    - ``EU_NOT_SPAIN`` + other activity → EU B2B reverse charge. The treatment
-      may be overridden per-activity via
-      ``tax.default_vat_treatment_eu_<activity>`` in ``config``; defaults to
-      ``IVA_EU_B2B``.
+    - ``SPAIN`` → ``IVA_ES_21`` (or ``IVA_EXEMPT`` when the taxpayer is not
+      IVA-registered, i.e. ``tax.vat_registered`` is false — franquicia/no
+      domestic IVA charged).
+    - ``EU_NOT_SPAIN`` → EU treatment, per-activity. The treatment may be
+      overridden via ``tax.default_vat_treatment_eu_<activity>`` in ``config``;
+      the per-activity default is ``OSS_EU`` for ``NEWSLETTER`` (B2C digital
+      services) and ``IVA_EU_B2B`` (reverse charge) for everything else.
     - anything else → ``UNKNOWN``
 
     ``config`` is the full app config dict (with a ``tax`` section). When
-    ``None``, the EU B2B default ``IVA_EU_B2B`` is used.
+    ``None``, the documented defaults are used.
     """
     geo = geo or "UNKNOWN"
     activity = activity or "UNKNOWN"
+    tax_cfg = (config or {}).get("tax", {})
 
     if geo == "OUTSIDE_EU":
         return "IVA_EXPORT"
     if geo == "SPAIN":
+        # Not IVA-registered (franquicia) → no domestic IVA is charged.
+        if tax_cfg.get("vat_registered", True) is False:
+            return "IVA_EXEMPT"
         return "IVA_ES_21"
     if geo == "EU_NOT_SPAIN":
-        if activity == "NEWSLETTER":
-            return "OSS_EU"
-        tax_cfg = (config or {}).get("tax", {})
-        return tax_cfg.get(
-            f"default_vat_treatment_eu_{activity.lower()}", "IVA_EU_B2B"
-        )
+        default = "OSS_EU" if activity == "NEWSLETTER" else "IVA_EU_B2B"
+        return tax_cfg.get(f"default_vat_treatment_eu_{activity.lower()}", default)
     return "UNKNOWN"
 
 

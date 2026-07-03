@@ -1,13 +1,13 @@
 """Social Security (Seguridad Social) cuotas import from bank account exports."""
 from __future__ import annotations
 
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
+from src.database import get_connection
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -119,12 +119,6 @@ def load_bank_export(
 # ---------------------------------------------------------------------------
 # DB helpers (called by database.py's init_db, but also directly usable)
 # ---------------------------------------------------------------------------
-
-def get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
-    """Return a sqlite3 connection with row_factory set."""
-    from src.database import get_connection as _db_get_connection
-    return _db_get_connection(db_path)
-
 
 def upsert_ss_payments(
     rows: list[dict],

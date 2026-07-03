@@ -209,6 +209,8 @@ def _load_income_invoices_for_quarter(
 
 
 def _net_amount(row: dict) -> float:
+    # Row-dict counterpart of Payment.net_amount (src/models.py) — same formula,
+    # different input shape (SQL row dict vs. Pydantic model); kept in sync by hand.
     return round(row["converted_amount"] - row["converted_amount_refunded"], 2)
 
 

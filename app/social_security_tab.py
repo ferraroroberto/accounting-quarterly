@@ -14,7 +14,6 @@ from src.social_security import (
     clear_ss_payments,
     delete_ss_payment,
     get_ss_payments,
-    get_ss_total_for_period,
     load_bank_export,
     upsert_ss_payments,
 )

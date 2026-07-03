@@ -239,6 +239,72 @@ class TestModelo349:
         assert result.total == pytest.approx(500.0)
 
 
+class TestConfigDrivenTaxSettings:
+    """The config.tax settings must actually drive the computations."""
+
+    def test_regime_normal_disables_gastos_dificil(self, db_conn):
+        _insert_tx(db_conn, id="t1", converted_amount=1000.0, activity_type="COACHING")
+        # estimación directa normal → no 5% gastos de difícil justificación
+        cfg = {"tax": {"regime": "estimacion_directa_normal"}}
+        result = compute_modelo_130(2025, 1, db_conn, cfg)
+        assert result.gastos_dificil_justificacion == 0.0
+        # Simplificada (default) DOES apply it — sanity contrast
+        result_simpl = compute_modelo_130(2025, 1, db_conn, {"tax": {}})
+        assert result_simpl.gastos_dificil_justificacion == pytest.approx(41.32)
+
+    def test_vat_proration_scales_deducible_iva(self, db_conn):
+        _insert_tx(db_conn, id="t1", converted_amount=121.0, geo_region="SPAIN")
+        db_conn.execute(
+            "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) "
+            "VALUES (2025, 1, 'IVA_SOPORTADO', 500.0)"
+        )
+        db_conn.commit()
+        cfg = {"tax": {"vat_proration_percentage": 50}}
+        result = compute_modelo_303(2025, 1, db_conn, cfg)
+        # 500 soportado × 50% prorrata = 250 deducible
+        assert result.box_29_cuota_soportado == pytest.approx(250.0)
+
+    def test_not_vat_registered_exempts_spanish_sales(self, db_conn):
+        # No stored vat_treatment → derivation runs and honours the config flag
+        _insert_tx(db_conn, id="t1", converted_amount=121.0, geo_region="SPAIN",
+                   vat_treatment=None)
+        db_conn.execute(
+            "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) "
+            "VALUES (2025, 1, 'IVA_SOPORTADO', 500.0)"
+        )
+        db_conn.commit()
+        cfg = {"tax": {"vat_registered": False}}
+        result = compute_modelo_303(2025, 1, db_conn, cfg)
+        assert result.box_01_base == 0.0        # no devengado
+        assert result.box_03_cuota == 0.0
+        assert result.box_29_cuota_soportado == 0.0  # no deducible input IVA
+        assert result.box_28_base_soportado == 0.0
+
+    def test_not_oss_registered_produces_no_oss_return(self, db_conn):
+        _insert_tx(db_conn, id="t1", converted_amount=100.0, geo_region="EU_NOT_SPAIN",
+                   activity_type="NEWSLETTER", vat_treatment="OSS_EU",
+                   vat_base_eur=100.0, vat_amount_eur=19.0, oss_country="DE")
+        cfg = {"tax": {"oss_registered": False}}
+        result = compute_oss_return(2025, 1, db_conn, cfg)
+        assert result.rows == []
+        assert result.total_base == 0.0
+        assert any(a.cell == "oss_not_registered" for a in result.audit)
+
+    def test_eu_newsletter_override_routes_to_349(self, db_conn):
+        # Newsletter defaults to OSS_EU, but the config override makes it EU B2B,
+        # which then surfaces on Modelo 349. Row carries no stored treatment.
+        _insert_tx(db_conn, id="t1", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
+                   activity_type="NEWSLETTER", vat_treatment=None,
+                   email_meta="sub@eu.com", buyer_vat_id="DE999")
+        # Default (OSS_EU) → not on 349
+        assert len(compute_modelo_349(2025, 1, db_conn, {"tax": {}}).rows) == 0
+        # Override → treated as IVA_EU_B2B → appears on 349
+        cfg = {"tax": {"default_vat_treatment_eu_newsletter": "IVA_EU_B2B"}}
+        result = compute_modelo_349(2025, 1, db_conn, cfg)
+        assert len(result.rows) == 1
+        assert result.rows[0].total_amount == pytest.approx(300.0)
+
+
 class TestTaxSnapshotPersistence:
     def test_persist_and_load_roundtrip(self, db_conn):
         _insert_tx(db_conn)

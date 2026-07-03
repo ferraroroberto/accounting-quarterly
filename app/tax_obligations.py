@@ -398,7 +398,7 @@ def render() -> None:
     if "tax" not in config:
         st.warning(
             "Tax configuration is incomplete. Go to **Configuration** tab and fill in the `tax` section "
-            "(NIF, regime, OSS registration, etc.)."
+            "(regime, IVA/OSS registration, EU VAT defaults, etc.)."
         )
 
     col1, col2, col3 = st.columns([2, 2, 2])

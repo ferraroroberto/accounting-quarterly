@@ -35,6 +35,36 @@ _DUE_SOON_DAYS = 15
 
 
 # ---------------------------------------------------------------------------
+# App-config plumbing
+# ---------------------------------------------------------------------------
+# The tax engine is config-aware: several ``config.tax`` settings alter the
+# computation (EU VAT-treatment overrides, IVA/OSS registration, prorrata,
+# fiscal regime). The public compute functions take an optional ``config``
+# dict; when it is ``None`` they fall back to an empty dict, i.e. the documented
+# defaults — this keeps the engine pure and the unit tests deterministic. The
+# app entry points (``compute_and_persist_tax_snapshots`` and the tax validator)
+# load the real ``config.json`` once and thread it down.
+
+def _tax_settings(config: Optional[dict]) -> dict:
+    """Return the ``tax`` sub-section of the app config (empty dict if absent)."""
+    return (config or {}).get("tax", {})
+
+
+def load_app_config() -> dict:
+    """Load ``config.json`` for the engine, returning ``{}`` if unavailable.
+
+    Guarded so the engine never crashes on a missing/broken config file — a
+    fresh checkout with no ``config.json`` simply runs with documented defaults.
+    """
+    try:
+        from src.config import load_config
+
+        return load_config()
+    except Exception:  # pragma: no cover - config is optional for the engine
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Internal DB helpers
 # ---------------------------------------------------------------------------
 
@@ -182,26 +212,28 @@ def _net_amount(row: dict) -> float:
     return round(row["converted_amount"] - row["converted_amount_refunded"], 2)
 
 
-def _get_vat_treatment(row: dict) -> str:
+def _get_vat_treatment(row: dict, config: Optional[dict] = None) -> str:
     """Return stored vat_treatment, or derive it on-the-fly if missing.
 
     The fallback derivation delegates to the shared treatment matrix in
-    ``src.vat_rules`` so the classifier and the engine cannot diverge. No
-    ``config`` is passed here, so the EU B2B fallback is the default
-    ``IVA_EU_B2B`` (matching the historical engine behaviour).
+    ``src.vat_rules`` so the classifier and the engine cannot diverge. The
+    ``config`` dict is threaded through so the EU VAT-treatment overrides
+    (``tax.default_vat_treatment_eu_*``) and the ``tax.vat_registered`` flag
+    are honoured. Rows carrying an explicit stored treatment (manual override)
+    win over the derivation.
     """
     stored = row.get("vat_treatment")
     if stored and stored != "UNKNOWN":
         return stored
     # Derive from activity × geo (fallback for rows not yet VAT-classified)
-    return vat_treatment(row.get("activity_type"), row.get("geo_region"))
+    return vat_treatment(row.get("activity_type"), row.get("geo_region"), config=config)
 
 
 def _oss_country_code(row: dict) -> str:
     return (row.get("oss_country") or row.get("card_country") or "").upper()
 
 
-def _get_vat_base(row: dict) -> float:
+def _get_vat_base(row: dict, config: Optional[dict] = None) -> float:
     """Return the ex-VAT taxable base for a transaction row.
 
     Stripe amounts are VAT-inclusive (the customer paid the gross amount).
@@ -212,15 +244,15 @@ def _get_vat_base(row: dict) -> float:
     if row.get("vat_base_eur") is not None:
         return row["vat_base_eur"]
     return vat_base_from_inclusive(
-        _net_amount(row), _get_vat_treatment(row), _oss_country_code(row)
+        _net_amount(row), _get_vat_treatment(row, config), _oss_country_code(row)
     )
 
 
-def _get_vat_amount(row: dict) -> float:
+def _get_vat_amount(row: dict, config: Optional[dict] = None) -> float:
     if row.get("vat_amount_eur") is not None:
         return row["vat_amount_eur"]
     return vat_amount_on_base(
-        _get_vat_base(row), _get_vat_treatment(row), _oss_country_code(row)
+        _get_vat_base(row, config), _get_vat_treatment(row, config), _oss_country_code(row)
     )
 
 
@@ -259,9 +291,19 @@ def _previous_modelo130_payments(year: int, quarter: int, conn: sqlite3.Connecti
 # Public computation functions
 # ---------------------------------------------------------------------------
 
-def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo303Result:
-    """Compute Modelo 303 (quarterly VAT return) for the given quarter."""
+def compute_modelo_303(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo303Result:
+    """Compute Modelo 303 (quarterly VAT return) for the given quarter.
+
+    ``config`` (the app config dict) drives the EU VAT-treatment overrides, the
+    ``tax.vat_registered`` flag (unregistered → no devengado / no deducible IVA)
+    and ``tax.vat_proration_percentage`` (prorrata applied to deducible IVA).
+    """
     result = Modelo303Result(year=year, quarter=quarter)
+    tax_cfg = _tax_settings(config)
+    vat_registered = tax_cfg.get("vat_registered", True) is not False
+    proration = tax_cfg.get("vat_proration_percentage", 100) / 100.0
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
     # Aggregate Stripe transactions by (geo_region, activity_type, treatment).
@@ -271,9 +313,9 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     _agg: dict[tuple, dict] = {}
 
     for row in rows:
-        treatment = _get_vat_treatment(row)
-        base = _get_vat_base(row)   # ex-VAT base (VAT-inclusive extraction applied)
-        vat = _get_vat_amount(row)
+        treatment = _get_vat_treatment(row, config)
+        base = _get_vat_base(row, config)   # ex-VAT base (VAT-inclusive extraction applied)
+        vat = _get_vat_amount(row, config)
         geo = row.get("geo_region") or "UNKNOWN"
         act = row.get("activity_type") or "UNKNOWN"
         oss_cc = (row.get("oss_country") or row.get("card_country") or "").upper() if treatment == "OSS_EU" else ""
@@ -378,17 +420,18 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
     # Deductible IVA from manual entries (current quarter only) + invoices.
     # Casilla 29 = cuota (IVA amount); casilla 28 = its corresponding base.
-    result.box_29_cuota_soportado = round(
-        inv_iva_soportado
-        + _get_tax_entries_total(year, quarter, "IVA_SOPORTADO", db_conn, ytd=False),
-        2,
-    )
-    manual_iva = result.box_29_cuota_soportado - inv_iva_soportado
-    if manual_iva > 0:
-        manual_base = manual_iva / 0.21
-        result.box_28_base_soportado = round(inv_base_soportado + manual_base, 2)
+    # Not IVA-registered → no input VAT is deductible. Otherwise the prorrata
+    # (tax.vat_proration_percentage) scales the deductible cuota and its base
+    # (prorrata general — Art. 104 LIVA); 100% leaves both unchanged.
+    manual_iva = _get_tax_entries_total(year, quarter, "IVA_SOPORTADO", db_conn, ytd=False)
+    if not vat_registered:
+        result.box_29_cuota_soportado = 0.0
+        result.box_28_base_soportado = 0.0
     else:
-        result.box_28_base_soportado = round(inv_base_soportado, 2)
+        raw_iva_soportado = inv_iva_soportado + manual_iva
+        raw_base_soportado = inv_base_soportado + (manual_iva / 0.21 if manual_iva > 0 else 0.0)
+        result.box_29_cuota_soportado = round(raw_iva_soportado * proration, 2)
+        result.box_28_base_soportado = round(raw_base_soportado * proration, 2)
 
     # Round accumulations
     result.box_01_base = round(result.box_01_base, 2)
@@ -399,7 +442,8 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     result.export_base = round(result.export_base, 2)
 
     result.box_46_diferencia = round(result.box_03_cuota - result.box_29_cuota_soportado, 2)
-    result.box_48_resultado = result.box_46_diferencia  # simplified (100% proration)
+    # Prorrata is already applied to box_29 above, so box_48 = box_46 directly.
+    result.box_48_resultado = result.box_46_diferencia
 
     # --- Audit trail ---
     def _a(cell, label, formula, value, **inputs):
@@ -425,16 +469,20 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
            result.box_59_intracom_entregas,
            records=recs_eu_b2b),
         _a("box_28_base_soportado",
-           "Base IVA soportado (facturas + estimación 21% para entradas manuales)",
-           "SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21",
+           "Base IVA soportado (facturas + estimación 21% para entradas manuales, × prorrata)",
+           "(SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21) × prorrata",
            result.box_28_base_soportado,
-           inv_base_sum=round(inv_base_soportado, 2)),
+           inv_base_sum=round(inv_base_soportado, 2),
+           vat_registered=vat_registered, proration_pct=round(proration * 100, 2)),
         _a("box_29_cuota_soportado",
-           "IVA soportado deducible — todas las facturas recibidas del trimestre",
-           "SUM(iva_amount * deductible_pct/100) FROM invoices WHERE direction='in' AND quarter=Q "
-           "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='IVA_SOPORTADO' AND quarter=Q",
+           "IVA soportado deducible — facturas recibidas + entradas manuales (× prorrata)",
+           "(SUM(iva_amount * deductible_pct/100) FROM invoices WHERE direction='in' AND quarter=Q "
+           "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='IVA_SOPORTADO' AND quarter=Q) "
+           "× prorrata  [0 if not IVA-registered]",
            result.box_29_cuota_soportado,
            inv_iva_deductible=round(inv_iva_soportado, 2),
+           manual_iva=round(manual_iva, 2),
+           vat_registered=vat_registered, proration_pct=round(proration * 100, 2),
            records=recs_soportado),
         _a("box_46_diferencia",
            "Diferencia (IVA devengado − IVA deducible)",
@@ -443,9 +491,10 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
            box_03_cuota=result.box_03_cuota, box_29_cuota_soportado=result.box_29_cuota_soportado),
         _a("box_48_resultado",
            "Resultado a ingresar / devolver",
-           "= box_46_diferencia  [100% prorrata; no prior-period compensation applied]",
+           "= box_46_diferencia  [prorrata applied to box_29; no prior-period compensation applied]",
            result.box_48_resultado,
-           box_46_diferencia=result.box_46_diferencia),
+           box_46_diferencia=result.box_46_diferencia,
+           proration_pct=round(proration * 100, 2)),
         _a("oss_base",
            "Base OSS — servicios digitales B2C UE",
            "SUM(vat_base_eur) WHERE vat_treatment = 'OSS_EU'  [declarar por OSS, no en 303]",
@@ -465,13 +514,23 @@ def compute_modelo_303(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     return result
 
 
-def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo130Result:
-    """Compute Modelo 130 (quarterly IRPF advance) for the given quarter."""
+def compute_modelo_130(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo130Result:
+    """Compute Modelo 130 (quarterly IRPF advance) for the given quarter.
+
+    ``config`` drives the EU VAT-treatment overrides (via the shared derivation)
+    and the ``tax.regime`` gate on the 5% gastos de difícil justificación, which
+    only applies under *estimación directa simplificada*.
+    """
     result = Modelo130Result(year=year, quarter=quarter)
+    tax_cfg = _tax_settings(config)
+    regime = tax_cfg.get("regime", "estimacion_directa_simplificada")
+    gdj_eligible = regime == "estimacion_directa_simplificada"
     # Stripe income (transactions table)
     rows = _load_classified_ytd(year, quarter, db_conn)
     n_stripe_rows = len(rows)
-    stripe_income = sum(_get_vat_base(r) for r in rows)
+    stripe_income = sum(_get_vat_base(r, config) for r in rows)
 
     # Non-Stripe income: manually-issued invoices (direction='out')
     income_invs = _load_income_invoices_ytd(year, quarter, db_conn)
@@ -523,9 +582,9 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
 
     result.box_03_rendimiento = round(result.box_01_ingresos - result.box_02_gastos, 2)
 
-    # Gastos de difícil justificación: 5% of rendimiento neto previo, capped at €2,000/year
-    # Art. 30.2.4ª LIRPF — estimación directa simplificada
-    if result.box_03_rendimiento > 0:
+    # Gastos de difícil justificación: 5% of rendimiento neto previo, capped at €2,000/year.
+    # Art. 30.2.4ª LIRPF — applies ONLY under estimación directa simplificada.
+    if result.box_03_rendimiento > 0 and gdj_eligible:
         raw_gdj = result.box_03_rendimiento * 0.05
         result.gastos_dificil_justificacion = round(min(raw_gdj, 2000.0), 2)
         gdj_capped = raw_gdj > 2000.0
@@ -566,7 +625,7 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     # Mirrors the Quarter Report view the gestor uses.
     _stripe_agg: dict[tuple, dict] = {}
     for r in rows:
-        treatment = _get_vat_treatment(r)
+        treatment = _get_vat_treatment(r, config)
         geo = r.get("geo_region") or "UNKNOWN"
         act = r.get("activity_type") or "UNKNOWN"
         key = (geo, act, treatment)
@@ -574,7 +633,7 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
             _stripe_agg[key] = {"n": 0, "gross_eur": 0.0, "base_eur": 0.0}
         _stripe_agg[key]["n"] += 1
         _stripe_agg[key]["gross_eur"] = round(_stripe_agg[key]["gross_eur"] + _net_amount(r), 2)
-        _stripe_agg[key]["base_eur"] = round(_stripe_agg[key]["base_eur"] + _get_vat_base(r), 2)
+        _stripe_agg[key]["base_eur"] = round(_stripe_agg[key]["base_eur"] + _get_vat_base(r, config), 2)
 
     stripe_income_records = [
         {
@@ -642,10 +701,12 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
            box_01_ingresos=result.box_01_ingresos, box_02_gastos=result.box_02_gastos),
         _a("gastos_dificil_justificacion",
            "Gastos de difícil justificación (5%, máx €2.000/año)",
-           "min(box_03_rendimiento × 5%, 2000)  [Art. 30.2.4ª LIRPF — estimación directa simplificada]",
+           "min(box_03_rendimiento × 5%, 2000) if regime='estimacion_directa_simplificada' else 0  "
+           "[Art. 30.2.4ª LIRPF]",
            result.gastos_dificil_justificacion,
            box_03_rendimiento=result.box_03_rendimiento, rate=0.05, cap_eur=2000.0,
-           raw_5pct=round(raw_gdj, 2), cap_applied=gdj_capped),
+           raw_5pct=round(raw_gdj, 2), cap_applied=gdj_capped,
+           regime=regime, gdj_eligible=gdj_eligible),
         _a("rendimiento_neto",
            "Rendimiento neto (base de cálculo IRPF)",
            "box_03_rendimiento − gastos_dificil_justificacion",
@@ -689,14 +750,20 @@ def compute_modelo_130(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     return result
 
 
-def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> Modelo349Result:
-    """Compute Modelo 349 (intra-EU operations summary) for the given quarter."""
+def compute_modelo_349(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo349Result:
+    """Compute Modelo 349 (intra-EU operations summary) for the given quarter.
+
+    ``config`` is threaded through the VAT-treatment derivation so the EU
+    coaching/newsletter overrides decide which rows count as ``IVA_EU_B2B``.
+    """
     result = Modelo349Result(year=year, quarter=quarter)
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
     by_vat_id: dict[str, dict] = {}
     for row in rows:
-        treatment = _get_vat_treatment(row)
+        treatment = _get_vat_treatment(row, config)
         if treatment != "IVA_EU_B2B":
             continue
         vat_id = row.get("buyer_vat_id") or "UNKNOWN"
@@ -765,19 +832,36 @@ def compute_modelo_349(year: int, quarter: int, db_conn: sqlite3.Connection) -> 
     return result
 
 
-def compute_oss_return(year: int, quarter: int, db_conn: sqlite3.Connection) -> OSSReturnResult:
-    """Compute OSS quarterly return (B2C digital services to EU non-Spain customers)."""
+def compute_oss_return(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> OSSReturnResult:
+    """Compute OSS quarterly return (B2C digital services to EU non-Spain customers).
+
+    When ``tax.oss_registered`` is false the taxpayer is not enrolled in the One
+    Stop Shop, so no OSS return is produced (an audit note records why). Otherwise
+    ``config`` is threaded through the VAT-treatment derivation.
+    """
     result = OSSReturnResult(year=year, quarter=quarter)
+    if _tax_settings(config).get("oss_registered", True) is False:
+        result.audit = [AuditEntry(
+            model="OSS", year=year, quarter=quarter,
+            cell="oss_not_registered",
+            label="OSS no aplicable — no registrado en el régimen One Stop Shop",
+            formula="tax.oss_registered = false → no OSS return generated",
+            value=0.0,
+            inputs_json=json.dumps({"oss_registered": False}),
+        )]
+        return result
     rows = _load_classified_for_quarter(year, quarter, db_conn)
 
     by_country: dict[str, dict] = defaultdict(lambda: {"count": 0, "base": 0.0, "vat": 0.0})
     for row in rows:
-        treatment = _get_vat_treatment(row)
+        treatment = _get_vat_treatment(row, config)
         if treatment != "OSS_EU":
             continue
         cc = (row.get("oss_country") or row.get("card_country") or "UNKNOWN").upper()
-        base = _get_vat_base(row)
-        vat = _get_vat_amount(row)
+        base = _get_vat_base(row, config)
+        vat = _get_vat_amount(row, config)
         by_country[cc]["count"] += 1
         by_country[cc]["base"] += base
         by_country[cc]["vat"] += vat
@@ -1016,12 +1100,16 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
 
 
 def compute_and_persist_tax_snapshots(
-    year: int, quarter: int, db_conn: sqlite3.Connection,
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
 ) -> str:
     """Run all obligation engines for the selected period and persist JSON snapshots.
 
     Quarterly models (303, 130, OSS, 349) use ``quarter``; Modelo 347 is annual and is
     stored with ``quarter`` = ``TAX_SNAPSHOT_QUARTER_ANNUAL`` (0).
+
+    The app config is loaded once here and threaded through every engine so the
+    ``config.tax`` settings (EU VAT overrides, IVA/OSS registration, prorrata,
+    regime) drive the computation. Callers may pass an explicit ``config`` dict.
 
     Returns the shared ISO ``computed_at`` timestamp written on every snapshot row.
     """
@@ -1032,21 +1120,24 @@ def compute_and_persist_tax_snapshots(
     )
     from src.tax_snapshot_codec import encode_snapshot
 
+    if config is None:
+        config = load_app_config()
+
     computed_at = datetime.now().isoformat(timespec="seconds")
 
-    r303 = compute_modelo_303(year, quarter, db_conn)
+    r303 = compute_modelo_303(year, quarter, db_conn, config)
     upsert_tax_snapshot_conn(db_conn, year, quarter, "303", encode_snapshot("303", r303), computed_at)
     upsert_audit_entries_conn(db_conn, r303.audit, computed_at)
 
-    r130 = compute_modelo_130(year, quarter, db_conn)
+    r130 = compute_modelo_130(year, quarter, db_conn, config)
     upsert_tax_snapshot_conn(db_conn, year, quarter, "130", encode_snapshot("130", r130), computed_at)
     upsert_audit_entries_conn(db_conn, r130.audit, computed_at)
 
-    r_oss = compute_oss_return(year, quarter, db_conn)
+    r_oss = compute_oss_return(year, quarter, db_conn, config)
     upsert_tax_snapshot_conn(db_conn, year, quarter, "OSS", encode_snapshot("OSS", r_oss), computed_at)
     upsert_audit_entries_conn(db_conn, r_oss.audit, computed_at)
 
-    r349 = compute_modelo_349(year, quarter, db_conn)
+    r349 = compute_modelo_349(year, quarter, db_conn, config)
     upsert_tax_snapshot_conn(db_conn, year, quarter, "349", encode_snapshot("349", r349), computed_at)
     upsert_audit_entries_conn(db_conn, r349.audit, computed_at)
 

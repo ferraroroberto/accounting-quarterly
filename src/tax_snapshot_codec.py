@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from typing import Any
 
+from src.logger import get_logger
 from src.tax_models import (
     Modelo130Result,
     Modelo303Result,
@@ -16,12 +17,48 @@ from src.tax_models import (
     OSSReturnResult,
 )
 
+log = get_logger(__name__)
+
+# Pre-e08a3ff9 (#42) Modelo303Result field names -> current AEAT-casilla-matching
+# names. Snapshots persisted before that rename still carry these legacy keys in
+# ``payload_json`` and would otherwise raise a TypeError on decode.
+_MODELO303_LEGACY_RENAMES: dict[str, str] = {
+    "box_28_iva_soportado": "box_29_cuota_soportado",
+    "box_29_base_soportado": "box_28_base_soportado",
+}
+
 
 def _int_key_dict(d: dict[Any, Any]) -> dict[int, float]:
     out: dict[int, float] = {}
     for k, v in d.items():
         out[int(k)] = float(v)
     return out
+
+
+def _tolerant_construct(cls: type, data: dict[str, Any], legacy_renames: dict[str, str] | None = None) -> Any:
+    """Build a dataclass from stored snapshot data, tolerating legacy/unknown keys.
+
+    Applies ``legacy_renames`` first, then drops any remaining key that isn't a
+    field on ``cls`` (logging a warning) so a future field rename on a tax-engine
+    result dataclass can't hard-crash snapshot decoding the way ``box_28``/``box_29``
+    did after commit e08a3ff9.
+    """
+    data = dict(data)
+    for old_key, new_key in (legacy_renames or {}).items():
+        if old_key in data:
+            data[new_key] = data.pop(old_key)
+
+    known_fields = {f.name for f in fields(cls)}
+    unknown = sorted(set(data) - known_fields)
+    if unknown:
+        log.warning(
+            "⚠️ Dropping unknown legacy snapshot field(s) %s while decoding %s",
+            unknown, cls.__name__,
+        )
+        for key in unknown:
+            data.pop(key)
+
+    return cls(**data)
 
 
 def encode_snapshot(model: str, obj: Any) -> str:
@@ -39,9 +76,9 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
     """Restore a computation result object from stored JSON."""
     data = json.loads(payload_json)
     if model == "303":
-        return Modelo303Result(**data)
+        return _tolerant_construct(Modelo303Result, data, _MODELO303_LEGACY_RENAMES)
     if model == "130":
-        return Modelo130Result(**data)
+        return _tolerant_construct(Modelo130Result, data)
     if model == "OSS":
         rows = [OSSCountryRow(**r) for r in data.get("rows", [])]
         return OSSReturnResult(

@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import calendar
-import json
 import sqlite3
 from collections import defaultdict
 from datetime import date, datetime
+from functools import partial
 from typing import Optional
 
 from src.logger import get_logger
@@ -448,12 +448,7 @@ def compute_modelo_303(
     result.box_48_resultado = result.box_46_diferencia
 
     # --- Audit trail ---
-    def _a(cell, label, formula, value, **inputs):
-        return AuditEntry(
-            model="303", year=year, quarter=quarter,
-            cell=cell, label=label, formula=formula, value=value,
-            inputs_json=json.dumps(inputs),
-        )
+    _a = partial(AuditEntry.of, "303", year, quarter)
     result.audit = [
         _a("box_01_base",
            "Base imponible 21% (IVA devengado — Stripe + facturas emitidas España)",
@@ -617,12 +612,7 @@ def compute_modelo_130(
     )
 
     # --- Audit trail ---
-    def _a(cell, label, formula, value, **inputs):
-        return AuditEntry(
-            model="130", year=year, quarter=quarter,
-            cell=cell, label=label, formula=formula, value=value,
-            inputs_json=json.dumps(inputs),
-        )
+    _a = partial(AuditEntry.of, "130", year, quarter)
     # Build aggregated Stripe income records for audit trail (one per geo/activity bucket).
     # Mirrors the Quarter Report view the gestor uses.
     _stripe_agg: dict[tuple, dict] = {}
@@ -809,26 +799,23 @@ def compute_modelo_349(
         result.notes = "; ".join(warnings)
 
     # --- Audit trail ---
+    _a = partial(AuditEntry.of, "349", year, quarter)
     audit = []
     for r in result.rows:
-        audit.append(AuditEntry(
-            model="349", year=year, quarter=quarter,
-            cell=f"operator_{r.buyer_vat_id}",
-            label=f"Entregas intracomunitarias — {r.buyer_vat_id}",
-            formula="SUM(net_amount) for IVA_EU_B2B transactions grouped by buyer_vat_id",
-            value=r.total_amount,
-            inputs_json=json.dumps({"buyer_vat_id": r.buyer_vat_id, "buyer_name": r.buyer_name}),
+        audit.append(_a(
+            f"operator_{r.buyer_vat_id}",
+            f"Entregas intracomunitarias — {r.buyer_vat_id}",
+            "SUM(net_amount) for IVA_EU_B2B transactions grouped by buyer_vat_id",
+            r.total_amount,
+            buyer_vat_id=r.buyer_vat_id, buyer_name=r.buyer_name,
         ))
-    audit.append(AuditEntry(
-        model="349", year=year, quarter=quarter,
-        cell="total",
-        label="Total entregas intracomunitarias",
-        formula="SUM(total_amount) across all operators",
-        value=result.total,
-        inputs_json=json.dumps({
-            "operator_count": len(result.rows),
-            "negative_excluded": negative_excluded,
-        }),
+    audit.append(_a(
+        "total",
+        "Total entregas intracomunitarias",
+        "SUM(total_amount) across all operators",
+        result.total,
+        operator_count=len(result.rows),
+        negative_excluded=negative_excluded,
     ))
     result.audit = audit
     return result
@@ -844,14 +831,14 @@ def compute_oss_return(
     ``config`` is threaded through the VAT-treatment derivation.
     """
     result = OSSReturnResult(year=year, quarter=quarter)
+    _a = partial(AuditEntry.of, "OSS", year, quarter)
     if _tax_settings(config).get("oss_registered", True) is False:
-        result.audit = [AuditEntry(
-            model="OSS", year=year, quarter=quarter,
-            cell="oss_not_registered",
-            label="OSS no aplicable — no registrado en el régimen One Stop Shop",
-            formula="tax.oss_registered = false → no OSS return generated",
-            value=0.0,
-            inputs_json=json.dumps({"oss_registered": False}),
+        result.audit = [_a(
+            "oss_not_registered",
+            "OSS no aplicable — no registrado en el régimen One Stop Shop",
+            "tax.oss_registered = false → no OSS return generated",
+            0.0,
+            oss_registered=False,
         )]
         return result
     rows = _load_classified_for_quarter(year, quarter, db_conn)
@@ -887,41 +874,33 @@ def compute_oss_return(
     # --- Audit trail ---
     audit = []
     for r in result.rows:
-        audit.append(AuditEntry(
-            model="OSS", year=year, quarter=quarter,
-            cell=f"country_{r.country}_base",
-            label=f"OSS base — {r.country} ({int(r.vat_rate * 100)}%)",
-            formula="SUM(vat_base_eur) WHERE vat_treatment='OSS_EU' AND country=CC",
-            value=r.base_eur,
-            inputs_json=json.dumps({
-                "country": r.country, "vat_rate": r.vat_rate, "transactions": r.transactions,
-            }),
+        audit.append(_a(
+            f"country_{r.country}_base",
+            f"OSS base — {r.country} ({int(r.vat_rate * 100)}%)",
+            "SUM(vat_base_eur) WHERE vat_treatment='OSS_EU' AND country=CC",
+            r.base_eur,
+            country=r.country, vat_rate=r.vat_rate, transactions=r.transactions,
         ))
-        audit.append(AuditEntry(
-            model="OSS", year=year, quarter=quarter,
-            cell=f"country_{r.country}_vat",
-            label=f"OSS cuota — {r.country} ({int(r.vat_rate * 100)}%)",
-            formula=f"base_eur × {r.vat_rate}  [tasa país destino — OSS Reglamento (UE) 904/2010]",
-            value=r.vat_amount_eur,
-            inputs_json=json.dumps({
-                "country": r.country, "base_eur": r.base_eur, "vat_rate": r.vat_rate,
-            }),
+        audit.append(_a(
+            f"country_{r.country}_vat",
+            f"OSS cuota — {r.country} ({int(r.vat_rate * 100)}%)",
+            f"base_eur × {r.vat_rate}  [tasa país destino — OSS Reglamento (UE) 904/2010]",
+            r.vat_amount_eur,
+            country=r.country, base_eur=r.base_eur, vat_rate=r.vat_rate,
         ))
-    audit.append(AuditEntry(
-        model="OSS", year=year, quarter=quarter,
-        cell="total_base",
-        label="Base total OSS (todos los países)",
-        formula="SUM(base_eur) across all countries",
-        value=result.total_base,
-        inputs_json=json.dumps({"countries": len(result.rows), "transactions": result.total_transactions}),
+    audit.append(_a(
+        "total_base",
+        "Base total OSS (todos los países)",
+        "SUM(base_eur) across all countries",
+        result.total_base,
+        countries=len(result.rows), transactions=result.total_transactions,
     ))
-    audit.append(AuditEntry(
-        model="OSS", year=year, quarter=quarter,
-        cell="total_vat",
-        label="Cuota total OSS (todos los países)",
-        formula="SUM(vat_amount_eur) across all countries",
-        value=result.total_vat,
-        inputs_json=json.dumps({"total_base": result.total_base}),
+    audit.append(_a(
+        "total_vat",
+        "Cuota total OSS (todos los países)",
+        "SUM(vat_amount_eur) across all countries",
+        result.total_vat,
+        total_base=result.total_base,
     ))
     result.audit = audit
     return result
@@ -1001,31 +980,26 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
     result.rows.sort(key=lambda r: r.total_operations, reverse=True)
 
     # --- Audit trail ---
+    _a = partial(AuditEntry.of, "347", year, 0)
     audit = []
     for r in result.rows:
-        audit.append(AuditEntry(
-            model="347", year=year, quarter=0,
-            cell=f"counterparty_{r.counterparty_name[:30]}",
-            label=f"Operaciones con {r.counterparty_name}",
-            formula=f"SUM(net_amount) WHERE geo_region='SPAIN' AND email_meta='{r.counterparty_name}' — threshold ≥ €{result.threshold:,.2f}",
-            value=r.total_operations,
-            inputs_json=json.dumps({
-                "counterparty": r.counterparty_name,
-                "quarter_breakdown": r.quarter_breakdown,
-            }),
+        audit.append(_a(
+            f"counterparty_{r.counterparty_name[:30]}",
+            f"Operaciones con {r.counterparty_name}",
+            f"SUM(net_amount) WHERE geo_region='SPAIN' AND email_meta='{r.counterparty_name}' — threshold ≥ €{result.threshold:,.2f}",
+            r.total_operations,
+            counterparty=r.counterparty_name,
+            quarter_breakdown=r.quarter_breakdown,
         ))
-    audit.append(AuditEntry(
-        model="347", year=year, quarter=0,
-        cell="summary",
-        label="Resumen Modelo 347",
-        formula=f"Counterparties >= €{result.threshold:,.2f} threshold",
-        value=float(len(result.rows)),
-        inputs_json=json.dumps({
-            "total_counterparties_spain": total_counterparties,
-            "above_threshold": len(result.rows),
-            "below_threshold": below_threshold,
-            "threshold_eur": result.threshold,
-        }),
+    audit.append(_a(
+        "summary",
+        "Resumen Modelo 347",
+        f"Counterparties >= €{result.threshold:,.2f} threshold",
+        float(len(result.rows)),
+        total_counterparties_spain=total_counterparties,
+        above_threshold=len(result.rows),
+        below_threshold=below_threshold,
+        threshold_eur=result.threshold,
     ))
     result.audit = audit
     return result

@@ -160,3 +160,26 @@ class AuditEntry:
     formula: str          # text description of the formula/rule applied
     value: float          # computed value in EUR
     inputs_json: str = "" # JSON-serialised dict of named inputs for full traceability
+
+    @classmethod
+    def of(
+        cls,
+        model: str,
+        year: int,
+        quarter: int,
+        cell: str,
+        label: str,
+        formula: str,
+        value: float,
+        **inputs: Any,
+    ) -> "AuditEntry":
+        """Build an entry, JSON-serialising ``inputs`` into ``inputs_json``.
+
+        Single construction site for every ``compute_modelo_*`` function in
+        ``src/tax_engine.py`` — they all built the same shape by hand before.
+        """
+        return cls(
+            model=model, year=year, quarter=quarter,
+            cell=cell, label=label, formula=formula, value=value,
+            inputs_json=json.dumps(inputs),
+        )

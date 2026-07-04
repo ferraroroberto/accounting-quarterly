@@ -28,10 +28,10 @@ class TestRulesEngine:
 
     def test_load_missing_file_returns_defaults(self, tmp_path):
         import src.rules_engine as re_mod
-        re_mod._rules_cache = None  # clear cache from prior tests
+        re_mod._cache.clear()  # clear cache from prior tests
         rules = load_rules(tmp_path / "nonexistent.json")
         assert rules["activity_rules"] == []
-        re_mod._rules_cache = None  # reset for other tests
+        re_mod._cache.clear()  # reset for other tests
 
     def test_geographic_rules_structure(self, tmp_rules):
         rules = load_rules(tmp_rules)

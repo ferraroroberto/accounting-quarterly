@@ -1,0 +1,81 @@
+%% docs/architecture.mmd — this repo's own internal structure.
+%% Hand-authored, not generated — companion to the fleet-wide convention in
+%% ferraroroberto/fleet-config#256 (see fleet-config's own docs/architecture.mmd
+%% for the dogfood example). Update this diagram in the same PR as any
+%% material structural change (a module added/moved/renamed, a new external
+%% dependency, a new tab). Same anti-staleness contract as this repo's own
+%% `.fleet.toml` `description` field.
+
+flowchart TB
+  subgraph external["External services"]
+    STRIPE["Stripe API\ncharges, fees, card country"]
+    FRANKFURTER["Frankfurter API\nECB daily FX rates"]
+    HUB["local-llm-hub :8000\nGemini via Anthropic SDK (default OCR path)"]
+    ACCAPI["IntegraLOOP / BILOOP\nAccounting API"]
+  end
+
+  subgraph ingest["src/ — ingestion & core logic"]
+    STRIPECLIENT["stripe_client.py"]
+    FX["fx_rates.py"]
+    CLASSIFIER["classifier.py + rules_engine.py\nactivity/geo classification"]
+    OCR["invoice_ocr.py\nhub (default) or direct Gemini/Vertex fallback"]
+    ACCCLIENT["accounting_api_client.py"]
+    SOCSEC["social_security.py\nbank-export cuota import"]
+    DB["database.py\nSQLite read/write"]
+    SHARED["models.py · config.py · _json_store.py\nshared types + cached JSON config"]
+  end
+
+  subgraph taxcore["src/ — Spanish tax engine"]
+    VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
+    TAXENGINE["tax_engine.py\nModelo 303/130/349/347, OSS, calendar"]
+    SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
+    TAXVALIDATOR["tax_validator.py\ngestor-filed vs DB-computed"]
+  end
+
+  subgraph storage["data/accounting.db (SQLite)"]
+    DBFILE["transactions · fx_rates · invoices ·\nsocial_security_payments · quarterly_tax_entries ·\ntax_computation_snapshots · tax_audit_log"]
+  end
+
+  subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
+    LOADER["data_loader.py"]
+    REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
+    INVTABS["invoice_upload · invoice_ocr_tab · invoice_explorer"]
+    SSTAB["social_security_tab"]
+    TAXTABS["tax_obligations · tax_validation · tax_audit"]
+  end
+
+  subgraph tests["tests/ — pytest suite"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator"]
+  end
+
+  STRIPE --> STRIPECLIENT
+  FRANKFURTER --> FX
+  HUB --> OCR
+  ACCAPI --> ACCCLIENT
+
+  STRIPECLIENT --> CLASSIFIER --> DB
+  FX --> DB
+  OCR --> DB
+  SOCSEC --> DB
+  ACCCLIENT -.-> DB
+  DB --> DBFILE
+  SHARED -.-> STRIPECLIENT
+  SHARED -.-> CLASSIFIER
+  SHARED -.-> DB
+
+  DB --> VATRULES --> TAXENGINE
+  TAXENGINE --> SNAPSHOTCODEC --> DB
+  TAXVALIDATOR --> TAXENGINE
+
+  LOADER --> DB
+  LOADER --> CLASSIFIER
+  REPORTTABS --> LOADER
+  INVTABS --> OCR
+  INVTABS --> ACCCLIENT
+  SSTAB --> SOCSEC
+  TAXTABS --> TAXENGINE
+  TAXTABS --> TAXVALIDATOR
+  TAXTABS --> SNAPSHOTCODEC
+
+  TESTFILES -.->|exercise| ingest
+  TESTFILES -.->|exercise| taxcore

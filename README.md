@@ -543,8 +543,8 @@ Configured via `config.json` (`invoice_in_dir` / `invoice_out_dir`). Both accept
 
 | Direction | Default path | Accounting role |
 |-----------|-------------|-----------------|
-| **In** (expenses) | `E:/.../invoices in` | Facturas recibidas — IVA soportado |
-| **Out** (income) | `E:/.../invoices out/archive` | Facturas emitidas — IVA repercutido |
+| **In** (expenses) | `data/invoices/in` | Facturas recibidas — IVA soportado |
+| **Out** (income) | `data/invoices/out` | Facturas emitidas — IVA repercutido |
 
 Re-extraction is skipped automatically when the PDF has not changed (MD5 hash comparison).
 

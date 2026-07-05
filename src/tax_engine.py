@@ -912,7 +912,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
 
     # Stripe transactions from Spanish counterparties
     rows = db_conn.execute(
-        """SELECT email_meta, converted_amount, converted_amount_refunded, geo_region,
+        """SELECT email_meta, buyer_vat_id, converted_amount, converted_amount_refunded, geo_region,
                   strftime('%m', created_date) as month
            FROM transactions
            WHERE strftime('%Y', created_date) = ?
@@ -937,39 +937,54 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         (f"{year}-01-01", f"{year}-12-31"),
     ).fetchall()
 
-    by_email: dict[str, dict] = {}
+    # Both loops key by a normalised identity — NIF/VAT-ID first (the actual tax
+    # ID AEAT uses to identify a counterparty), falling back to a
+    # source-appropriate secondary identifier (email for Stripe, name for
+    # invoices) only when no NIF is on record. Mirrors compute_modelo_349's
+    # buyer_vat_id / client_nif keying so a counterparty known by the same NIF
+    # on both sides (a Stripe payment plus a manually-issued invoice)
+    # aggregates into one row instead of two separate below-threshold ones.
+    by_counterparty: dict[str, dict] = {}
     for row in rows:
+        nif = row["buyer_vat_id"] or ""
         email = row["email_meta"] or "UNKNOWN"
+        key = nif or email
         net = row["converted_amount"] - row["converted_amount_refunded"]
         month = int(row["month"])
         q = (month - 1) // 3 + 1
-        if email not in by_email:
-            by_email[email] = {"total": 0.0, "quarters": defaultdict(float), "nif": ""}
-        by_email[email]["total"] += net
-        by_email[email]["quarters"][q] += net
+        if key not in by_counterparty:
+            by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": email}
+        by_counterparty[key]["total"] += net
+        by_counterparty[key]["quarters"][q] += net
+        if not by_counterparty[key]["nif"] and nif:
+            by_counterparty[key]["nif"] = nif
 
     for row in inv_rows:
-        counterparty = row["counterparty"]
+        nif = row["client_nif"] or ""
+        name = row["counterparty"]
+        key = nif or name
         net = row["subtotal_eur"] or 0.0
         month_str = row["month"]
         if not month_str:
             continue
         month = int(month_str)
         q = (month - 1) // 3 + 1
-        if counterparty not in by_email:
-            by_email[counterparty] = {"total": 0.0, "quarters": defaultdict(float), "nif": row["client_nif"] or ""}
-        by_email[counterparty]["total"] += net
-        by_email[counterparty]["quarters"][q] += net
-        if not by_email[counterparty]["nif"] and row["client_nif"]:
-            by_email[counterparty]["nif"] = row["client_nif"]
+        if key not in by_counterparty:
+            by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": name}
+        by_counterparty[key]["total"] += net
+        by_counterparty[key]["quarters"][q] += net
+        if not by_counterparty[key]["nif"] and nif:
+            by_counterparty[key]["nif"] = nif
+        if by_counterparty[key]["name"] in ("", "UNKNOWN") and name not in ("", "UNKNOWN"):
+            by_counterparty[key]["name"] = name
 
-    total_counterparties = len(by_email)
+    total_counterparties = len(by_counterparty)
     below_threshold = 0
-    for email, info in by_email.items():
+    for key, info in by_counterparty.items():
         total = round(info["total"], 2)
         if total >= result.threshold:
             result.rows.append(Modelo347Row(
-                counterparty_name=email,
+                counterparty_name=info["name"] or key,
                 counterparty_nif=info.get("nif", ""),
                 total_operations=total,
                 quarter_breakdown={q: round(v, 2) for q, v in info["quarters"].items()},
@@ -983,12 +998,14 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
     _a = partial(AuditEntry.of, "347", year, 0)
     audit = []
     for r in result.rows:
+        identity = r.counterparty_nif or r.counterparty_name
         audit.append(_a(
             f"counterparty_{r.counterparty_name[:30]}",
             f"Operaciones con {r.counterparty_name}",
-            f"SUM(net_amount) WHERE geo_region='SPAIN' AND email_meta='{r.counterparty_name}' — threshold ≥ €{result.threshold:,.2f}",
+            f"SUM(net_amount) WHERE geo_region='SPAIN' AND counterparty(nif||email/name)='{identity}' — threshold ≥ €{result.threshold:,.2f}",
             r.total_operations,
             counterparty=r.counterparty_name,
+            counterparty_nif=r.counterparty_nif,
             quarter_breakdown=r.quarter_breakdown,
         ))
     audit.append(_a(

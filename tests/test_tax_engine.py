@@ -43,16 +43,48 @@ def _insert_tx(conn: sqlite3.Connection, **kwargs) -> None:
         vat_amount_eur=None,
         oss_country=None,
         buyer_vat_id=None,
+        email_meta=None,
     )
     defaults.update(kwargs)
     conn.execute(
         """INSERT OR REPLACE INTO transactions
            (id, created_date, converted_amount, converted_amount_refunded,
             description, fee, currency, activity_type, geo_region,
-            vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id)
+            vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id, email_meta)
            VALUES (:id, :created_date, :converted_amount, :converted_amount_refunded,
                    :description, :fee, :currency, :activity_type, :geo_region,
-                   :vat_treatment, :vat_base_eur, :vat_amount_eur, :oss_country, :buyer_vat_id)""",
+                   :vat_treatment, :vat_base_eur, :vat_amount_eur, :oss_country, :buyer_vat_id, :email_meta)""",
+        defaults,
+    )
+    conn.commit()
+
+
+def _insert_invoice(conn: sqlite3.Connection, **kwargs) -> None:
+    """Insert a minimal income (direction='out') invoice row for tax engine tests.
+
+    ``filename`` defaults to a value derived from ``id`` — the invoices table
+    has a ``UNIQUE(filename, direction)`` constraint, so two calls sharing a
+    literal default filename would silently replace each other via
+    ``INSERT OR REPLACE``.
+    """
+    defaults = dict(
+        id="inv_01",
+        filename=f"{kwargs.get('id', 'inv_01')}.pdf",
+        direction="out",
+        invoice_date="2025-01-15",
+        supply_date=None,
+        client_name=None,
+        client_nif=None,
+        subtotal_eur=100.0,
+        geo_region="SPAIN",
+    )
+    defaults.update(kwargs)
+    conn.execute(
+        """INSERT OR REPLACE INTO invoices
+           (id, filename, direction, invoice_date, supply_date,
+            client_name, client_nif, subtotal_eur, geo_region)
+           VALUES (:id, :filename, :direction, :invoice_date, :supply_date,
+                   :client_name, :client_nif, :subtotal_eur, :geo_region)""",
         defaults,
     )
     conn.commit()
@@ -237,6 +269,71 @@ class TestModelo349:
         assert len(result.rows) == 1
         assert result.rows[0].total_amount == pytest.approx(500.0)
         assert result.total == pytest.approx(500.0)
+
+
+class TestModelo347:
+    """Regression coverage for the by_email / by_counterparty keying bug
+    (accounting-quarterly#61): the Stripe loop and the invoice loop must key
+    by the same normalised identity (NIF/VAT-ID first, mirroring
+    compute_modelo_349's buyer_vat_id / client_nif pattern), or a single
+    real counterparty split across both channels silently escapes the
+    €3,005.06 threshold check.
+    """
+
+    def test_stripe_and_invoice_same_nif_consolidate_across_threshold(self, db_conn):
+        # Same counterparty (same NIF): one Stripe payment, one manually-issued
+        # invoice. Individually each is below the €3,005.06 threshold; only
+        # combined do they cross it — this is exactly the scenario the bug
+        # report describes.
+        _insert_tx(db_conn, id="t1", created_date="2025-02-01T10:00:00",
+                   converted_amount=2000.0, geo_region="SPAIN",
+                   activity_type="COACHING", buyer_vat_id="12345678Z")
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-05-01",
+                         client_name="Juan Perez", client_nif="12345678Z",
+                         subtotal_eur=1500.0)
+        result = compute_modelo_347(2025, db_conn)
+        assert len(result.rows) == 1
+        assert result.rows[0].counterparty_nif == "12345678Z"
+        assert result.rows[0].counterparty_name == "Juan Perez"
+        assert result.rows[0].total_operations == pytest.approx(3500.0)
+        assert sum(result.rows[0].quarter_breakdown.values()) == pytest.approx(3500.0)
+
+    def test_no_shared_nif_keeps_counterparties_separate(self, db_conn):
+        # No NIF on either side — a Stripe payer (keyed by email) and an
+        # invoice-only client (keyed by name) must NOT be merged just because
+        # neither has a NIF on record. Guards against over-correcting into a
+        # single-"UNKNOWN"-bucket regression.
+        _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
+                   converted_amount=4000.0, geo_region="SPAIN",
+                   activity_type="COACHING", email_meta="alice@example.com")
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-03-01",
+                         client_name="Bob Ltd", subtotal_eur=4000.0)
+        result = compute_modelo_347(2025, db_conn)
+        assert len(result.rows) == 2
+        totals = sorted(r.total_operations for r in result.rows)
+        assert totals == [pytest.approx(4000.0), pytest.approx(4000.0)]
+
+    def test_invoice_nif_consolidates_despite_name_spelling_drift(self, db_conn):
+        # Two invoices for the same NIF but slightly different client_name
+        # spellings must still consolidate into one row (NIF is the identity,
+        # not the free-text name).
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-01-15",
+                         client_name="Acme SL", client_nif="B87654321",
+                         subtotal_eur=1600.0)
+        _insert_invoice(db_conn, id="inv2", invoice_date="2025-04-15",
+                         client_name="ACME S.L.", client_nif="B87654321",
+                         subtotal_eur=1600.0)
+        result = compute_modelo_347(2025, db_conn)
+        assert len(result.rows) == 1
+        assert result.rows[0].counterparty_nif == "B87654321"
+        assert result.rows[0].total_operations == pytest.approx(3200.0)
+
+    def test_below_threshold_counterparty_excluded(self, db_conn):
+        _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
+                   converted_amount=500.0, geo_region="SPAIN",
+                   activity_type="COACHING", email_meta="small@example.com")
+        result = compute_modelo_347(2025, db_conn)
+        assert result.rows == []
 
 
 class TestConfigDrivenTaxSettings:

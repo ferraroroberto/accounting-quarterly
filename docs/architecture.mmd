@@ -48,6 +48,10 @@ flowchart TB
     TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator"]
   end
 
+  subgraph scripts["scripts/ — operational tooling"]
+    CLOSEQ["close_quarter.py\ninvoice sweep + Stripe fetch + Excel report\n(driven by /close-quarter skill, outputs to tmp/, git-ignored)"]
+  end
+
   STRIPE --> STRIPECLIENT
   FRANKFURTER --> FX
   HUB --> OCR
@@ -79,3 +83,8 @@ flowchart TB
 
   TESTFILES -.->|exercise| ingest
   TESTFILES -.->|exercise| taxcore
+
+  CLOSEQ --> STRIPECLIENT
+  CLOSEQ --> CLASSIFIER
+  CLOSEQ --> LOADER
+  CLOSEQ --> DB

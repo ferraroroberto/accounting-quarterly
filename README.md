@@ -77,6 +77,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 ├── config.json.example
 ├── requirements.txt
 ├── launch_app.bat                 # Windows launch shortcut
+├── scripts/
+│   └── close_quarter.py           # Deterministic quarterly-close helper (see "Closing a Quarter")
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
 │   ├── config.py                  # Load/save config.json
@@ -130,8 +132,11 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │       └── out/                   # Invoices produced (PDFs)
 ├── tmp/
 │   ├── social_security_bank_export.xlsx  # Bank export for SS cuotas (git-ignored, configurable)
-│   └── validation/
-│       └── validation.yaml        # Gestor-filed AEAT reference data (git-ignored)
+│   ├── validation/
+│   │   └── validation.yaml        # Gestor-filed AEAT reference data (git-ignored)
+│   └── close_quarter/             # Output of scripts/close_quarter.py (git-ignored)
+│       ├── invoice_copy_log.json  # Cumulative "already swept" invoice manifest
+│       └── <year>_Q<quarter>/     # Swept invoices + Stripe_Report_Q<quarter>_<year>.xlsx
 └── logs/                          # Rotating daily log files
 ```
 
@@ -226,6 +231,25 @@ Required permissions for restricted keys (`rk_live_...`):
 - **Read balance transactions** — fee details
 
 The dashboard includes a connection tester and permission checker under **Configuration → Stripe API**.
+
+---
+
+## Closing a Quarter
+
+`scripts/close_quarter.py` is the deterministic backbone for the recurring quarterly-close chore — invoked interactively via the `/close-quarter` Claude Code skill (`.claude/skills/close-quarter/`), which guides you through it step by step and pauses for confirmation/overrides at the points that need judgement. It can also be run by hand:
+
+```bash
+.venv/Scripts/python.exe scripts/close_quarter.py sweep [--year Y --quarter Q]         # copy new invoice PDFs
+.venv/Scripts/python.exe scripts/close_quarter.py stripe-check [--days N]              # read-only API smoke test
+.venv/Scripts/python.exe scripts/close_quarter.py stripe-fetch --year Y --quarter Q    # fetch + classify + persist
+.venv/Scripts/python.exe scripts/close_quarter.py add-override "<key>" REGION [--type email|name]
+.venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q          # regenerate the Excel report
+```
+
+- **`sweep`** diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
+- **`stripe-fetch`** flags transactions classified by a *default* geo rule (no client-specific override matched) so they can be double-checked before the report goes out.
+- **`add-override`** appends to `classification_rules.json`'s `geographic_overrides` / `email_overrides` — the same mechanism as the Transaction Browser tab's "Add Geographic Override" form.
+- All output lives under `tmp/close_quarter/` (git-ignored) — nothing is uploaded or sent anywhere by this script.
 
 ---
 

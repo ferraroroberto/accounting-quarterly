@@ -1,18 +1,17 @@
 ---
 name: close-quarter
-description: Guided quarterly close for the Stripe accounting dashboard — sweeps new invoice PDFs, verifies the Stripe import, fetches + classifies the quarter's transactions, walks through geo/activity overrides interactively, then regenerates the final Excel report. All outputs land in tmp/close_quarter/<year>_Q<quarter>/ (git-ignored) — nothing is sent or uploaded anywhere by this skill. Use for "/close-quarter", "close the quarter", "run the quarterly sweep", "prepare invoices for the accountant", "rerun the sweep".
+description: Guided quarterly close for the Stripe accounting dashboard — sweep invoice PDFs, verify the Stripe import, fetch and classify transactions, walk geo/activity overrides interactively, regenerate the Excel report. Outputs land in git-ignored tmp/close_quarter/<year>_Q<quarter>/; nothing is sent or uploaded. Use for "/close-quarter", "close the quarter", "run the quarterly sweep", "prepare invoices for the accountant", "rerun the sweep".
 ---
 
 # close-quarter
 
 **Goal:** walk the user through closing a Stripe accounting quarter, reusing
 the deterministic helper at `scripts/close_quarter.py` for every mechanical
-step, and pausing for the user's judgement at the points that actually need
-it (unreviewed invoices, ambiguous geo classification). Never do the
-mechanical steps by hand (inline Python, manually editing
-`classification_rules.json`) when the script already has a subcommand for it
-— the point of this skill is that the same procedure runs the same way every
-month.
+step, and pausing for the user's judgement where it is actually needed
+(unreviewed invoices, ambiguous geo classification). Never do a mechanical
+step by hand (inline Python, manually editing `classification_rules.json`)
+when the script already has a subcommand for it — the point of this skill is
+that the same procedure runs the same way every month.
 
 All commands run from the repo root with the project venv:
 `.venv/Scripts/python.exe scripts/close_quarter.py <subcommand> ...`

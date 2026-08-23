@@ -27,6 +27,8 @@ __pycache__
 
 # ── SQLite database ─────────────────────────────────────────────────────────────
 *.db
+*.db-shm
+*.db-wal
 
 # ── Secrets and local configuration ───────────────────────────────────────────
 .env

@@ -231,6 +231,12 @@ def validate_modelo_390(
     filing = _find_filing(filings, "390", year, None)
     period = f"{year} Annual"
 
+    if filing is None:
+        return ModelValidationResult(
+            model="390", period=period, filed_date="—",
+            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
+        )
+
     config = load_app_config()
     # Aggregate all 4 quarters
     agg = dict(base_21=0.0, cuota_21=0.0, intracom=0.0, export=0.0,
@@ -259,12 +265,6 @@ def validate_modelo_390(
         m130_filing.get("values", {}).get("01_ingresos_ytd")
         if m130_filing else None
     )
-
-    if filing is None:
-        return ModelValidationResult(
-            model="390", period=period, filed_date="—",
-            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
-        )
 
     v = filing.get("values", {})
     result = ModelValidationResult(

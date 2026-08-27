@@ -12,14 +12,24 @@ from src.database import get_invoice_stats, get_latest_stripe_sync_at, get_trans
 from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
 from src.social_security import get_ss_count
 
-# Initialise database and FX table on startup
-init_db()
-init_fx_table()
+
+# ── One-shot startup initialisation ─────────────────────────────────────────
+# Streamlit re-executes the whole script on every widget interaction. Without
+# @st.cache_resource this schema setup (executescript, PRAGMA passes, and
+# backfills) would replay on every rerender instead of once per session.
+
+@st.cache_resource(show_spinner=False)
+def _init_app() -> None:
+    init_db()
+    init_fx_table()
+
+
+_init_app()
 
 
 # ── Cached sidebar stats (5-minute TTL) ─────────────────────────────────────
 # These functions run on every Streamlit re-render (every widget interaction).
-# Caching them avoids 5 DB round-trips per render.
+# Caching them avoids 6 DB round-trips per render.
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _sidebar_stats() -> dict:
@@ -29,6 +39,7 @@ def _sidebar_stats() -> dict:
         "fx_count": get_rate_count(),
         "fx_last_sync": get_latest_fx_sync_at(),
         "inv_stats": get_invoice_stats(),
+        "ss_count": get_ss_count(),
     }
 
 st.set_page_config(
@@ -73,8 +84,7 @@ with st.sidebar:
 
     st.markdown("**Seguridad Social** `Bank export`")
     st.caption("SS cuota payments imported from bank account exports.")
-    _ss_count = get_ss_count()
-    st.caption(f"SS payments stored: {_ss_count}")
+    st.caption(f"SS payments stored: {_stats['ss_count']}")
 
 # --- Main content: horizontal tabs ---
 (tab_welcome, tab_report, tab_browser, tab_history,

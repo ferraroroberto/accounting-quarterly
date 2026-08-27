@@ -4,7 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 
-def render():
+def render() -> None:
     """Render the Welcome tab."""
     st.title("Stripe Accounting Dashboard")
 

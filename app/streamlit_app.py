@@ -27,6 +27,14 @@ def _init_app() -> None:
 _init_app()
 
 
+st.set_page_config(
+    page_title="Stripe Accounting Dashboard",
+    page_icon="S",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
 # ── Cached sidebar stats (5-minute TTL) ─────────────────────────────────────
 # These functions run on every Streamlit re-render (every widget interaction).
 # Caching them avoids 6 DB round-trips per render.
@@ -41,13 +49,6 @@ def _sidebar_stats() -> dict:
         "inv_stats": get_invoice_stats(),
         "ss_count": get_ss_count(),
     }
-
-st.set_page_config(
-    page_title="Stripe Accounting Dashboard",
-    page_icon="S",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 # --- Sidebar: project description only ---
 with st.sidebar:

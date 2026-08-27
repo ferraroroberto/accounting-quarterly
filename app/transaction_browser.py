@@ -16,7 +16,7 @@ from src.models import ClassifiedPayment
 from src.rules_engine import load_rules, save_rules
 
 
-def render():
+def render() -> None:
     """Render the Transaction Browser tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
@@ -223,7 +223,7 @@ def render():
         override_key = oc1.text_input("Client name / email / keyword", help="Substring match applied to description or email")
         override_region = oc2.selectbox("Region", ["SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU"])
         override_type = oc3.selectbox("Match on", ["Name/Description", "Email"])
-        submitted = st.form_submit_button("Add Override")
+        submitted = st.form_submit_button("Add Override", key="add_override_submit")
 
         if submitted and override_key.strip():
             rules = load_rules()

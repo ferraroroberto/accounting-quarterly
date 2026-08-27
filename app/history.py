@@ -15,7 +15,7 @@ from src.database import get_transaction_date_bounds
 from src.excel_exporter import create_excel_report, generate_report_filename
 
 
-def render():
+def render() -> None:
     """Render the History & Charts tab."""
     current_year = datetime.now().year
     min_tx_dt, _ = get_transaction_date_bounds()

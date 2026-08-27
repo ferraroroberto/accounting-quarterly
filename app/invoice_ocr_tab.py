@@ -412,4 +412,5 @@ def render() -> None:
                     data=csv,
                     file_name="invoices_extracted.csv",
                     mime="text/csv",
+                    key="inv_ocr_download_csv",
                 )

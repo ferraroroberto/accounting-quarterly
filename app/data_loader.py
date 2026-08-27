@@ -36,16 +36,12 @@ def quarter_dates(year: int, quarter: int) -> tuple[datetime, datetime]:
 def load_payments_for_period_api(
     start_date: datetime,
     end_date: datetime,
-    *,
-    force_refresh_token: Optional[str] = None,
 ) -> list[Payment]:
     """Load payments from Stripe API.
 
-    This function is intentionally not Streamlit-cached. Pass a unique
-    `force_refresh_token` (e.g. an ISO timestamp) to make the call-site intent explicit
-    when you want to guarantee a fresh API fetch.
+    This function is intentionally not Streamlit-cached — every call hits the
+    API directly.
     """
-    _ = force_refresh_token  # explicit cache-busting token (not used directly here)
     return fetch_charges(start_date, end_date)
 
 
@@ -88,7 +84,6 @@ def get_classified_for_period(
     end_date: Optional[datetime] = None,
     *,
     input_mode: Optional[str] = None,
-    force_refresh_token: Optional[str] = None,
 ) -> list[ClassifiedPayment]:
     mode = (input_mode or "api").lower()
 
@@ -104,11 +99,7 @@ def get_classified_for_period(
         return load_classified_payments(start_date, end_date)
 
     # API mode: fetch fresh data from Stripe, classify, and persist.
-    payments = load_payments_for_period_api(
-        start_date,
-        end_date,
-        force_refresh_token=force_refresh_token,
-    )
+    payments = load_payments_for_period_api(start_date, end_date)
     payments = apply_fx_conversion(payments)
     upsert_payments(payments, source="api")
 

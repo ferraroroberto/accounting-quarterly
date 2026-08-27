@@ -57,7 +57,6 @@ def render():
                     start_dt,
                     end_dt,
                     input_mode="api",
-                    force_refresh_token=datetime.now().isoformat(timespec="seconds"),
                 )
             else:
                 payments = get_classified_for_period(year, quarter, start_dt, end_dt, input_mode="db")

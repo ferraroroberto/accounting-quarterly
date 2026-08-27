@@ -12,8 +12,6 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-_DB_PATH = Path(__file__).parent.parent / "data" / "accounting.db"
-
 
 # ---------------------------------------------------------------------------
 # Excel / CSV import helpers
@@ -181,39 +179,6 @@ def get_ss_payments(
         return [dict(r) for r in rows]
     finally:
         conn.close()
-
-
-def get_ss_total_for_period(
-    start_date: str,
-    end_date: str,
-    db_path: Optional[str | Path] = None,
-) -> float:
-    """Return the total SS amount paid within the given date range."""
-    conn = get_connection(db_path)
-    try:
-        row = conn.execute(
-            """SELECT COALESCE(SUM(amount_eur), 0) AS total
-               FROM social_security_payments
-               WHERE payment_date >= ? AND payment_date <= ?""",
-            (start_date, end_date),
-        ).fetchone()
-        return float(row["total"]) if row else 0.0
-    finally:
-        conn.close()
-
-
-def get_ss_total_ytd(
-    year: int,
-    quarter: int,
-    db_path: Optional[str | Path] = None,
-) -> float:
-    """Return cumulative SS total from Jan 1 through end of given quarter."""
-    import calendar
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    start = f"{year}-01-01"
-    end = f"{year}-{month_end:02d}-{last_day:02d}"
-    return get_ss_total_for_period(start, end, db_path)
 
 
 def get_ss_count(db_path: Optional[str | Path] = None) -> int:

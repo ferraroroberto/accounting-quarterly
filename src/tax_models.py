@@ -1,4 +1,4 @@
-"""Pydantic models for Spanish tax obligation computations."""
+"""Dataclasses for Spanish tax obligation computations."""
 from __future__ import annotations
 
 import json
@@ -88,7 +88,6 @@ class Modelo349Row:
     buyer_name: str
     buyer_vat_id: str
     total_amount: float
-    quarter_breakdown: dict[int, float] = field(default_factory=dict)
 
 
 @dataclass

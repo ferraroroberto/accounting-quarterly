@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
-from src.database import get_connection, load_audit_entries
+from src.database import load_audit_entries
 
 _MODEL_LABELS = {
     "303": "Modelo 303 — IVA Trimestral",
@@ -156,7 +157,9 @@ def render() -> None:
 
     col_year, col_quarter, col_model = st.columns([1, 1, 2])
     with col_year:
-        year = st.number_input("Year", min_value=2020, max_value=2030, value=2025, step=1, key="audit_year")
+        year = st.number_input(
+            "Year", min_value=2020, max_value=2030, value=date.today().year, step=1, key="audit_year"
+        )
     with col_quarter:
         quarter = st.selectbox(
             "Quarter",

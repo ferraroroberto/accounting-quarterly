@@ -147,7 +147,6 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> None:
     payments = get_classified_for_period(
         args.year, args.quarter, start, end,
         input_mode="api",
-        force_refresh_token=datetime.now().isoformat(),
     )
     grand = calculate_grand_totals(payments)
     counts = get_transaction_count(payments)

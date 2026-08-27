@@ -30,7 +30,6 @@ def render():
             all_quarters.append((y, q))
 
     def _load_history(*, mode: str) -> None:
-        force_token = datetime.now().isoformat(timespec="seconds") if mode == "api" else None
         progress = st.progress(0, text="Loading quarters...")
         history = {}
         for i, (y, q) in enumerate(all_quarters):
@@ -43,7 +42,6 @@ def render():
                     s,
                     e,
                     input_mode=mode,
-                    force_refresh_token=force_token,
                 )
                 grand = calculate_grand_totals(payments)
                 regional = calculate_regional_totals(payments)

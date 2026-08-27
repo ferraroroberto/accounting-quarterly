@@ -81,6 +81,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   └── close_quarter.py           # Deterministic quarterly-close helper (see "Closing a Quarter")
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
+│   ├── _json_store.py             # Shared cached-JSON store backing config.py and rules_engine.py
 │   ├── config.py                  # Load/save config.json
 │   ├── rules_engine.py            # Load/save classification_rules.json
 │   ├── classifier.py              # Activity, geographic and VAT classification
@@ -122,7 +123,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_fx_rates.py
 │   ├── test_rules_engine.py
 │   ├── test_aggregator.py
-│   └── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   └── test_tax_validator.py      # Gestor-filed vs DB-computed validation
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports

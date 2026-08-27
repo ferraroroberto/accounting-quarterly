@@ -23,6 +23,7 @@ flowchart TB
     SOCSEC["social_security.py\nbank-export cuota import"]
     DB["database.py\nSQLite read/write"]
     SHARED["models.py · config.py · _json_store.py\nshared types + cached JSON config"]
+    AGGEXPORT["aggregator.py + excel_exporter.py\nmonthly aggregation, regional totals + Excel report"]
   end
 
   subgraph taxcore["src/ — Spanish tax engine"]
@@ -74,6 +75,7 @@ flowchart TB
   LOADER --> DB
   LOADER --> CLASSIFIER
   REPORTTABS --> LOADER
+  REPORTTABS --> AGGEXPORT
   INVTABS --> OCR
   INVTABS --> ACCCLIENT
   SSTAB --> SOCSEC
@@ -88,3 +90,4 @@ flowchart TB
   CLOSEQ --> CLASSIFIER
   CLOSEQ --> LOADER
   CLOSEQ --> DB
+  CLOSEQ --> AGGEXPORT

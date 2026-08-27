@@ -16,10 +16,13 @@ import streamlit as st
 
 from src.classifier import classify_batch
 from src.fx_rates import convert_to_eur, init_fx_table
+from src.logger import get_logger
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
 from src.database import load_classified_payments, upsert_classified, upsert_payments
 from src.stripe_client import fetch_charges
+
+log = get_logger(__name__)
 
 
 QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
@@ -107,9 +110,11 @@ def get_classified_for_period(
     # Persist classification back to DB (best-effort).
     try:
         upsert_classified(classified)
-    except Exception:
-        # UI can still function even if DB update fails (e.g. readonly file)
-        pass
+    except Exception as exc:
+        # UI can still function even if DB update fails (e.g. readonly file),
+        # but a silent failure here leaves the next "db" load with stale or
+        # unclassified rows, so it must be visible.
+        log.warning("⚠️ Could not persist classifications: %s", exc)
     return classified
 
 

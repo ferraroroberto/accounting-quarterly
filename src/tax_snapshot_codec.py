@@ -111,15 +111,11 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
     if model == "349":
         rows_out: list[Modelo349Row] = []
         for r in data.get("rows", []):
-            qb = r.get("quarter_breakdown") or {}
-            if qb and isinstance(next(iter(qb.keys()), None), str):
-                qb = _int_key_dict(qb)
             rows_out.append(
                 Modelo349Row(
                     buyer_name=r["buyer_name"],
                     buyer_vat_id=r["buyer_vat_id"],
                     total_amount=float(r["total_amount"]),
-                    quarter_breakdown=qb,
                 )
             )
         return Modelo349Result(

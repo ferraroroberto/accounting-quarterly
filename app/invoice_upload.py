@@ -117,7 +117,7 @@ def _render_upload_panel(
         )
 
 
-def render():
+def render() -> None:
     """Render the Invoice Upload tab."""
     cfg = load_config()
     app_cfg = cfg.get("app", {})

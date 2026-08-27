@@ -263,8 +263,12 @@ def _render_manual_entries(year: int, quarter: int) -> None:
         entry_type = col1.selectbox(
             "Type",
             ["IVA_SOPORTADO", "GASTOS_DEDUCIBLES", "RETENCIONES_SOPORTADAS", "OTHER"],
+            key=f"add_entry_type_{year}_{quarter}",
         )
-        amount = col2.number_input("Amount (€)", min_value=0.0, step=0.01, format="%.2f")
+        amount = col2.number_input(
+            "Amount (€)", min_value=0.0, step=0.01, format="%.2f",
+            key=f"add_entry_amount_{year}_{quarter}",
+        )
         description = st.text_input("Description", key=f"add_entry_desc_{year}_{quarter}")
         notes = st.text_area("Notes", height=70, key=f"add_entry_notes_{year}_{quarter}")
         if st.form_submit_button("Add Entry", key=f"add_entry_submit_{year}_{quarter}"):
@@ -326,7 +330,8 @@ def _render_oss_return(year: int, quarter: int, bundle: dict[str, tuple[Any, str
         for r in result.rows
     ]).to_csv(index=False)
     st.download_button("Export OSS Return CSV", data=csv_data,
-                       file_name=f"oss_return_{year}_Q{quarter}.csv", mime="text/csv")
+                       file_name=f"oss_return_{year}_Q{quarter}.csv", mime="text/csv",
+                       key=f"oss_csv_download_{year}_{quarter}")
 
     _save_filing_button("OSS", year, quarter, result.total_vat)
 

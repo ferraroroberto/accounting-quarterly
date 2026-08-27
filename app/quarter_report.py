@@ -20,7 +20,7 @@ from src.classifier import validate_classifications
 from src.excel_exporter import create_excel_report, generate_report_filename
 
 
-def render():
+def render() -> None:
     """Render the Quarter Report tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year

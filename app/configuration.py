@@ -16,7 +16,7 @@ from src.rules_engine import load_rules, save_rules
 from src.stripe_client import check_permissions, test_connection
 
 
-def render():
+def render() -> None:
     """Render the Configuration tab."""
     cfg = load_config()
     rules = load_rules()

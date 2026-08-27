@@ -15,7 +15,7 @@ from src.fx_rates import (
 )
 
 
-def render():
+def render() -> None:
     """Render the Currency tab."""
 
     st.subheader("Exchange Rate Management")

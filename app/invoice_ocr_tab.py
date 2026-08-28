@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
-ROOT = Path(__file__).parent.parent
 
 from src.config import load_config
 from src.database import (
@@ -20,48 +17,36 @@ from src.database import (
     get_invoices,
     upsert_invoice,
 )
+from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
 
 log = get_logger(__name__)
-
-
-def _resolve_dir(directory: str) -> Path:
-    p = Path(directory)
-    return p if p.is_absolute() else ROOT / directory
-
-
-def _scan_pdfs(directory: str) -> list[str]:
-    dir_path = _resolve_dir(directory)
-    if not dir_path.exists():
-        return []
-    # Scan recursively; return paths relative to the directory root
-    return sorted(str(f.relative_to(dir_path)) for f in dir_path.rglob("*.pdf"))
 
 
 def _direction_label(direction: str) -> str:
     return "Expense (In)" if direction == "in" else "Income (Out)"
 
 
-def _compute_hash(filename: str, invoice_dir: str) -> str:
+def _compute_hash(filename: str, direction: str) -> str:
     import hashlib
-    pdf_path = _resolve_dir(invoice_dir) / filename
+    pdf_path = resolve_invoice_dir(direction) / filename
     return hashlib.md5(pdf_path.read_bytes()).hexdigest()
 
 
-def _needs_extraction(filename: str, direction: str, invoice_dir: str) -> bool:
+def _needs_extraction(filename: str, direction: str) -> bool:
     """Return True if the file has not been extracted yet or the PDF has changed."""
     stored_hash = get_invoice_hash(filename, direction)
     if stored_hash is None:
         return True
-    current_hash = _compute_hash(filename, invoice_dir)
+    current_hash = _compute_hash(filename, direction)
     return current_hash != stored_hash
 
 
-def _extract_and_save(filename: str, direction: str, invoice_dir: str) -> dict:
+def _extract_and_save(filename: str, direction: str) -> dict:
     """Run extraction via the configured OCR backend and persist to DB. Returns the extracted data dict."""
     from src.invoice_ocr import extract_invoice
 
-    pdf_path = _resolve_dir(invoice_dir) / filename
+    pdf_path = resolve_invoice_dir(direction) / filename
     data = extract_invoice(pdf_path)
 
     record = {
@@ -112,7 +97,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
     st.subheader(label)
     st.caption(f"Directory: `{invoice_dir}`")
 
-    all_files = _scan_pdfs(invoice_dir)
+    all_files = [str(p.relative_to(resolve_invoice_dir(direction))) for p in scan_invoice_pdfs(direction)]
     if not all_files:
         st.info(f"No PDF files found in `{invoice_dir}`.")
         return
@@ -121,7 +106,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
     col_a, col_b = st.columns([1, 3])
     with col_a:
         if st.button(f"Extract new/changed ({direction})", key=f"extract_all_{direction}"):
-            to_process = [f for f in all_files if _needs_extraction(f, direction, invoice_dir)]
+            to_process = [f for f in all_files if _needs_extraction(f, direction)]
             if not to_process:
                 st.success("All files are already up to date (no changes detected).")
             else:
@@ -129,7 +114,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 errors: list[str] = []
                 for i, fname in enumerate(to_process):
                     try:
-                        _extract_and_save(fname, direction, invoice_dir)
+                        _extract_and_save(fname, direction)
                     except Exception as exc:
                         log.error("Extraction failed for %s: %s", fname, exc)
                         errors.append(f"{fname}: {exc}")
@@ -143,7 +128,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 st.rerun()
 
     with col_b:
-        pending = sum(1 for f in all_files if _needs_extraction(f, direction, invoice_dir))
+        pending = sum(1 for f in all_files if _needs_extraction(f, direction))
         st.caption(f"{len(all_files)} PDF(s) found · {pending} pending extraction")
 
     st.markdown("---")
@@ -161,7 +146,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 if st.button("Extract / Re-extract", key=f"extract_{direction}_{fname}"):
                     with st.spinner(f"Extracting {fname}…"):
                         try:
-                            record = _extract_and_save(fname, direction, invoice_dir)
+                            record = _extract_and_save(fname, direction)
                             st.success("Extracted successfully.")
                             st.rerun()
                         except Exception as exc:

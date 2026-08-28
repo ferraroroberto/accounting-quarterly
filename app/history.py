@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.data_loader import get_classified_for_period, quarter_dates
+from app.data_loader import first_data_year, get_classified_for_period, quarter_dates
 from src.aggregator import calculate_grand_totals, calculate_regional_totals, get_transaction_count
 from src.database import get_transaction_date_bounds
 from src.excel_exporter import create_excel_report, generate_report_filename
@@ -19,7 +19,7 @@ def render() -> None:
     """Render the History & Charts tab."""
     current_year = datetime.now().year
     min_tx_dt, _ = get_transaction_date_bounds()
-    first_year = min_tx_dt.year if min_tx_dt else 2023
+    first_year = first_data_year(min_tx_dt)
     first_quarter = (min_tx_dt.month - 1) // 3 + 1 if min_tx_dt else 1
 
     all_quarters = []

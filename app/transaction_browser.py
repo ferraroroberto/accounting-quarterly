@@ -6,10 +6,9 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import get_classified_for_period, invalidate_cache, quarter_dates
+from app.data_loader import first_data_year, get_classified_for_period, invalidate_cache, quarter_dates
 from src.database import (
     get_transaction_count_db,
-    get_transaction_date_bounds,
     search_transactions_raw,
 )
 from src.models import ClassifiedPayment
@@ -20,8 +19,7 @@ def render() -> None:
     """Render the Transaction Browser tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
-    min_tx_dt, _ = get_transaction_date_bounds()
-    first_year = min_tx_dt.year if min_tx_dt else 2023
+    first_year = first_data_year()
     year_choices = list(range(first_year, current_year + 2))
     with col1:
         year = st.selectbox(

@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-ROOT = Path(__file__).parent.parent
-
 from src.config import load_config
 from src.database import get_uploaded_files, record_upload
+from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.accounting_api_client import (
     AccountingAPIClient,
     AccountingAPIError,
@@ -20,14 +18,6 @@ from src.accounting_api_client import (
 from src.logger import get_logger
 
 log = get_logger(__name__)
-
-
-def _scan_invoices(directory: str) -> list[str]:
-    """Scan a directory for PDF files."""
-    dir_path = ROOT / directory
-    if not dir_path.exists():
-        return []
-    return sorted([f.name for f in dir_path.glob("*.pdf")])
 
 
 def _get_new_invoices(all_files: list[str], uploaded: list[dict]) -> list[str]:
@@ -52,10 +42,10 @@ def _render_upload_panel(
     st.subheader(label)
     st.caption(f"Directory: `{invoice_dir}`")
 
-    dir_path = ROOT / invoice_dir
+    dir_path = resolve_invoice_dir(direction)
     dir_path.mkdir(parents=True, exist_ok=True)
 
-    all_files = _scan_invoices(invoice_dir)
+    all_files = [str(p.relative_to(dir_path)) for p in scan_invoice_pdfs(direction)]
     uploaded = get_uploaded_files(direction)
     new_files = _get_new_invoices(all_files, uploaded)
 

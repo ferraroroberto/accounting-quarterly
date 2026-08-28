@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, fields
-from typing import Any
+from typing import Any, Callable, Optional
 
 from src.logger import get_logger
 from src.tax_models import (
@@ -35,18 +35,28 @@ def _int_key_dict(d: dict[Any, Any]) -> dict[int, float]:
     return out
 
 
-def _tolerant_construct(cls: type, data: dict[str, Any], legacy_renames: dict[str, str] | None = None) -> Any:
+def _tolerant_construct(
+    cls: type,
+    data: dict[str, Any],
+    legacy_renames: dict[str, str] | None = None,
+    row_decoder: Optional[Callable[[dict[str, Any]], Any]] = None,
+    row_field: str = "rows",
+) -> Any:
     """Build a dataclass from stored snapshot data, tolerating legacy/unknown keys.
 
-    Applies ``legacy_renames`` first, then drops any remaining key that isn't a
-    field on ``cls`` (logging a warning) so a future field rename on a tax-engine
-    result dataclass can't hard-crash snapshot decoding the way ``box_28``/``box_29``
-    did after commit e08a3ff9.
+    Applies ``legacy_renames`` first, then (if ``row_decoder`` is given) decodes
+    each dict in ``data[row_field]`` through it, then drops any remaining key
+    that isn't a field on ``cls`` (logging a warning) so a future field rename
+    on a tax-engine result dataclass can't hard-crash snapshot decoding the way
+    ``box_28``/``box_29`` did after commit e08a3ff9.
     """
     data = dict(data)
     for old_key, new_key in (legacy_renames or {}).items():
         if old_key in data:
             data[new_key] = data.pop(old_key)
+
+    if row_decoder is not None:
+        data[row_field] = [row_decoder(r) for r in data.get(row_field, [])]
 
     known_fields = {f.name for f in fields(cls)}
     unknown = sorted(set(data) - known_fields)
@@ -59,6 +69,30 @@ def _tolerant_construct(cls: type, data: dict[str, Any], legacy_renames: dict[st
             data.pop(key)
 
     return cls(**data)
+
+
+def _decode_oss_row(r: dict[str, Any]) -> OSSCountryRow:
+    return OSSCountryRow(**r)
+
+
+def _decode_347_row(r: dict[str, Any]) -> Modelo347Row:
+    qb = r.get("quarter_breakdown") or {}
+    if qb and isinstance(next(iter(qb.keys()), None), str):
+        qb = _int_key_dict(qb)
+    return Modelo347Row(
+        counterparty_name=r["counterparty_name"],
+        counterparty_nif=r["counterparty_nif"],
+        total_operations=float(r["total_operations"]),
+        quarter_breakdown=qb,
+    )
+
+
+def _decode_349_row(r: dict[str, Any]) -> Modelo349Row:
+    return Modelo349Row(
+        buyer_name=r["buyer_name"],
+        buyer_vat_id=r["buyer_vat_id"],
+        total_amount=float(r["total_amount"]),
+    )
 
 
 def encode_snapshot(model: str, obj: Any) -> str:
@@ -80,49 +114,9 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
     if model == "130":
         return _tolerant_construct(Modelo130Result, data)
     if model == "OSS":
-        rows = [OSSCountryRow(**r) for r in data.get("rows", [])]
-        return OSSReturnResult(
-            year=data["year"],
-            quarter=data["quarter"],
-            rows=rows,
-            total_base=data["total_base"],
-            total_vat=data["total_vat"],
-            total_transactions=data["total_transactions"],
-        )
+        return _tolerant_construct(OSSReturnResult, data, row_decoder=_decode_oss_row)
     if model == "347":
-        rows_out: list[Modelo347Row] = []
-        for r in data.get("rows", []):
-            qb = r.get("quarter_breakdown") or {}
-            if qb and isinstance(next(iter(qb.keys()), None), str):
-                qb = _int_key_dict(qb)
-            rows_out.append(
-                Modelo347Row(
-                    counterparty_name=r["counterparty_name"],
-                    counterparty_nif=r["counterparty_nif"],
-                    total_operations=float(r["total_operations"]),
-                    quarter_breakdown=qb,
-                )
-            )
-        return Modelo347Result(
-            year=data["year"],
-            rows=rows_out,
-            threshold=float(data.get("threshold", 3005.06)),
-        )
+        return _tolerant_construct(Modelo347Result, data, row_decoder=_decode_347_row)
     if model == "349":
-        rows_out: list[Modelo349Row] = []
-        for r in data.get("rows", []):
-            rows_out.append(
-                Modelo349Row(
-                    buyer_name=r["buyer_name"],
-                    buyer_vat_id=r["buyer_vat_id"],
-                    total_amount=float(r["total_amount"]),
-                )
-            )
-        return Modelo349Result(
-            year=data["year"],
-            quarter=data["quarter"],
-            rows=rows_out,
-            total=float(data.get("total", 0.0)),
-            notes=data.get("notes", ""),
-        )
+        return _tolerant_construct(Modelo349Result, data, row_decoder=_decode_349_row)
     raise ValueError(f"Unknown tax snapshot model: {model}")

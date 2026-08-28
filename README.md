@@ -313,7 +313,7 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 | **Modelo 130** | Pago Fraccionado IRPF | Quarterly | 20% advance on YTD net profit, minus retenciones and prior payments |
 | **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Intra-EU B2B operations grouped by buyer VAT ID |
 | **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country |
-| **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 |
+| **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**) |
 
 ### VAT treatment classification
 
@@ -384,7 +384,7 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 | **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct`) YTD |
 | **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
 | **Modelo 130** box_07 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
-| **Modelo 347** | Income invoices | Spanish-client invoice income alongside Stripe |
+| **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. |
 | **Modelo 349** | Income invoices | EU B2B invoice income alongside Stripe |
 
 Geographic classification is auto-derived from the vendor NIF (expenses) or client NIF (income) at OCR extraction time. Existing rows are backfilled automatically on database init.

@@ -76,15 +76,20 @@ def _insert_invoice(conn: sqlite3.Connection, **kwargs) -> None:
         client_name=None,
         client_nif=None,
         subtotal_eur=100.0,
+        iva_amount=None,
+        irpf_amount=None,
+        total_eur=None,
         geo_region="SPAIN",
     )
     defaults.update(kwargs)
     conn.execute(
         """INSERT OR REPLACE INTO invoices
            (id, filename, direction, invoice_date, supply_date,
-            client_name, client_nif, subtotal_eur, geo_region)
+            client_name, client_nif, subtotal_eur, iva_amount, irpf_amount,
+            total_eur, geo_region)
            VALUES (:id, :filename, :direction, :invoice_date, :supply_date,
-                   :client_name, :client_nif, :subtotal_eur, :geo_region)""",
+                   :client_name, :client_nif, :subtotal_eur, :iva_amount,
+                   :irpf_amount, :total_eur, :geo_region)""",
         defaults,
     )
     conn.commit()
@@ -334,6 +339,35 @@ class TestModelo347:
                    activity_type="COACHING", email_meta="small@example.com")
         result = compute_modelo_347(2025, db_conn)
         assert result.rows == []
+
+    def test_invoice_side_accumulates_vat_inclusive_like_stripe(self, db_conn):
+        # accounting-quarterly#78: the two sources must share one basis. Stripe
+        # rows are VAT-inclusive gross; an invoice contributing only its ex-VAT
+        # base makes the single €3,005.06 threshold compare a mixture of the
+        # two. Base 2,600 + 21% IVA = 3,146.00 → above threshold; on the
+        # ex-VAT basis it is 2,600 → silently omitted from the declaration.
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-06-01",
+                        client_name="Acme SL", client_nif="B11111111",
+                        subtotal_eur=2600.0, iva_amount=546.0,
+                        irpf_amount=390.0, total_eur=2756.0)
+        result = compute_modelo_347(2025, db_conn)
+        assert len(result.rows) == 1
+        # Not 2600.0 (ex-VAT base) and not 2756.0 (total_eur, net of the IRPF
+        # retención — a withholding on payment, not a smaller operation).
+        assert result.rows[0].total_operations == pytest.approx(3146.0)
+        assert result.rows[0].quarter_breakdown[2] == pytest.approx(3146.0)
+
+    def test_audit_formula_records_the_gross_basis(self, db_conn):
+        # The chosen basis must be visible in the audit trail, not just in the
+        # code — the Tax Audit tab is how the gestor checks the figure.
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-06-01",
+                        client_nif="B22222222", subtotal_eur=3000.0,
+                        iva_amount=630.0)
+        result = compute_modelo_347(2025, db_conn)
+        formula = next(e.formula for e in result.audit
+                       if e.cell.startswith("counterparty_"))
+        assert "IVA incluido" in formula
+        assert "subtotal_eur + iva_amount" in formula
 
 
 class TestConfigDrivenTaxSettings:

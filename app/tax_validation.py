@@ -146,9 +146,16 @@ def render() -> None:
     with st.spinner("Running validations…"):
         results = _cached_validations()
 
-    if results:
-        periods = ", ".join(f"**{r.period}** (M{r.model})" for r in results)
-        st.info(f"Reference data loaded from `tmp/validation/validation.yaml`: {periods}.")
+    if not results:
+        st.warning(
+            "No filed declarations to compare against. Add the gestor-filed AEAT values to "
+            "`tmp/validation/validation.yaml` (see the README's **Tax Validation** section), "
+            "then hit ↺ Refresh."
+        )
+        return
+
+    periods = ", ".join(f"**{r.period}** (M{r.model})" for r in results)
+    st.info(f"Reference data loaded from `tmp/validation/validation.yaml`: {periods}.")
 
     # Top-level summary cards
     st.markdown("### Summary")

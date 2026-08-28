@@ -8,7 +8,7 @@ from typing import Optional
 
 import requests
 
-from src.database import get_connection, _get_table_columns
+from src.database import get_connection, _get_table_columns, _create_fx_rates_table
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -58,23 +58,14 @@ def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30
 
 
 def init_fx_table(db_path: Optional[str | Path] = None) -> None:
-    """Create the fx_rates table if it doesn't exist."""
+    """Create the fx_rates table if it doesn't exist.
+
+    Delegates the schema itself to `database._create_fx_rates_table` (the
+    single owner) so this and `database.init_db` can never diverge again.
+    """
     conn = get_connection(db_path)
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS fx_rates (
-                rate_date TEXT NOT NULL,
-                currency TEXT NOT NULL,
-                rate REAL NOT NULL,
-                loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (rate_date, currency)
-            )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_fx_rates_currency
-                ON fx_rates(currency)
-        """)
+        _create_fx_rates_table(conn)
         _ensure_fx_schema(conn)
         conn.commit()
     finally:

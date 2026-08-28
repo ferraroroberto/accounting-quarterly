@@ -56,6 +56,29 @@ def _get_table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r["name"] for r in rows}
 
 
+def _create_fx_rates_table(conn: sqlite3.Connection) -> None:
+    """Create the `fx_rates` table and its index (single schema owner).
+
+    Called both from `init_db` and from `fx_rates.init_fx_table` so the two
+    never diverge; `fx_rates._ensure_fx_schema` still ALTERs pre-existing DBs
+    created before this table gained `loaded_at`/`updated_at`.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fx_rates (
+            rate_date TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            rate REAL NOT NULL,
+            loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (rate_date, currency)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_fx_rates_currency
+            ON fx_rates(currency)
+    """)
+
+
 def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
     """Add missing columns to older `transactions` tables (best-effort)."""
     existing = _get_table_columns(conn, "transactions")
@@ -294,16 +317,6 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_transactions_geo
                 ON transactions(geo_region);
 
-            CREATE TABLE IF NOT EXISTS fx_rates (
-                rate_date TEXT NOT NULL,
-                currency TEXT NOT NULL,
-                rate REAL NOT NULL,
-                PRIMARY KEY (rate_date, currency)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_fx_rates_currency
-                ON fx_rates(currency);
-
             CREATE TABLE IF NOT EXISTS upload_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT NOT NULL,
@@ -392,22 +405,6 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_tax_snapshots_year
                 ON tax_computation_snapshots(year);
 
-            CREATE TABLE IF NOT EXISTS tax_audit_log (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                computed_at  TEXT NOT NULL,
-                year         INTEGER NOT NULL,
-                quarter      INTEGER NOT NULL,
-                model        TEXT NOT NULL,
-                cell         TEXT NOT NULL,
-                label        TEXT NOT NULL,
-                formula      TEXT NOT NULL,
-                inputs_json  TEXT NOT NULL DEFAULT '{}',
-                value        REAL NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_audit_log_period
-                ON tax_audit_log(year, quarter, model, computed_at);
-
             CREATE TABLE IF NOT EXISTS social_security_payments (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 payment_date TEXT NOT NULL,
@@ -420,6 +417,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_ss_payments_date
                 ON social_security_payments(payment_date);
         """)
+        _create_fx_rates_table(conn)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)
         _ensure_audit_schema(conn)

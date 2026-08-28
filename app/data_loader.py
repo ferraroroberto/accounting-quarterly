@@ -19,13 +19,27 @@ from src.fx_rates import convert_to_eur, init_fx_table
 from src.logger import get_logger
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
-from src.database import load_classified_payments, upsert_classified, upsert_payments
+from src.database import get_transaction_date_bounds, load_classified_payments, upsert_classified, upsert_payments
 from src.stripe_client import fetch_charges
 
 log = get_logger(__name__)
 
 
 QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
+
+# Fallback first year when no transactions are stored yet (e.g. a fresh DB).
+DEFAULT_FIRST_YEAR = 2023
+
+
+def first_data_year(min_tx_dt: Optional[datetime] = None) -> int:
+    """Earliest year with stored transaction data, or ``DEFAULT_FIRST_YEAR``.
+
+    Pass an already-fetched ``min_tx_dt`` (e.g. from `get_transaction_date_bounds`)
+    to avoid a second query; omit it to have this call fetch the bound itself.
+    """
+    if min_tx_dt is None:
+        min_tx_dt, _ = get_transaction_date_bounds()
+    return min_tx_dt.year if min_tx_dt else DEFAULT_FIRST_YEAR
 
 
 def quarter_dates(year: int, quarter: int) -> tuple[datetime, datetime]:

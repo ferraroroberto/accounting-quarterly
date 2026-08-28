@@ -8,8 +8,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import get_classified_for_period, quarter_dates
-from src.database import get_transaction_date_bounds
+from app.data_loader import first_data_year, get_classified_for_period, quarter_dates
 from src.aggregator import (
     build_monthly_table,
     calculate_grand_totals,
@@ -24,8 +23,7 @@ def render() -> None:
     """Render the Quarter Report tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
-    min_tx_dt, _ = get_transaction_date_bounds()
-    first_year = min_tx_dt.year if min_tx_dt else 2023
+    first_year = first_data_year()
     year_options: list[int | str] = ["Since inception", *list(range(first_year, current_year + 2))]
     default_year = current_year if current_year in year_options else first_year
 
@@ -57,7 +55,7 @@ def render() -> None:
             quarter = None
         elif is_since_inception:
             quarter = None
-            start_dt = datetime(min_tx_dt.year, 1, 1) if min_tx_dt else datetime(2023, 1, 1)
+            start_dt = datetime(first_year, 1, 1)
             end_dt = datetime(current_year, 12, 31, 23, 59, 59)
         else:
             quarter = None if quarter_opt == "Full Year" else int(quarter_opt[1])

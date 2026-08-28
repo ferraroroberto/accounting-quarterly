@@ -39,6 +39,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 from src.config import load_config  # noqa: E402
+from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
 
@@ -82,8 +83,8 @@ def _relname(p: Path, base: Path) -> str:
 
 def cmd_sweep(args: argparse.Namespace) -> None:
     cfg = load_config()
-    in_dir = Path(cfg["app"]["invoice_in_dir"])
-    out_dir = Path(cfg["app"]["invoice_out_dir"])
+    in_dir = resolve_invoice_dir("in", cfg)
+    out_dir = resolve_invoice_dir("out", cfg)
     dest = quarter_out_dir(args.year, args.quarter)
 
     conn = sqlite3.connect(ROOT / "data" / "accounting.db")
@@ -96,8 +97,8 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     already_in = set(manifest.get("in", []))
     already_out = set(manifest.get("out", []))
 
-    pdfs_in = sorted(in_dir.rglob("*.pdf")) if in_dir.exists() else []
-    pdfs_out = sorted(out_dir.rglob("*.pdf")) if out_dir.exists() else []
+    pdfs_in = scan_invoice_pdfs("in", cfg)
+    pdfs_out = scan_invoice_pdfs("out", cfg)
 
     new_in = [p for p in pdfs_in
               if _relname(p, in_dir) not in known_in and _relname(p, in_dir) not in already_in]

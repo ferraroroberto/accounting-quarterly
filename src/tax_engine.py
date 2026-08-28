@@ -922,11 +922,14 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         (str(year),),
     ).fetchall()
 
-    # Income invoices issued to Spanish clients
+    # Income invoices issued to Spanish clients.
+    # `iva_amount` is selected alongside the base because Modelo 347 reports the
+    # importe *IVA incluido* — see the gross-basis note on the accumulation loop.
     inv_rows = db_conn.execute(
         """SELECT COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
                   client_nif,
                   subtotal_eur,
+                  iva_amount,
                   strftime('%m', COALESCE(supply_date, invoice_date)) AS month
            FROM invoices
            WHERE direction = 'out'
@@ -944,18 +947,26 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
     # buyer_vat_id / client_nif keying so a counterparty known by the same NIF
     # on both sides (a Stripe payment plus a manually-issued invoice)
     # aggregates into one row instead of two separate below-threshold ones.
+    # Both loops must accumulate on the SAME basis, or the single threshold
+    # below compares a mixture of two. Modelo 347 declares the importe total de
+    # las operaciones **IVA incluido** (Art. 33 RD 1065/2007), so ``gross`` is
+    # VAT-inclusive on both sides: Stripe rows are already VAT-inclusive (see
+    # README, "VAT-inclusive pricing"), invoices contribute base + cuota.
+    # Deliberately NOT ``total_eur`` — that column is subtotal + IVA − IRPF
+    # (``src/invoice_ocr.py``), and the IRPF retención is a withholding on
+    # payment, not a reduction of the operation's amount.
     by_counterparty: dict[str, dict] = {}
     for row in rows:
         nif = row["buyer_vat_id"] or ""
         email = row["email_meta"] or "UNKNOWN"
         key = nif or email
-        net = row["converted_amount"] - row["converted_amount_refunded"]
+        gross = row["converted_amount"] - row["converted_amount_refunded"]
         month = int(row["month"])
         q = (month - 1) // 3 + 1
         if key not in by_counterparty:
             by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": email}
-        by_counterparty[key]["total"] += net
-        by_counterparty[key]["quarters"][q] += net
+        by_counterparty[key]["total"] += gross
+        by_counterparty[key]["quarters"][q] += gross
         if not by_counterparty[key]["nif"] and nif:
             by_counterparty[key]["nif"] = nif
 
@@ -963,7 +974,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         nif = row["client_nif"] or ""
         name = row["counterparty"]
         key = nif or name
-        net = row["subtotal_eur"] or 0.0
+        gross = (row["subtotal_eur"] or 0.0) + (row["iva_amount"] or 0.0)
         month_str = row["month"]
         if not month_str:
             continue
@@ -971,8 +982,8 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         q = (month - 1) // 3 + 1
         if key not in by_counterparty:
             by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": name}
-        by_counterparty[key]["total"] += net
-        by_counterparty[key]["quarters"][q] += net
+        by_counterparty[key]["total"] += gross
+        by_counterparty[key]["quarters"][q] += gross
         if not by_counterparty[key]["nif"] and nif:
             by_counterparty[key]["nif"] = nif
         if by_counterparty[key]["name"] in ("", "UNKNOWN") and name not in ("", "UNKNOWN"):
@@ -1002,7 +1013,10 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
         audit.append(_a(
             f"counterparty_{r.counterparty_name[:30]}",
             f"Operaciones con {r.counterparty_name}",
-            f"SUM(net_amount) WHERE geo_region='SPAIN' AND counterparty(nif||email/name)='{identity}' — threshold ≥ €{result.threshold:,.2f}",
+            f"SUM(importe IVA incluido) WHERE geo_region='SPAIN' AND "
+            f"counterparty(nif||email/name)='{identity}' — basis: transactions "
+            f"(converted_amount − converted_amount_refunded) + invoices "
+            f"(subtotal_eur + iva_amount) — threshold ≥ €{result.threshold:,.2f}",
             r.total_operations,
             counterparty=r.counterparty_name,
             counterparty_nif=r.counterparty_nif,

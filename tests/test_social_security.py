@@ -35,9 +35,9 @@ def _write_synthetic_export(path, with_title_rows: bool = True) -> None:
     """
     header = ["Fecha", "Fecha valor", "Movimiento", "Más datos", "Importe"]
     data_rows = [
-        ["2026-01-31", "2026-01-31", "TGSS.COTIZACION 0", "Q2827003A005", -88.56],
-        ["2026-02-28", "2026-02-28", "TGSS.COTIZACION 0", "Q2827003A005", -88.56],
-        ["2026-02-28", "2026-02-28", "TGSS.COTIZACION 0", "Q2827003A005", -88.56],  # exact duplicate
+        ["2026-01-31", "2026-01-31", "TGSS.COTIZACION 0", "REF0000000", -50.25],
+        ["2026-02-28", "2026-02-28", "TGSS.COTIZACION 0", "REF0000000", -50.25],
+        ["2026-02-28", "2026-02-28", "TGSS.COTIZACION 0", "REF0000000", -50.25],  # exact duplicate
         ["2026-03-15", "2026-03-15", "TGSS.DEVOLUCION PLURIACTIVIDAD", "REF123", 45.00],  # refund (credit)
         ["2026-03-31", "2026-03-31", "OTRO MOVIMIENTO BANCARIO", "N/A", -12.00],  # not SS — filtered
     ]
@@ -76,14 +76,14 @@ class TestHeaderDetection:
             ["Movimientos de la cuenta ...", None, None],
             ["Importes expresados en euros", None, None],
             ["Fecha", "Importe", "Movimiento"],
-            ["2026-01-31", -88.56, "TGSS.COTIZACION 0"],
+            ["2026-01-31", -50.25, "TGSS.COTIZACION 0"],
         ])
         assert detect_header_row(raw, "Fecha", "Importe") == 2
 
     def test_detects_header_at_row_zero(self):
         raw = pd.DataFrame([
             ["Fecha", "Importe"],
-            ["2026-01-31", -88.56],
+            ["2026-01-31", -50.25],
         ])
         assert detect_header_row(raw, "Fecha", "Importe") == 0
 
@@ -182,7 +182,7 @@ class TestLoadBankExport:
             concept_patterns=["TGSS"],
         )
         jan_row = next(r for r in rows if r["payment_date"] == "2026-01-31")
-        assert jan_row["amount_eur"] == 88.56
+        assert jan_row["amount_eur"] == 50.25
 
     def test_refund_stored_as_negative_contribution(self, synthetic_export):
         rows = load_bank_export(
@@ -273,8 +273,8 @@ class TestUpsertDedupe:
     def test_same_date_amount_different_description_both_kept(self, tmp_db):
         init_db(tmp_db)
         rows = [
-            {"payment_date": "2026-05-31", "amount_eur": 88.56, "description": "TGSS cuota mensual"},
-            {"payment_date": "2026-05-31", "amount_eur": 88.56, "description": "TGSS recargo"},
+            {"payment_date": "2026-05-31", "amount_eur": 50.25, "description": "TGSS cuota mensual"},
+            {"payment_date": "2026-05-31", "amount_eur": 50.25, "description": "TGSS recargo"},
         ]
         inserted, skipped = upsert_ss_payments(rows, source_file="test", db_path=tmp_db)
         assert inserted == 2
@@ -288,7 +288,7 @@ class TestUpsertDedupe:
 class TestManualEntry:
     def test_add_manual_entry(self, tmp_db):
         init_db(tmp_db)
-        inserted = add_manual_ss_entry("2026-06-30", 88.56, "Manual — missing month", db_path=tmp_db)
+        inserted = add_manual_ss_entry("2026-06-30", 50.25, "Manual — missing month", db_path=tmp_db)
         assert inserted == 1
         rows = get_ss_payments(db_path=tmp_db)
         assert len(rows) == 1
@@ -296,8 +296,8 @@ class TestManualEntry:
 
     def test_duplicate_manual_entry_skipped(self, tmp_db):
         init_db(tmp_db)
-        add_manual_ss_entry("2026-06-30", 88.56, "Manual entry", db_path=tmp_db)
-        inserted = add_manual_ss_entry("2026-06-30", 88.56, "Manual entry", db_path=tmp_db)
+        add_manual_ss_entry("2026-06-30", 50.25, "Manual entry", db_path=tmp_db)
+        inserted = add_manual_ss_entry("2026-06-30", 50.25, "Manual entry", db_path=tmp_db)
         assert inserted == 0
 
 

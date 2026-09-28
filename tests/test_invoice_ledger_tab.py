@@ -75,3 +75,36 @@ def test_empty_db_shows_guidance(tmp_path, monkeypatch):
     at = AppTest.from_function(_render_ledger).run()
     assert not at.exception
     assert any("Invoice OCR" in i.value for i in at.info)
+
+
+def test_null_invoice_date_shown_as_no_date(tmp_path, monkeypatch):
+    """#119: pandas turns a NULL invoice_date into a float NaN once mixed with
+    dated rows, so `_quarter_label` must not assume a string."""
+    path = tmp_path / "ledger_null_date.db"
+    init_db(path)
+    upsert_invoice({
+        "filename": "vendor/inv-dated.pdf", "direction": "in",
+        "invoice_date": "2025-02-10", "vendor_name": "Example Vendor SL",
+        "vendor_nif": "B00000000", "subtotal_eur": 100.0, "iva_amount": 21.0,
+        "total_eur": 121.0,
+    }, db_path=path)
+    upsert_invoice({
+        "filename": "vendor/inv-nodate.pdf", "direction": "in",
+        "invoice_date": None, "vendor_name": "Example Vendor SL",
+        "vendor_nif": "B00000000", "subtotal_eur": 50.0, "iva_amount": 10.5,
+        "total_eur": 60.5,
+    }, db_path=path)
+    _use_db(monkeypatch, path)
+
+    at = AppTest.from_function(_render_ledger).run()
+    assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
+    assert at.metric[0].value == "2"
+
+    periods = at.selectbox(key="ledger_period").options
+    assert "No date" in periods
+
+    at.selectbox(key="ledger_period").set_value("No date")
+    at.run()
+    assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
+    assert at.metric[0].value == "1"
+    assert at.selectbox(key="ledger_select_in") is not None

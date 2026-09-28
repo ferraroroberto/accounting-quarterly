@@ -29,6 +29,7 @@ from src.vendor_registry import load_registry
 log = get_logger(__name__)
 
 _ALL_PERIODS = "All periods"
+_NO_DATE = "No date"
 _ISO_DATE_RE = r"^\d{4}-\d{2}-\d{2}$"
 
 # Bulk-grid columns in display order, and the read-only subset of them.
@@ -54,20 +55,27 @@ def _treatments(direction: str) -> tuple[str, ...]:
     return TAX_TREATMENTS_IN if direction == "in" else TAX_TREATMENTS_OUT
 
 
-def _quarter_label(invoice_date: Optional[str]) -> Optional[str]:
-    """``'2025-04-04'`` → ``'2025-Q2'`` (accounting date = invoice_date)."""
-    if not invoice_date or len(invoice_date) < 7:
-        return None
+def _quarter_label(invoice_date: object) -> str:
+    """``'2025-04-04'`` → ``'2025-Q2'`` (accounting date = invoice_date).
+
+    ``invoice_date`` may arrive as ``None``, a pandas float ``NaN`` (a NULL
+    column mixed with dated rows gets upcast to float64), or an unparseable
+    string — all of those fall back to ``_NO_DATE`` so the row stays visible.
+    """
+    if not isinstance(invoice_date, str) or len(invoice_date) < 7:
+        return _NO_DATE
     try:
         month = int(invoice_date[5:7])
     except ValueError:
-        return None
+        return _NO_DATE
     return f"{invoice_date[:4]}-Q{(month - 1) // 3 + 1}"
 
 
-def _to_date(value: Optional[str]) -> Optional[date]:
+def _to_date(value: object) -> Optional[date]:
+    if not isinstance(value, str) or not value:
+        return None
     try:
-        return date.fromisoformat(value[:10]) if value else None
+        return date.fromisoformat(value[:10])
     except ValueError:
         return None
 
@@ -436,7 +444,8 @@ def render() -> None:
         st.info(f"No {'expense' if direction == 'in' else 'income'} invoices extracted yet.")
         return
     df = _build_frame(records, direction)
-    periods = sorted({q for q in df["quarter"] if q}, reverse=True)
+    quarters = sorted({q for q in df["quarter"] if q and q != _NO_DATE}, reverse=True)
+    periods = quarters + ([_NO_DATE] if (df["quarter"] == _NO_DATE).any() else [])
     with f_period:
         period = st.selectbox("Quarter (by invoice date)", [_ALL_PERIODS, *periods], key="ledger_period")
     with f_excl:

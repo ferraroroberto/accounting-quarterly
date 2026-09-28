@@ -12,6 +12,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
+from app.fixed_assets_tab import render_register_from_invoice
 from src.database import (
     EXCLUDED_REASONS,
     TAX_TREATMENTS_IN,
@@ -292,6 +293,8 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
         _flash("info", "All locks released; stored values are unchanged.")
         _bump_editor_version()
         st.rerun()
+
+    render_register_from_invoice(rec)
 
 
 def render() -> None:

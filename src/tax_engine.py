@@ -24,6 +24,7 @@ from src.tax_models import (
     _tax_deadline_date,
 )
 from src.declared_reports import apply_frozen_amounts
+from src.fixed_assets import capital_asset_invoice_ids, depreciation_for_period
 from src.vat_rules import (
     EU_B2C_THRESHOLD_EUR,
     EU_B2C_TREATMENTS,
@@ -558,6 +559,21 @@ def compute_modelo_130(
 
     # Expenses from invoices (direction='in'), YTD
     expense_invs_ytd = _load_expense_invoices_ytd(year, quarter, db_conn)
+
+    # --- Fixed assets hook (#96) — #98 restructures box 02 -------------------
+    # Capital-asset invoices are not expensed: their cost enters through
+    # depreciation (src/fixed_assets.py) instead.
+    _capital_ids = capital_asset_invoice_ids(db_conn)
+    capital_invs = [inv for inv in expense_invs_ytd if inv["id"] in _capital_ids]
+    expense_invs_ytd = [inv for inv in expense_invs_ytd if inv["id"] not in _capital_ids]
+    depreciation = depreciation_for_period(year, quarter, db_conn, ytd=True, config=config)
+    _registered_ids = {line.invoice_id for line in depreciation.lines if line.invoice_id}
+    _unregistered = [inv["id"] for inv in capital_invs if inv["id"] not in _registered_ids]
+    if _unregistered:
+        log.warning("⚠️ 130 %dQ%d: %d capital-asset invoice(s) have no fixed asset registered — "
+                    "their cost is neither expensed nor depreciated: %s",
+                    year, quarter, len(_unregistered), ", ".join(_unregistered))
+    # --- end fixed assets hook ------------------------------------------------
     inv_gastos = sum(
         (inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0
         for inv in expense_invs_ytd
@@ -590,6 +606,7 @@ def compute_modelo_130(
     result.box_02_gastos = round(
         inv_gastos
         + ss_gastos
+        + depreciation.total_eur
         + _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", db_conn, ytd=True),
         2,
     )
@@ -697,15 +714,47 @@ def compute_modelo_130(
            ytd_through_quarter=quarter,
            records=stripe_income_records + income_inv_records),
         _a("box_02_gastos",
-           "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + SS cuotas + entradas manuales",
-           f"SUM(subtotal_eur * deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 YTD "
+           "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + SS cuotas + amortizaciones + entradas manuales",
+           f"SUM(subtotal_eur * deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 "
+           f"AND is_capital_asset=0 YTD "
            f"+ SUM(amount_eur) FROM social_security_payments YTD "
+           f"+ amortizaciones YTD "
            f"+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES' AND quarter<=Q{quarter}",
            result.box_02_gastos,
            inv_gastos=round(inv_gastos, 2),
            ss_gastos=ss_gastos,
+           amortizaciones=depreciation.total_eur,
            ss_records=ss_records,
            records=expense_inv_records),
+        _a("amortizaciones",
+           f"Amortizaciones YTD (tabla simplificada, contabilización {depreciation.posting_mode})",
+           "SUM(base × business% × coeficiente × días/días_año), tope base × business%; "
+           f"bienes ≤ {depreciation.threshold_eur:.2f} € se gastan en el trimestre de adquisición "
+           "[Orden 27/03/1998; art. 30 RIRPF]",
+           depreciation.total_eur,
+           posting_mode=depreciation.posting_mode,
+           threshold_eur=depreciation.threshold_eur,
+           period_start=depreciation.period_start,
+           period_end=depreciation.period_end,
+           records=depreciation.records()),
+        _a("capital_assets_excluded",
+           "Facturas de inmovilizado excluidas de gastos (entran vía amortización)",
+           "SUM(subtotal_eur * deductible_pct_irpf/100) FROM invoices WHERE direction='in' "
+           "AND is_capital_asset=1 YTD — informativo, no suma en box_02",
+           round(sum((inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0
+                     for inv in capital_invs), 2),
+           unregistered_invoice_ids=_unregistered,
+           records=[
+               {
+                   "source": "invoice_in_capital",
+                   "date": inv.get("tx_date", "")[:10],
+                   "vendor": str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40],
+                   "description": str(inv.get("description") or "")[:50],
+                   "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+                   "fixed_asset_registered": inv["id"] in _registered_ids,
+               }
+               for inv in capital_invs
+           ]),
         _a("box_03_rendimiento",
            "Rendimiento neto previo (antes de difícil justificación)",
            "box_01_ingresos − box_02_gastos",

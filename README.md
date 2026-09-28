@@ -103,6 +103,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
+│   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
@@ -121,6 +122,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_ledger.py          # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
 │   ├── invoice_dedupe_tab.py      # Duplicate Review tab: scan/confirm/apply invoice_dedupe.py groups
 │   ├── vendor_registry_tab.py     # Vendors tab: registry editor, apply, unknown vendors, spreadsheet import
+│   ├── fixed_assets_tab.py        # Fixed Assets tab: assets grid, manual add, schedule, VAT register (+ ledger hook)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
@@ -143,7 +145,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_invoice_dedupe.py     # Dedupe detectors, keeper rule, locked rows, engine picks up exclusions
 │   ├── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
 │   ├── test_vendor_registry.py    # Vendor matching, defaults vs locks, unknown vendors, xlsx seed
-│   └── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
+│   ├── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
+│   └── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
@@ -435,7 +438,8 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 | **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota), weighted by `deductible_pct_vat` |
 | **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
 | **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD |
-| **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct_irpf`) YTD |
+| **Modelo 130** box_02 | Expense invoices (`direction='in'`, not `is_capital_asset`) | Subtotal gastos (weighted by `deductible_pct_irpf`) YTD |
+| **Modelo 130** box_02 | `fixed_assets` table | Depreciation YTD (see [Fixed Assets](#fixed-assets)) |
 | **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
 | **Modelo 130** box_07 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
 | **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. |
@@ -527,7 +531,7 @@ Each time **Calculate Tax** runs, the engine writes one `AuditEntry` per cell to
 | Model | Cells audited |
 |-------|--------------|
 | **Modelo 303** | box_01_base, box_03_cuota, box_59_intracom, box_28, box_29, box_46, box_48, oss_base, oss_vat, export_base |
-| **Modelo 130** | box_01_ingresos, box_02_gastos, box_03_rendimiento, gastos_dificil_justificacion (with cap flag), rendimiento_neto, box_05_base, box_07_retenciones, box_14_pagos_anteriores, box_16_resultado |
+| **Modelo 130** | box_01_ingresos, box_02_gastos, amortizaciones (per-asset breakdown), capital_assets_excluded, box_03_rendimiento, gastos_dificil_justificacion (with cap flag), rendimiento_neto, box_05_base, box_07_retenciones, box_14_pagos_anteriores, box_16_resultado |
 | **Modelo 349** | one entry per operator (VAT ID) + total |
 | **OSS** | base + cuota per country + totals |
 | **Modelo 347** | one entry per counterparty above threshold + summary |
@@ -722,7 +726,7 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 |--------|---------|
 | `tax_treatment` | Expenses: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT`, `NOT_DEDUCTIBLE`. Income: `ES_21`, `EU_B2C_ES21`, `EU_B2B`, `NON_EU_NOT_SUBJECT`, `EXEMPT_TEACHING`. |
 | `deductible_pct_vat` / `deductible_pct_irpf` | Business-use share for the VAT deduction (303) and the IRPF expense (130), independently. Backfilled from the legacy `deductible_pct`. |
-| `is_capital_asset`, `asset_class` | Capital-asset flag and class (depreciation comes with the fixed-assets step). |
+| `is_capital_asset`, `asset_class` | Capital-asset flag and class. A flagged invoice is not expensed in the Modelo 130; register it as a fixed asset so its cost enters through depreciation (see [Fixed Assets](#fixed-assets)). |
 | `excluded`, `excluded_reason` | `1` removes the row from every tax computation; reason ∈ `duplicate`, `receipt`, `personal`, `other_period`, `superseded`. |
 | `eur_received`, `payment_date` | EUR actually received for foreign-currency income, and when. |
 | `vendor_vat_id_norm` | `vendor_nif` normalised for matching: upper-case, separators stripped, Spanish ids `ES`-prefixed. |
@@ -778,9 +782,14 @@ Detection is a pure function (`find_duplicate_groups`) — nothing is written un
 
 Excluded rows are ignored by every tax computation (Modelo 303/130/347), same as a manual exclusion.
 
+---
+
 ## Vendor Registry
+
 Vendors repeat every month, so a small registry makes expense classification deterministic instead of relying on the (often missing) vendor VAT id.
+
 **Source of truth:** `vendors.json` at the repo root — git-ignored like `classification_rules.json`, because it holds real vendor tax ids. The repo ships `vendors.json.example` with fake vendors. There is no `vendors` table: the registry's defaults are written onto the `invoices` rows, so the tax engine only reads invoices. A missing file means an empty registry (every expense invoice is flagged).
+
 | Field | Meaning |
 |-------|---------|
 | `key` | Normalised vendor name (lower-case, punctuation → spaces). Should equal the vendor's sub-folder under `invoice_in_dir`. |
@@ -790,19 +799,71 @@ Vendors repeat every month, so a small registry makes expense classification det
 | `default_deductible_pct_vat`, `default_deductible_pct_irpf` | Business-use % (e.g. home-office utilities, mixed-use devices). |
 | `activity` | `COACHING` (IAE 826), `NEWSLETTER` (IAE 751) or `ILLUSTRATIONS` (IAE 861) — written to `invoices.activity_type` for the P&L per activity. |
 | `asset_class`, `recurrence`, `notes` | Optional. |
+
 Leave a default empty to keep the invoice's own (heuristic) value — e.g. for a vendor that bills from both an EU and a US entity.
+
 **Matching** (first hit wins): (1) the invoice's **sub-folder** (first component of `filename`) against `key` / `aliases`; (2) the normalised **vendor VAT id** against `vat_id` / `alt_vat_ids`; (3) the **vendor name** against `key` / `aliases` / `legal_entity` (whole-word, longest alias first).
+
 **Applying.** Every OCR extraction applies the registry to the new row, and the **Vendors** tab's **Apply registry** button (or the CLI below) re-applies it to all stored expense invoices — idempotent:
+
 - `tax_treatment` (legacy `vat_treatment` kept in sync), `deductible_pct_vat`, `deductible_pct_irpf`, `activity_type` and `asset_class` take the registry default, **except 🔒 locked fields** — a Ledger edit always wins.
 - `vendor_vat_id_norm`, `geo_region` (only when `UNKNOWN`) and `supply_country` are filled only when missing: an id read from the document wins.
 - Registry writes never lock a field and never mark the invoice reviewed.
+
 **Unknown vendors** are listed in the **Vendors** tab (grouped by suggested key = the invoice folder), flagged ⚠ in the Invoice Ledger grid, and warned about on the Invoice OCR card.
+
 **Editing.** The Vendors tab has an editable grid (**Save registry** validates every row) and an **Import from a spreadsheet** panel: an `.xlsx` whose first sheet has a vendor column (`vendor` / `item` / `name`) plus optional `activity` (or `business`: coaching / newsletter / illustration) and `recurrence` (or `recurrency`). New vendors are added; existing vendors only get an empty activity / recurrence filled.
+
 **CLI:**
+
+```bash
 # Build or extend vendors.json from a vendor spreadsheet (merge; hand edits are kept)
 .\.venv\Scripts\python.exe -m src.vendor_registry seed-from-xlsx <path-to-vendor-list.xlsx>
 # Apply the registry to every stored expense invoice and list the unknown vendors
 .\.venv\Scripts\python.exe -m src.vendor_registry apply [--db data/accounting.db] [--registry vendors.json]
+```
+
+---
+
+## Fixed Assets
+
+Durable purchases are depreciated instead of expensed (`src/fixed_assets.py`, **Fixed Assets** tab).
+
+**Creating assets.** In the **Invoice Ledger** tab, pick an expense invoice and open **Register as fixed asset**: the form is prefilled from the invoice (base, VAT, invoice date, IRPF/VAT business-use %, class) and saving flags the invoice `is_capital_asset`, so the Modelo 130 stops expensing it. One asset row is one unit — an invoice with several units gets one asset per unit. Assets can also be added by hand in the Fixed Assets tab, and edited in its grid (changing the class resets the coefficient to the class maximum). Deleting the last asset of an invoice unflags the invoice.
+
+**Depreciation (IRPF).** *Tabla de amortizaciones simplificada* of *estimación directa simplificada* — Orden de 27 de marzo de 1998 (BOE 28/03/1998), art. 30 RIRPF, checked on 2026-09-28 against the AEAT IRPF 2025 practical manual:
+
+| Class key | Group | Max coefficient | Max period |
+|-----------|-------|-----------------|------------|
+| `buildings` | Edificios y otras construcciones | 3% | 68 y |
+| `installations` | Instalaciones, mobiliario y enseres | 10% | 20 y |
+| `machinery` | Maquinaria | 12% | 18 y |
+| `vehicles` | Elementos de transporte | 16% | 14 y |
+| `it_equipment` | Equipos para tratamiento de la información y sistemas y programas informáticos | 26% | 10 y |
+| `tools` | Útiles y herramientas | 30% | 8 y |
+| `other` | Resto del inmovilizado material | 10% | 20 y |
+
+- Charge = base × business-use % × coefficient × days in use ÷ days in the year (365; 366 in a leap year, so a full year is exactly the coefficient), from `start_of_use` (default: acquisition date) until the day before `disposal_date`. The coefficient defaults to the class maximum and can be lowered, never raised.
+- Cumulative depreciation is capped at base × business-use %.
+- Unit bases at or below `assets.threshold_eur` (default 300) are expensed in full in the quarter they are acquired.
+- `assets.posting_mode`: `annual_q4` (default) books the full year's depreciation in Q4 (Q1–Q3 YTD carry none); `quarterly` books each quarter's days.
+- The Modelo 130 adds `depreciation_for_period(year, quarter, conn, ytd=True, config=...)` to box 02; the Tax Audit tab shows it as `amortizaciones` with a per-asset breakdown, plus `capital_assets_excluded` (flagged invoices removed from expenses; any flagged invoice without a registered asset is listed there and logged as a warning).
+
+**VAT capital goods.** An asset whose unit base is above €3,005.06 is a *bien de inversión* (art. 108 LIVA; auto-detected, overridable). `capital_goods_vat_for_period` gives its Modelo 303 boxes **30/31** in the quarter of acquisition: base × VAT business-use %, and VAT × VAT business-use % (or the `vat_deducted_eur` override). The **regularisation register** covers the year of acquisition + 4: record the VAT business-use % actually applied each year, and a year whose % differs from the acquisition year's by more than 10 points gets an adjustment of VAT borne ÷ 5 × (% of the year − initial %) (arts. 107–109 LIVA), for 303 box 44 at Q4. These figures are computed and shown in the tab; wiring them into the 303 box model is a later step (the 303 still counts the invoice's VAT in 28/29, at the invoice's `deductible_pct_vat`). The one-off disposal adjustment of art. 110 LIVA is not computed.
+
+Configuration (`config.json`):
+
+```json
+{
+  "assets": {
+    "threshold_eur": 300,
+    "posting_mode": "annual_q4"
+  }
+}
+```
+
+Storage: `fixed_assets` (one row per unit) and `fixed_asset_vat_usage` (asset, year, % used), created on first use.
+
 ---
 
 ## Invoice Explorer

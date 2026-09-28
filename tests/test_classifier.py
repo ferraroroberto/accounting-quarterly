@@ -85,6 +85,88 @@ class TestClassifyGeography:
         assert "email_override" in rule
 
 
+class TestClassifyGeographyByCountry:
+    """#111: EU non-euro currencies (and any non-EUR charge) classified from
+    the charge country (card -> billing -> customer) before falling back to
+    currency-only defaults."""
+
+    @pytest.mark.parametrize("currency", ["dkk", "sek", "pln"])
+    def test_eu_non_euro_currency_with_eu_card_is_eu_not_spain(self, sample_rules, sample_payment, currency):
+        sample_payment.currency = currency
+        sample_payment.card_country = "DE"
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "EU_NOT_SPAIN"
+        assert rule == "country:DE"
+
+    def test_usd_with_us_card_stays_outside_eu(self, sample_rules, sample_payment):
+        sample_payment.currency = "usd"
+        sample_payment.card_country = "US"
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "OUTSIDE_EU"
+        assert rule == "country:US"
+
+    @pytest.mark.parametrize("currency", ["usd", "aud", "gbp", "chf"])
+    def test_non_eu_currency_with_no_country_stays_outside_eu(self, sample_rules, sample_payment, currency):
+        sample_payment.currency = currency
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "OUTSIDE_EU"
+        assert rule == f"non_eur_currency:{currency}"
+
+    @pytest.mark.parametrize("currency", ["dkk", "sek", "pln", "czk", "huf", "ron", "bgn"])
+    def test_eu_non_euro_currency_with_no_country_is_flagged_for_review(self, sample_rules, sample_payment, currency):
+        sample_payment.currency = currency
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "EU_NOT_SPAIN"
+        assert rule == f"non_eur_currency_eu_review:{currency}"
+
+    def test_non_eur_charge_with_spanish_card_is_spain(self, sample_rules, sample_payment):
+        sample_payment.currency = "usd"
+        sample_payment.card_country = "ES"
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "SPAIN"
+        assert rule == "country:ES"
+
+    def test_billing_country_used_when_no_card_country(self, sample_rules, sample_payment):
+        sample_payment.currency = "dkk"
+        sample_payment.raw_source = {"billing_details": {"address": {"country": "dk"}}}
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "EU_NOT_SPAIN"
+        assert rule == "country:DK"
+
+    def test_customer_country_used_as_last_resort(self, sample_rules, sample_payment):
+        sample_payment.currency = "usd"
+        sample_payment.raw_source = {"customer": {"address": {"country": "gb"}}}
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "OUTSIDE_EU"
+        assert rule == "country:GB"
+
+    def test_card_country_wins_over_billing_and_customer(self, sample_rules, sample_payment):
+        sample_payment.currency = "usd"
+        sample_payment.card_country = "DE"
+        sample_payment.raw_source = {
+            "billing_details": {"address": {"country": "US"}},
+            "customer": {"address": {"country": "US"}},
+        }
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "EU_NOT_SPAIN"
+        assert rule == "country:DE"
+
+    def test_eur_with_no_country_default_path_unchanged(self, sample_rules, sample_payment):
+        """The EUR branch never looks at country — same eur_default path as before."""
+        sample_payment.card_country = "DE"  # present, but must be ignored for EUR
+        geo, rule = classify_geography(sample_payment, rules=sample_rules, activity_type="COACHING")
+        assert geo == "SPAIN"
+        assert rule == "eur_default"
+
+    def test_override_wins_for_eur(self, sample_rules, sample_payment):
+        """An explicit override still wins (EUR path, regression for the refactor)."""
+        sample_payment.description = "Payment from John Doe"
+        sample_payment.card_country = "DE"
+        geo, rule = classify_geography(sample_payment, rules=sample_rules)
+        assert geo == "OUTSIDE_EU"
+        assert "name_override" in rule
+
+
 class TestClassifyPayment:
     def test_full_classification(self, sample_rules, sample_payment):
         classified = classify_payment(sample_payment, rules=sample_rules)

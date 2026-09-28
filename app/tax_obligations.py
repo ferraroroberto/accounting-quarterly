@@ -7,6 +7,7 @@ from typing import Any
 
 import streamlit as st
 
+from app.annual_pack_tab import render as render_annual_pack
 from src.config import reload_config
 from src.database import (
     add_tax_entry,
@@ -617,7 +618,7 @@ def render() -> None:
     snapshot_bundle = _load_snapshot_bundle(year, quarter)
 
     (tab_calendar, tab_303, tab_130, tab_manual,
-     tab_oss, tab_347, tab_349) = st.tabs([
+     tab_oss, tab_347, tab_349, tab_annual) = st.tabs([
         "Tax Calendar",
         "Modelo 303 — IVA",
         "Modelo 130 — IRPF",
@@ -625,6 +626,7 @@ def render() -> None:
         "EU B2C / OSS",
         "Modelo 347",
         "Modelo 349",
+        "Annual Pack",
     ])
 
     with tab_calendar:
@@ -648,3 +650,6 @@ def render() -> None:
 
     with tab_349:
         _render_modelo_349(year, quarter, snapshot_bundle)
+
+    with tab_annual:
+        render_annual_pack(year)

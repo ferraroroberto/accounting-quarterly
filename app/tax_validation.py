@@ -219,9 +219,6 @@ def _render_table(rec: Reconciliation) -> None:
 
 def _render_drilldown(rec: Reconciliation) -> None:
     st.markdown("#### Drill-down: audit records behind an app value")
-    if rec.quarter is None:
-        st.caption("Modelo 390 is aggregated from the four quarterly 303s — drill into each 303 quarter.")
-        return
     boxes = [ln for ln in rec.lines if ln.app is not None]
     if not boxes:
         st.caption("The app computes no box for this period.")
@@ -229,8 +226,13 @@ def _render_drilldown(rec: Reconciliation) -> None:
     labels = {ln.box: f"{ln.box} — {ln.description}" if ln.description else ln.box for ln in boxes}
     box = st.selectbox("Box", options=list(labels), format_func=labels.get, key="rc_drill_box")
 
-    logged = _cached_logged_audit(rec.model, rec.year, rec.quarter)
-    if logged:
+    logged = _cached_logged_audit(rec.model, rec.year, rec.quarter) if rec.quarter is not None else []
+    if rec.quarter is None:
+        # Modelo 390: computed live from the four quarterly 303s, never logged.
+        source = rec.live_audit
+        st.caption("Live Modelo 390 computation (built from the year's four 303 results — drill into "
+                   "a 303 quarter for the invoice-level records).")
+    elif logged:
         source = logged
         st.caption(
             f"From `tax_audit_log`, run `{logged[0]['computed_at']}`. It can be older than the "

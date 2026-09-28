@@ -107,7 +107,10 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
-│   ├── legacy_aeat_boxes.py       # TEMPORARY Modelo 390 = sum of the four 303s (until the annual pack, #103)
+│   ├── modelo_390.py              # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
+│   ├── modelo_347.py              # Modelo 347 purchases side (Spanish vendors > €3,005.06, exclusions)
+│   ├── pl_by_activity.py          # P&L per IAE activity (826/861/751) tied to the Q4 Modelo 130
+│   ├── annual_pack.py             # Annual pack: 390 + 347 + P&L, markdown/CSV export + CLI
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
@@ -134,7 +137,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── fixed_assets_tab.py        # Fixed Assets tab: assets grid, manual add, schedule, VAT register (+ ledger hook)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
-│   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
+│   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS, Annual Pack)
+│   ├── annual_pack_tab.py         # Annual Pack sub-tab: 390, 347 sales + purchases, P&L per activity
 │   ├── filing_sheet_tab.py        # Filing Sheet tab (copyable box values, deadlines, Mark filed)
 │   ├── tax_validation.py          # Reconciliation tab (filed vs app per box, drill-down, catalogue editor)
 │   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
@@ -150,6 +154,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
 │   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
 │   ├── test_modelo_130.py         # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
+│   ├── test_annual_pack.py        # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
@@ -446,7 +451,8 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 | **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Key `I` (services acquired from EU businesses) and key `S` (services supplied to EU businesses), one line per VAT id and key — see [Modelo 349 operators](#modelo-349-operators) |
 | **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country — only when `oss_registered` is true |
 | **EU B2C threshold** | Art. 73 LIVA | Live | Year-to-date EU B2C sales (ex-VAT) vs €10,000; warns at 80%, flags the previous year too |
-| **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**) |
+| **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**): sales here, purchases in the [Annual Pack](#annual-pack-modelo-390-modelo-347-pl-per-activity) |
+| **Modelo 390** | Resumen Anual IVA | Annual | Built from the four 303s: rows by rate, deductions, pro-rata, result and compensation, volume of operations — see [Annual Pack](#annual-pack-modelo-390-modelo-347-pl-per-activity) |
 
 ### VAT treatment classification
 
@@ -518,6 +524,7 @@ Every key above drives a computation:
 | `prorrata.definitive_pct_by_year` | The definitive pro-rata % of each year once filed (Q4 303 / 390); it is the next year's provisional %. Years not listed fall back to the % the app computes from that year's data, then 100. |
 | `previous_year_net_yield` | Previous year's net yield of economic activities for Modelo 130 box 13 — a number, or `{"<year>": amount}`. Only used when the previous year's Q4 130 receipt is not imported; without either, the app's own previous-year figure is used. |
 | `modelo303_q4_negative_result` | `compensate` (default, box 72) or `refund` (box 73) for a negative Q4 result. Q1–Q3 always carry forward. |
+| `pl_allocation` | P&L per activity: where RETA (`reta`), depreciation (`depreciation`) and lines without an activity (`unallocated`) go — an activity (`COACHING`, `NEWSLETTER`, `ILLUSTRATIONS`) or `BY_INCOME` (split by directly attributed income). Default `COACHING` (IAE 826) for all three, as the external accountant does. |
 | `vat_proration_percentage` | Legacy flat pro-rata %. Only used, as the provisional %, when it is not `100` and the previous year has no `prorrata.definitive_pct_by_year` entry. |
 | `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` / `default_vat_treatment_eu_illustrations` | Pick the EU B2C sub-treatment (`EU_B2C_ES21` or `OSS_EU`) per activity for a sale **without** a known customer VAT id. Default `EU_B2C_ES21` for every activity. No longer selects B2B: since #113, `IVA_EU_B2B` only applies when the customer has a VAT id on file (see "VAT treatment classification" above) — a legacy `IVA_EU_B2B` value here is accepted but ignored. |
 
@@ -608,6 +615,38 @@ Items that cannot be derived from Stripe or invoices (additional overrides, one-
 
 ---
 
+## Annual Pack (Modelo 390, Modelo 347, P&L per activity)
+
+**Tax Obligations → Annual Pack** (or the CLI) computes the three annual outputs live from the database — nothing is persisted — with markdown and CSV downloads:
+
+```bash
+.venv/Scripts/python.exe -m src.annual_pack --year 2026                      # markdown to stdout
+.venv/Scripts/python.exe -m src.annual_pack --year 2026 --out tmp/annual_2026  # .md + 4 CSVs
+.venv/Scripts/python.exe -m src.annual_pack --year 2025 --db path/to/copy.db
+```
+
+### Modelo 390 (`src/modelo_390.py`)
+
+`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation and the validator use it. Box layout from the AEAT *Modelo 390. Instrucciones* (Sede, procedure G412, layout valid since ejercicio 2024):
+
+| Section | Boxes |
+|---------|-------|
+| IVA devengado | 01–06 (régimen ordinario 4/10/21 %), 545–552 (intra-EU acquisitions of services by rate), 27/28 (other reverse charge), 33/34 totals, 47 |
+| IVA deducible | 190/191, 603/604, 605/606 → 48/49 (current domestic, incl. non-EU reverse charge); 196/197, 611–614 → 50/51 (capital goods); 587/588, 635–638 → 597/598 (intra-EU services); 63 (capital-goods regularisation); 522 (pro-rata regularisation, the Q4 303 box 44); 64, 65 = 47 − 64 |
+| Result | 84, 85 (credit of earlier years applied: min(Q1 box 110, Σ box 78)), 86 = 84 − 85, 95 (Σ positive 71), 97/98 (Q4 72/73), 662 (credit generated this year still pending) |
+| Volume | 99 (taxed sales), 103 (intra-EU B2B), 104 (exports), 105 (exempt teaching), 110 (non-EU services not subject — the 303's box 120), 126 (OSS), 108 total |
+| Pro-rata | 115/116/118 (general pro-rata, box 117 = G) — only when exempt operations exist |
+
+Deductible bases are "sin prorratear" (the 303's `base_100`), cuotas after the pro-rata. The per-rate split follows the rate of each 303 audit record and is rounded so the rates add up to the section total. `INTRA_EU_RC` purchases are services (349 key I). The external accountant reported non-EU services in 104; the app follows the instructions (110). `230`/`232` (exempt / non-deductible purchases) are not modelled.
+
+### Modelo 347 (`src/modelo_347.py` purchases + `compute_modelo_347` sales)
+
+Purchases: Spanish vendors (by NIF — the invoice's, else the vendor registry's) whose **VAT-inclusive** (`subtotal_eur + iva_amount`) purchases of the year **exceed** €3,005.06 (art. 33.1 RD 1065/2007: "hayan superado"), with the quarterly split. Excluded (art. 33.2 RD 1065/2007): intra-EU acquisitions already in the 349 and purchases with IRPF withheld (both 33.2.i), non-Spanish vendors (33.2.g) and `excluded` invoices. A vendor above the threshold without a NIF is listed as unidentified. Sales (key B) come from `compute_modelo_347` as before.
+
+### P&L per IAE activity (`src/pl_by_activity.py`)
+
+Income and expenses are the Q4 Modelo 130 year-to-date inputs split by activity — **826** coaching/teaching (`COACHING`), **861** illustration (`ILLUSTRATIONS`), **751** newsletter/publicity (`NEWSLETTER`): Stripe rows by `activity_type`; issued invoices by `activity_type` (an `EXEMPT_TEACHING` invoice without one is teaching); expense invoices by `activity_type`, else the vendor registry's `activity`. RETA, depreciation and lines without an activity follow `tax.pl_allocation` (below). Totals equal 130 Q4 box 01 and the real expenses inside box 02; the 5 % *gastos de difícil justificación* is shown separately (it is one allowance on the whole net yield). The tab and the markdown flag a P&L that does not tie.
+
 ## Reconciliation
 
 The **Reconciliation** tab (formerly Tax Validation) lines up every box of a filed AEAT return against the value the app computes, so each difference is either fixed or explained once and then recognised automatically.
@@ -616,7 +655,7 @@ The **Reconciliation** tab (formerly Tax Validation) lines up every box of a fil
 
 1. Pick a model (303, 130, 349, 390) and a period; the picker defaults to the latest filed period and lists the filed periods on record.
 2. Filed values come from the **AEAT receipts imported into the database** (tables `filed_returns` / `filed_349_operators`, see below). `tmp/validation/validation.yaml` (gitignored — never committed) is a fallback, used only for periods whose receipt has not been imported. On an imported return a blank box counts as 0; a YAML filing only knows the boxes it lists.
-3. App values come from `src/reconciliation.app_boxes(model, year, quarter, conn, config)`: it calls the engine result's `aeat_boxes()` (keyed by the box number printed on the form) when the result has one, and otherwise maps today's legacy field names (see the table below). Modelo 390 is aggregated from the four 303 quarters.
+3. App values come from `src/reconciliation.app_boxes(model, year, quarter, conn, config)`: it calls the engine result's `aeat_boxes()` (keyed by the box number printed on the form). The Modelo 390 comes from its own engine (`src/modelo_390.py`, see [Annual Pack](#annual-pack-modelo-390-modelo-347-pl-per-activity)), built from the year's four 303 results; its drill-down shows the live 390 audit cells.
 4. One row per box in the union of both sides: filed / app / diff (**app − filed**) / status / tag / explanation. The Modelo 349 also gets one row per operator, keyed `op:<VATID>:<KEY>` (country prefix + number, operation key) and summed per operator on each side.
 
 | Status | Meaning |
@@ -630,7 +669,6 @@ With no filed return for the period the tab shows guidance and the app's own fig
 
 - **Drill-down:** pick an app box to see the audit cells behind it — formula, inputs and records — from the latest `tax_audit_log` run for the period (written by **Calculate tax**), or from the live computation when no run is stored.
 - **Export:** **⬇️ Download table as markdown** writes the table (with status counts) for a private reconciliation note; `src/reconciliation.to_markdown` is the same function.
-- **Legacy caveats:** boxes mapped from legacy fields carry a note, listed under *Legacy engine mapping caveats*.
 
 ### Divergence catalogue (`divergences.json`)
 
@@ -655,14 +693,6 @@ A git-ignored JSON file at the repo root (`divergences.json.example` ships fake 
 | `explanation` | Required free text |
 
 A differing box that matches an entry for its model, period and box shows 🟡 with the entry's tag and explanation; the first matching entry wins. A ⚪ row is never catalogued.
-
-### Modelo 390 aggregation (temporary)
-
-The Modelo 303 (#97), 130 (#98) and 349 (#99, with `operators()`) results have their own `aeat_boxes()` and are used as is; no legacy field mapping is left. `src/legacy_aeat_boxes.py` only aggregates the Modelo 390 from the four quarterly 303s, until the annual pack (#103) gives it its own engine.
-
-| Model | AEAT box | Legacy source | Where the meaning differs |
-|-------|----------|---------------|---------------------------|
-| 390 | 05–108 | sum of the four quarterly 303s (07/09, 28/29, 59, 120 as 104, OSS) | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base); reverse charge, capital goods and pro-rata not aggregated yet |
 
 The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.
 

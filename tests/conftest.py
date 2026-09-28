@@ -26,6 +26,17 @@ def isolated_vendor_registry(tmp_path, monkeypatch):
     return path
 
 
+@pytest.fixture(autouse=True)
+def isolated_divergence_catalogue(tmp_path, monkeypatch):
+    """Point the divergence catalogue at a temp path: tests never read the real
+    (private, git-ignored) divergences.json. Returns the temp catalogue path."""
+    import src.reconciliation as reconciliation
+
+    path = tmp_path / "divergences.json"
+    monkeypatch.setattr(reconciliation, "CATALOGUE_PATH", path)
+    return path
+
+
 @pytest.fixture
 def sample_rules():
     """Minimal classification rules for testing."""

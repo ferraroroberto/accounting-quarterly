@@ -111,7 +111,7 @@ with st.sidebar:
     "Invoice Explorer",
     "Seguridad Social",
     "Tax Obligations",
-    "Tax Validation",
+    "Reconciliation",
     "Tax Audit",
 ])
 

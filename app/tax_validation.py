@@ -1,34 +1,99 @@
-"""Tax Validation tab — compare gestor-filed AEAT figures against DB-computed values."""
+"""Reconciliation tab — filed AEAT returns vs the app's figures, box by box.
+
+Pick a model and period; every box of the filed return is lined up against
+the app's value with a status (✅ exact, 🟡 catalogued divergence, 🔴
+unexplained, ⚪ one side missing). The divergence catalogue
+(``divergences.json``) is edited at the bottom of the tab. All logic lives in
+``src/reconciliation.py``; this module only renders.
+"""
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
+from datetime import date
+from typing import Optional
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
+from app.tax_audit import _render_audit_table  # same per-cell drill-down as the Tax Audit tab
 from src.database import get_connection
 from src.filed_returns import import_pdf
-from src.tax_validator import (
-    ModelValidationResult,
-    ValidationLine,
-    run_all_validations,
+from src.logger import get_logger
+from src.reconciliation import (
+    CATALOGUE_FIELDS,
+    CATALOGUE_PATH,
+    CATEGORIES,
+    MODELS,
+    RULES,
+    STATUS_EXACT,
+    STATUS_ICONS,
+    STATUSES,
+    CatalogueError,
+    Divergence,
+    Reconciliation,
+    apply_catalogue,
+    audit_entries_for_box,
+    list_filed_periods,
+    load_catalogue,
+    load_logged_audit,
+    reconcile,
+    save_catalogue,
+    to_markdown,
 )
 
+log = get_logger(__name__)
+
+_MODEL_LABELS = {
+    "303": "Modelo 303 — IVA trimestral",
+    "130": "Modelo 130 — pago fraccionado IRPF",
+    "349": "Modelo 349 — operaciones intracomunitarias",
+    "390": "Modelo 390 — resumen anual IVA",
+}
+_NUMERIC_CATALOGUE_FIELDS = ("year", "quarter", "expected_delta", "tolerance")
+
+
+# ---------------------------------------------------------------------------
+# Cached data access (each opens and closes its own connection so the result
+# is picklable; tests replace these functions)
+# ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _cached_validations() -> list[ModelValidationResult]:
-    """Run all validations once and cache the results for 5 minutes.
-
-    Creates and closes its own DB connection so the result is picklable
-    (sqlite3.Connection objects cannot be cached by Streamlit).
-    """
+def _cached_filed_periods() -> list[tuple[str, int, Optional[int]]]:
     conn = get_connection()
     try:
-        return run_all_validations(conn)
+        return list_filed_periods(conn)
     finally:
         conn.close()
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_reconciliation(model: str, year: int, quarter: Optional[int]) -> Reconciliation:
+    """Filed-vs-app lines without catalogue statuses (applied at render time)."""
+    conn = get_connection()
+    try:
+        return reconcile(model, year, quarter, conn)
+    finally:
+        conn.close()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_logged_audit(model: str, year: int, quarter: int) -> list[dict]:
+    conn = get_connection()
+    try:
+        return load_logged_audit(conn, model, year, quarter)
+    finally:
+        conn.close()
+
+
+def _clear_caches() -> None:
+    for fn in (_cached_filed_periods, _cached_reconciliation, _cached_logged_audit):
+        clear = getattr(fn, "clear", None)
+        if clear:
+            clear()
+
+
+# ---------------------------------------------------------------------------
+# Sections
+# ---------------------------------------------------------------------------
 
 def _render_receipt_import() -> None:
     """Upload filed AEAT receipt PDFs (303/130/349/390) into the database."""
@@ -59,180 +124,257 @@ def _render_receipt_import() -> None:
                         + (f", {len(f.operators)} operators" if f.model == "349" else "")
                         + ")"
                     )
-            _cached_validations.clear()
-
-_STATUS_ICONS = {
-    "OK":      "✅",
-    "DB_HIGH": "⬆️",
-    "DB_LOW":  "⬇️",
-    "N/A":     "➖",
-}
-_STATUS_COLOURS = {
-    "OK":      "#2d7a2d",
-    "DB_HIGH": "#b35900",
-    "DB_LOW":  "#b30000",
-    "N/A":     "#888888",
-}
+            _clear_caches()
 
 
-def _fmt(v: float | None) -> str:
-    if v is None:
-        return "—"
-    sign = "-" if v < 0 else ""
-    return f"{sign}€{abs(v):,.2f}"
-
-
-def _diff_badge(line: ValidationLine) -> str:
-    d = line.diff
-    if d is None:
-        return "—"
-    return f"{'+' if d >= 0 else '-'}€{abs(d):,.2f}"
-
-
-def _lines_to_df(lines: list[ValidationLine]) -> pd.DataFrame:
-    rows = []
-    for ln in lines:
-        rows.append({
-            "Casilla": ln.casilla,
-            "Description": ln.description,
-            "Filed (gestor)": _fmt(ln.filed),
-            "DB computed": _fmt(ln.computed),
-            "Diff (DB − filed)": _diff_badge(ln),
-            "Status": f"{_STATUS_ICONS.get(ln.status, '')} {ln.status}",
-            "_status": ln.status,
-        })
-    return pd.DataFrame(rows)
-
-
-def _status_summary(result: ModelValidationResult) -> str:
-    if not result.lines:
-        return "No data"
-    total = len([ln for ln in result.lines if ln.status != "N/A"])
-    ok = result.ok_count
-    diff = result.diff_count
-    if diff == 0:
-        return f"✅ All {ok} lines match"
-    return f"⚠️ {diff} difference(s) out of {total} lines"
-
-
-def _render_model_section(result: ModelValidationResult) -> None:
-    col_title, col_status = st.columns([3, 2])
-    with col_title:
-        st.subheader(f"Modelo {result.model} — {result.period}")
-        st.caption(f"Gestor filed: {result.filed_date}")
-    with col_status:
-        st.markdown("**Summary:**")
-        st.markdown(_status_summary(result))
-
-    df = _lines_to_df(result.lines)
-
-    display_df = df.drop(columns=["_status"])
-
-    # Colour the Status and Diff columns via per-cell map
-    def highlight_status(val: str) -> str:
-        for key, colour in _STATUS_COLOURS.items():
-            if key in val:
-                return f"color: {colour}; font-weight: bold"
-        return ""
-
-    def highlight_diff(val: str) -> str:
-        if val.startswith("+") or (val.startswith("€") and not val.startswith("-")):
-            return f"color: {_STATUS_COLOURS['DB_HIGH']}"
-        if val.startswith("-€"):
-            return f"color: {_STATUS_COLOURS['DB_LOW']}"
-        return ""
-
-    styled2 = (
-        display_df.style
-        .map(highlight_status, subset=["Status"])
-        .map(highlight_diff, subset=["Diff (DB − filed)"])
+def _render_period_picker(periods: list[tuple[str, int, Optional[int]]]) -> tuple[str, int, Optional[int]]:
+    """Model / year / quarter selectors; defaults to the latest filed period."""
+    latest = max(
+        (p for p in periods if p[2] is not None),
+        key=lambda p: (p[1], p[2]), default=None,
     )
+    today = date.today()
+    default_year = latest[1] if latest else today.year
+    default_quarter = latest[2] if latest else (today.month - 1) // 3 + 1
 
-    st.dataframe(styled2, width="stretch", hide_index=True)
+    col_model, col_year, col_quarter = st.columns([2, 1, 1])
+    with col_model:
+        model = st.selectbox(
+            "Model", options=list(MODELS), format_func=lambda m: _MODEL_LABELS[m], key="rc_model",
+        )
+    with col_year:
+        year = int(st.number_input(
+            "Year", min_value=2020, max_value=2035, value=int(default_year), step=1, key="rc_year",
+        ))
+    with col_quarter:
+        quarter: Optional[int] = st.selectbox(
+            "Quarter", options=[1, 2, 3, 4], index=int(default_quarter) - 1,
+            format_func=lambda q: f"Q{q}", key="rc_quarter", disabled=model == "390",
+        )
+    if model == "390":
+        quarter = None
 
-    # Highlight key differences in natural language
-    diffs = [ln for ln in result.lines if not ln.match and ln.status != "N/A" and ln.diff is not None]
-    if diffs:
-        with st.expander(f"⚠️ {len(diffs)} difference(s) — details", expanded=False):
-            for ln in diffs:
-                direction = "DB higher" if (ln.diff or 0) > 0 else "DB lower"
-                st.markdown(
-                    f"- **{ln.description}** (box {ln.casilla}): "
-                    f"filed={_fmt(ln.filed)}, computed={_fmt(ln.computed)}, "
-                    f"diff={_diff_badge(ln)} → *{direction}*"
-                )
+    filed = [p for p in periods if p[0] == model]
+    if filed:
+        st.caption(
+            "Filed periods on record for this model: "
+            + ", ".join(f"{y} Q{q}" if q else f"{y} annual" for _, y, q in filed)
+        )
+    return model, year, quarter
 
+
+def _load_catalogue_safe() -> tuple[list[Divergence], Optional[str]]:
+    try:
+        return load_catalogue(), None
+    except CatalogueError as exc:
+        return [], str(exc)
+
+
+def _lines_df(rec: Reconciliation, hide_exact: bool) -> pd.DataFrame:
+    rows = []
+    for ln in rec.lines:
+        if hide_exact and ln.status == STATUS_EXACT:
+            continue
+        rows.append({
+            "Box": ln.box,
+            "Description": ln.description,
+            "Filed": ln.filed,
+            "App": ln.app,
+            "Diff (app − filed)": ln.diff,
+            "Status": f"{STATUS_ICONS[ln.status]} {ln.status}",
+            "Tag": ln.tag,
+            "Explanation": ln.explanation,
+        })
+    return pd.DataFrame(rows, columns=["Box", "Description", "Filed", "App", "Diff (app − filed)",
+                                       "Status", "Tag", "Explanation"])
+
+
+def _render_summary(rec: Reconciliation) -> None:
+    counts = rec.counts()
+    cols = st.columns(len(STATUSES))
+    for col, status in zip(cols, STATUSES):
+        with col:
+            st.metric(f"{STATUS_ICONS[status]} {status}", counts[status])
+
+
+def _render_table(rec: Reconciliation) -> None:
+    hide_exact = st.checkbox("Hide exact matches", value=False, key="rc_hide_exact")
+    money = st.column_config.NumberColumn(format="%.2f")
+    st.dataframe(
+        _lines_df(rec, hide_exact),
+        width="stretch",
+        hide_index=True,
+        column_config={"Filed": money, "App": money, "Diff (app − filed)": money},
+    )
+    caveats = [ln for ln in rec.lines if ln.note]
+    if caveats:
+        with st.expander(f"ℹ️ Legacy engine mapping caveats ({len(caveats)})", expanded=False):
+            st.caption(
+                "The app's engine still uses its pre-AEAT field names; these boxes are mapped "
+                "from them and do not carry the form's exact meaning yet (#97/#98/#99)."
+            )
+            for ln in caveats:
+                st.markdown(f"- **{ln.box}** — {ln.note}")
+
+
+def _render_drilldown(rec: Reconciliation) -> None:
+    st.markdown("#### Drill-down: audit records behind an app value")
+    if rec.quarter is None:
+        st.caption("Modelo 390 is aggregated from the four quarterly 303s — drill into each 303 quarter.")
+        return
+    boxes = [ln for ln in rec.lines if ln.app is not None]
+    if not boxes:
+        st.caption("The app computes no box for this period.")
+        return
+    labels = {ln.box: f"{ln.box} — {ln.description}" if ln.description else ln.box for ln in boxes}
+    box = st.selectbox("Box", options=list(labels), format_func=labels.get, key="rc_drill_box")
+
+    logged = _cached_logged_audit(rec.model, rec.year, rec.quarter)
+    if logged:
+        source = logged
+        st.caption(
+            f"From `tax_audit_log`, run `{logged[0]['computed_at']}`. It can be older than the "
+            "live figures above — re-run **Calculate tax** in Tax Obligations to refresh it."
+        )
+    else:
+        source = rec.live_audit
+        st.caption(
+            "No stored `tax_audit_log` run for this period — showing the live computation's "
+            "audit trail (click **Calculate tax** in Tax Obligations to persist it)."
+        )
+    entries = audit_entries_for_box(source, rec.model, box, rec.engine)
+    if not entries:
+        st.info("No audit cell is linked to this box.")
+        return
+    _render_audit_table(entries)
+
+
+def _render_export(rec: Reconciliation) -> None:
+    md = to_markdown(rec)
+    q = f"Q{rec.quarter}" if rec.quarter else "annual"
+    st.download_button(
+        "⬇️ Download table as markdown",
+        data=md,
+        file_name=f"reconciliation_{rec.model}_{rec.year}_{q}.md",
+        mime="text/markdown",
+        key="rc_md_download",
+    )
+    with st.expander("Markdown preview", expanded=False):
+        st.code(md, language="markdown")
+
+
+def _catalogue_df(entries: list[Divergence]) -> pd.DataFrame:
+    df = pd.DataFrame([e.to_dict() for e in entries], columns=list(CATALOGUE_FIELDS))
+    for col in _NUMERIC_CATALOGUE_FIELDS:
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+    for col in (c for c in CATALOGUE_FIELDS if c not in _NUMERIC_CATALOGUE_FIELDS):
+        df[col] = df[col].astype("object")
+    return df
+
+
+def _render_catalogue_editor(catalogue: list[Divergence], load_error: Optional[str]) -> None:
+    with st.expander(f"📒 Divergence catalogue — `{CATALOGUE_PATH.name}` ({len(catalogue)} entries)",
+                     expanded=False):
+        saved = st.session_state.pop("rc_catalogue_saved", None)
+        if saved is not None:
+            st.success(f"Saved {saved} catalogue entr{'y' if saved == 1 else 'ies'}.")
+        if load_error:
+            st.error(f"`{CATALOGUE_PATH.name}` could not be loaded — fix or re-save it:\n\n{load_error}")
+        st.caption(
+            "One row per explained difference. `year` / `quarter` empty = any. Give **either** "
+            "`expected_delta` (app − filed, matched within `tolerance`) **or** a `rule`: "
+            "`app_gte_filed`, `app_lte_filed`, `any`. For a 349 operator use the table's box "
+            "key, e.g. `op:IE1234567X:I`. The file is git-ignored; see `divergences.json.example`."
+        )
+        edited = st.data_editor(
+            _catalogue_df(catalogue),
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="rc_catalogue_editor",
+            column_config={
+                "model": st.column_config.SelectboxColumn("model", options=list(MODELS)),
+                "year": st.column_config.NumberColumn("year", step=1, format="%d"),
+                "quarter": st.column_config.NumberColumn("quarter", min_value=1, max_value=4, step=1, format="%d"),
+                "box": st.column_config.TextColumn("box"),
+                "expected_delta": st.column_config.NumberColumn("expected_delta", format="%.2f"),
+                "rule": st.column_config.SelectboxColumn("rule", options=list(RULES)),
+                "tolerance": st.column_config.NumberColumn("tolerance", min_value=0.0, format="%.2f"),
+                "category": st.column_config.SelectboxColumn("category", options=list(CATEGORIES)),
+                "explanation": st.column_config.TextColumn("explanation", width="large"),
+            },
+        )
+        if st.button("💾 Save catalogue", key="rc_catalogue_save"):
+            records = [
+                r for r in edited.to_dict("records")
+                if any(not pd.isna(v) and v != "" for v in r.values())
+            ]
+            try:
+                parsed = save_catalogue(records)
+            except CatalogueError as exc:
+                st.error(f"Not saved — fix these rows:\n\n{exc}")
+            else:
+                st.session_state["rc_catalogue_saved"] = len(parsed)
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def render() -> None:
-    st.title("Tax Validation")
+    st.title("Reconciliation")
     st.markdown(
-        "Compares **gestor-filed AEAT declarations** against values our system computes "
-        "from the database. Differences may indicate missing invoices, unclassified transactions, "
-        "missing expense entries, or data not yet loaded into the DB."
+        "Every box of a **filed AEAT return** next to the value the **app** computes. "
+        "✅ exact (±€0.01) · 🟡 difference explained by the divergence catalogue · "
+        "🔴 unexplained difference · ⚪ one side missing. Diff = app − filed."
     )
-
-    col_info, col_btn = st.columns([5, 1])
+    _, col_btn = st.columns([5, 1])
     with col_btn:
-        if st.button("↺ Refresh", help="Clear cached results and re-run all validations", key="tv_refresh"):
-            _cached_validations.clear()
+        if st.button("↺ Refresh", help="Clear cached results and recompute", key="tv_refresh"):
+            _clear_caches()
 
     _render_receipt_import()
 
-    with st.spinner("Running validations…"):
-        results = _cached_validations()
+    periods = _cached_filed_periods()
+    model, year, quarter = _render_period_picker(periods)
+    catalogue, catalogue_error = _load_catalogue_safe()
+    if catalogue_error:
+        st.error(f"Divergence catalogue ignored — `{CATALOGUE_PATH.name}` is invalid (see the editor below).")
 
-    if not results:
-        st.warning(
-            "No filed declarations to compare against. Import the AEAT receipt PDFs above, "
-            "or add the gestor-filed values to `tmp/validation/validation.yaml` (see the "
-            "README's **Tax Validation** section), then hit ↺ Refresh."
-        )
+    try:
+        with st.spinner("Reconciling…"):
+            rec = _cached_reconciliation(model, year, quarter)
+    except Exception as exc:  # engine/DB failure: show it, don't blank the tab
+        log.exception("❌ Reconciliation failed for Modelo %s %s Q%s", model, year, quarter)
+        st.error(f"Could not compute the reconciliation: {exc}")
+        _render_catalogue_editor(catalogue, catalogue_error)
         return
+    rec = apply_catalogue(rec, catalogue)
 
-    by_source: dict[str, list[str]] = {}
-    for r in results:
-        by_source.setdefault(r.source, []).append(f"**{r.period}** (M{r.model})")
-    labels = {"db": "imported AEAT receipts", "yaml": "`tmp/validation/validation.yaml`"}
-    st.info(
-        "Reference data loaded from "
-        + "; ".join(f"{labels.get(src, src)}: {', '.join(p)}" for src, p in by_source.items())
-        + "."
-    )
+    period = f"{year} Q{quarter}" if quarter else f"{year} (annual)"
+    st.subheader(f"{_MODEL_LABELS[model]} — {period}")
+    if rec.filed_found:
+        source = {"db": "imported AEAT receipt", "yaml": "`tmp/validation/validation.yaml`"}
+        st.caption(
+            f"Filed {rec.filed_date or '—'} · source: {source.get(rec.filed_source, rec.filed_source)} "
+            f"· app engine: {rec.engine}"
+        )
+        _render_summary(rec)
+    else:
+        st.warning(
+            f"No filed Modelo {model} return for {period}. Import the AEAT receipt PDF with "
+            "**📥 Import filed AEAT receipts** above (or add the filed values to "
+            "`tmp/validation/validation.yaml`), then hit ↺ Refresh. The app's own figures are "
+            "shown below with ⚪ on the filed side."
+        )
 
-    # Top-level summary cards
-    st.markdown("### Summary")
-    cols = st.columns(len(results))
-    for col, result in zip(cols, results):
-        with col:
-            icon = "✅" if not result.has_differences else "⚠️"
-            st.metric(
-                label=f"Modelo {result.model} — {result.period}",
-                value=f"{icon} {result.diff_count} diff(s)",
-                delta=f"{result.ok_count} lines match" if result.ok_count else None,
-            )
+    if rec.lines:
+        _render_table(rec)
+        _render_drilldown(rec)
+        _render_export(rec)
+    else:
+        st.info("Nothing to compare: the app computes no box and there is no filed return.")
 
     st.markdown("---")
-
-    # Per-model detailed sections
-    for result in results:
-        _render_model_section(result)
-        st.markdown("---")
-
-    # Key gaps explanation
-    with st.expander("📌 Understanding the differences", expanded=False):
-        st.markdown(
-            """
-**Why do computed values differ from filed values?**
-
-| Gap | Likely reason |
-|-----|--------------|
-| Income lower in DB (M130/390) | Not all income is via Stripe (offline invoices, bank transfers) |
-| Expenses = 0 in DB | `quarterly_tax_entries` not yet populated with deductible expenses |
-| Retenciones = 0 in DB | No `RETENCIONES_SOPORTADAS` entries added |
-| Modelo 349 mismatch | Gestor's 349 captures **EU service purchases** (Squarespace, Stripe fees); our 349 captures **EU B2B sales** |
-| IVA devengado lower in DB | Only Stripe-sourced income classified; invoices not yet reconciled |
-| IVA soportado = 0 in DB | No `IVA_SOPORTADO` entries in quarterly_tax_entries |
-
-**Diff sign convention:** `DB − filed`. Positive (⬆️) means our system computes a higher value; negative (⬇️) means we compute less than the gestor filed.
-            """
-        )
+    _render_catalogue_editor(catalogue, catalogue_error)

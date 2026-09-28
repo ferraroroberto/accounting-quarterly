@@ -1,6 +1,6 @@
 # Stripe Accounting Quarterly Automation
 
-Automated Stripe payment classification and quarterly reporting system. Classifies payments by activity type (Coaching, Newsletter, Illustrations) and geographic region (Spain, EU-not-Spain, Outside-EU), then produces Excel reports, Spanish tax obligation snapshots, gestor-vs-database **Tax Validation**, and a Streamlit dashboard.
+Automated Stripe payment classification and quarterly reporting system. Classifies payments by activity type (Coaching, Newsletter, Illustrations) and geographic region (Spain, EU-not-Spain, Outside-EU), then produces Excel reports, Spanish tax obligation snapshots, a box-by-box **Reconciliation** of filed AEAT returns against the app's figures, and a Streamlit dashboard.
 
 ---
 
@@ -24,6 +24,7 @@ Copy the example files and edit them:
 cp config.json.example config.json
 cp classification_rules.json.example classification_rules.json
 cp vendors.json.example vendors.json  # vendor registry (optional; see "Vendor Registry")
+cp divergences.json.example divergences.json  # divergence catalogue (optional; see "Reconciliation")
 cp .env.example .env  # add your Stripe API key (and optional Accounting API settings)
 ```
 
@@ -77,6 +78,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 ├── classification_rules.json.example
 ├── vendors.json                   # Vendor registry (git-ignored, copy from .example — see "Vendor Registry")
 ├── vendors.json.example
+├── divergences.json               # Divergence catalogue (git-ignored, copy from .example — see "Reconciliation")
+├── divergences.json.example
 ├── config.json.example
 ├── requirements.txt
 ├── launch_app.bat                 # Windows launch shortcut
@@ -102,6 +105,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
+│   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
+│   ├── legacy_aeat_boxes.py       # TEMPORARY legacy engine field → AEAT box map (delete after #97/#98/#99)
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
@@ -126,7 +131,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
-│   ├── tax_validation.py          # Tax validation tab (gestor-filed vs DB-computed comparison)
+│   ├── tax_validation.py          # Reconciliation tab (filed vs app per box, drill-down, catalogue editor)
 │   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
@@ -141,6 +146,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
 │   ├── test_tax_validator.py      # Gestor-filed vs DB-computed validation
+│   ├── test_reconciliation.py     # Reconciliation matching, catalogue, 349 operators, export, adapter
+│   ├── test_tax_validation_tab.py # Reconciliation tab (AppTest, empty state)
 │   ├── test_filed_returns.py      # AEAT receipt parser/import (synthetic PDFs only)
 │   ├── test_invoice_dedupe.py     # Dedupe detectors, keeper rule, locked rows, engine picks up exclusions
 │   ├── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
@@ -274,7 +281,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
-- **filed_returns** — One row per non-empty box (casilla) of each filed AEAT return imported from its receipt PDF (model, year, period, box, value, justificante, CSV, presentation timestamp, source file). Reference data for Tax Validation — see "Importing filed AEAT receipts"
+- **filed_returns** — One row per non-empty box (casilla) of each filed AEAT return imported from its receipt PDF (model, year, period, box, value, justificante, CSV, presentation timestamp, source file). Reference data for the Reconciliation tab — see "Importing filed AEAT receipts"
 - **filed_349_operators** — Operator rows (country, VAT id, name, clave, base) of each imported Modelo 349 receipt
 - **tax_audit_log** — Per-cell calculation audit entries: every box in every model records the formula applied, named inputs, and computed value. Written alongside snapshots; queryable by year/quarter/model/run timestamp
 - **declared_reports** / **declared_report_lines** — The Stripe report actually sent to the gestor, frozen by `close_quarter.py report --freeze`: quarter, version, file name, SHA-256 of the `.xlsx`, and per-transaction EUR amounts. Insert-only (SQLite triggers reject UPDATE/DELETE); a corrected re-send is a new version. The tax engine uses the latest version's EUR amounts for every transaction it contains, so later FX re-conversions cannot move a declared quarter
@@ -491,33 +498,80 @@ Items that cannot be derived from Stripe or invoices (additional overrides, one-
 
 ---
 
-## Tax Validation
+## Reconciliation
 
-The **Tax Validation** tab cross-checks the figures your gestor filed with AEAT against the values computed from your local database, making it easy to spot missing invoices, unclassified transactions, or expenses not yet entered.
+The **Reconciliation** tab (formerly Tax Validation) lines up every box of a filed AEAT return against the value the app computes, so each difference is either fixed or explained once and then recognised automatically.
 
 ### How it works
 
-1. Filed reference data comes from the **AEAT receipts imported into the database** (tables `filed_returns` / `filed_349_operators`, see below). `tmp/validation/validation.yaml` (gitignored — never committed) is a fallback, used only for periods whose receipt has not been imported. On an imported return a blank box counts as 0.
-2. The tab loads the filings, runs the same tax-engine computations as in Tax Obligations (against your current SQLite data), and builds a line-by-line comparison for each casilla (PDF box).
-3. Each line gets a status:
+1. Pick a model (303, 130, 349, 390) and a period; the picker defaults to the latest filed period and lists the filed periods on record.
+2. Filed values come from the **AEAT receipts imported into the database** (tables `filed_returns` / `filed_349_operators`, see below). `tmp/validation/validation.yaml` (gitignored — never committed) is a fallback, used only for periods whose receipt has not been imported. On an imported return a blank box counts as 0; a YAML filing only knows the boxes it lists.
+3. App values come from `src/reconciliation.app_boxes(model, year, quarter, conn, config)`: it calls the engine result's `aeat_boxes()` (keyed by the box number printed on the form) when the result has one, and otherwise maps today's legacy field names (see the table below). Modelo 390 is aggregated from the four 303 quarters.
+4. One row per box in the union of both sides: filed / app / diff (**app − filed**) / status / tag / explanation. The Modelo 349 also gets one row per operator, keyed `op:<VATID>:<KEY>` (country prefix + number, operation key) and summed per operator on each side.
 
-| Status | Icon | Meaning |
-|--------|------|---------|
-| `OK` | ✅ | DB value matches filed value (within €0.02 tolerance) |
-| `DB_HIGH` | ⬆️ | DB computes a higher value than the gestor filed |
-| `DB_LOW` | ⬇️ | DB computes a lower value than the gestor filed |
-| `N/A` | ➖ | One side has no data (yet) |
+| Status | Meaning |
+|--------|---------|
+| ✅ `exact` | Filed and app agree within €0.01 |
+| 🟡 `catalogued` | They differ and a divergence-catalogue entry explains the difference |
+| 🔴 `uncatalogued` | They differ and nothing explains it |
+| ⚪ `missing` | One side is unavailable: no filed return for the period, or the app does not compute that box |
 
-**Diff sign convention:** `DB − filed`. Positive = our system computes more; negative = our system computes less.
+With no filed return for the period the tab shows guidance and the app's own figures (all ⚪) instead of failing.
 
-### Supported models
+- **Drill-down:** pick an app box to see the audit cells behind it — formula, inputs and records — from the latest `tax_audit_log` run for the period (written by **Calculate tax**), or from the live computation when no run is stored.
+- **Export:** **⬇️ Download table as markdown** writes the table (with status counts) for a private reconciliation note; `src/reconciliation.to_markdown` is the same function.
+- **Legacy caveats:** boxes mapped from legacy fields carry a note, listed under *Legacy engine mapping caveats*.
 
-| Model | Scope |
-|-------|-------|
-| Modelo 130 | Quarterly IRPF advance (YTD boxes) |
-| Modelo 303 | Quarterly IVA — devengado, deducible, result |
-| Modelo 349 | Intracomunitarias — operator count and total amount |
-| Modelo 390 | Annual IVA summary — all major casillas |
+### Divergence catalogue (`divergences.json`)
+
+A git-ignored JSON file at the repo root (`divergences.json.example` ships fake entries). Edit it in the tab's **📒 Divergence catalogue** editor — **💾 Save catalogue** validates every row and writes nothing if one is invalid — or by hand:
+
+```json
+{"divergences": [
+  {"model": "303", "year": 2026, "quarter": 1, "box": "09",
+   "expected_delta": 12.34, "rule": null, "tolerance": 0.01,
+   "category": "gestor_error", "explanation": "Why the filed value differs"}
+]}
+```
+
+| Field | Rule |
+|-------|------|
+| `model` | `303`, `130`, `349` or `390` |
+| `year` / `quarter` | The period; `null` = any year / any quarter (390 is annual: quarter must be `null`) |
+| `box` | Box as printed (`"07"`, `"110"`; `"7"` is normalised to `"07"`), or a 349 operator key `op:<VATID>:<KEY>` |
+| `expected_delta` | Expected app − filed, matched within `tolerance` (default 0.01) |
+| `rule` | Instead of a delta: `app_gte_filed`, `app_lte_filed` or `any` — give exactly one of the two |
+| `category` | `gestor_error`, `convention` or `app_choice` (shown as the row's tag) |
+| `explanation` | Required free text |
+
+A differing box that matches an entry for its model, period and box shows 🟡 with the entry's tag and explanation; the first matching entry wins. A ⚪ row is never catalogued.
+
+### Legacy engine → AEAT box mapping (temporary)
+
+Until #97 (303), #98 (130) and #99 (349) give each engine result `aeat_boxes()` / `operators()`, `src/legacy_aeat_boxes.py` maps the legacy fields. Delete that module once they ship.
+
+| Model | AEAT box | Legacy source | Where the meaning differs |
+|-------|----------|---------------|---------------------------|
+| 303 | 07 / 09 | `box_01_base` / `box_03_cuota` | Legacy "01/03" are the 21 % rows, which the form prints in 07/09 |
+| 303 | 27 | `box_03_cuota` | 27 should total all accrued VAT; reverse-charge accruals (10–13) are missing |
+| 303 | 28 / 29 | `box_28_base_soportado` / `box_29_cuota_soportado` | Still include capital goods (30/31) and intra-EU acquisitions (36/37); manual IVA entries get a base estimated at 21 % |
+| 303 | 45 | `box_29_cuota_soportado` | 45 should total every deductible box; legacy only has 29 |
+| 303 | 46 | `box_46_diferencia` | — |
+| 303 | 59 | `box_59_intracom_entregas` | — |
+| 303 | 60 | `export_base` | Non-EU services; the 303 rework (#97) reports them in 120 (not subject by location rules) |
+| 303 | 64 / 66 | `box_48_resultado` | Equal to 46 (single regime, 100 % attributable); no carry-forward, so 69/71/110/78/87 are not mapped |
+| 130 | 01 | `box_01_ingresos` | — |
+| 130 | 02 | `box_02_gastos` + `gastos_dificil_justificacion` | Legacy keeps the 5 % allowance outside box 02; the adapter adds it back, as on the form |
+| 130 | 03 | `rendimiento_neto` | Legacy `box_03_rendimiento` is before the 5 % allowance |
+| 130 | 04 | `box_05_base` | Legacy numbering differs |
+| 130 | 05 | `box_14_pagos_anteriores` | Legacy reads `tax_filing_status`; the form uses Σ positive 07 − Σ 16 of earlier filed quarters |
+| 130 | 06 | `box_07_retenciones` | Legacy numbering differs |
+| 130 | 07 | `box_05_base − box_14_pagos_anteriores − box_07_retenciones` | Derived; negative allowed |
+| 130 | 19 | `box_16_resultado` | Clamped at 0; no 12–18 (no 13 reduction, no 15 negative carry) |
+| 349 | 01 / 02 | operator count / `total` | Only EU B2B sales, reported under key `S`; acquisitions (key `I`) arrive with #99 |
+| 390 | 05–108 | sum of the four quarterly legacy 303s | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base) |
+
+The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.
 
 ### Importing filed AEAT receipts
 
@@ -528,7 +582,7 @@ Download the official receipt PDF of each presentation (Modelo 303, 130, 349 and
 .\.venv\Scripts\python.exe -m src.filed_returns import <folder-or-pdf> [...]
 ```
 
-It prints one line per file (`imported`, `replaced`, `unchanged`, `superseded` or `skipped`). The same can be done from the **📥 Import filed AEAT receipts** expander at the top of the Tax Validation tab.
+It prints one line per file (`imported`, `replaced`, `unchanged`, `superseded` or `skipped`). The same can be done from the **📥 Import filed AEAT receipts** expander at the top of the Reconciliation tab.
 
 - **What is read:** header (model, fiscal year, period, justificante, CSV, presentation timestamp, presenter) and every non-empty box — 303 pages 2–4 (including 60, 64–72 and 110/78/87), 130 boxes 01–19, 349 summary boxes plus every operator row, and the 390 boxes. The 303 "Tipo %" boxes are pre-printed rates and are not stored.
 - **How:** `pdfplumber` word coordinates; each amount is paired with the nearest box number to its left on the same row (±7 pt). Text printed in the form-template font (e.g. the 130's "máximo 660,14 euros" note) is ignored. `pdftotext -layout` is deliberately not used — it misaligns the 303 rows.
@@ -613,14 +667,14 @@ Streamlit re-runs the entire app script on every user interaction (widget change
 
 | Cached function | Where | What it avoids |
 |----------------|-------|----------------|
-| `_cached_validations()` | `app/tax_validation.py` | 39–45 DB queries per Tax Validation tab render (4 quarters × multiple model computations) |
+| `_cached_reconciliation()` · `_cached_filed_periods()` · `_cached_logged_audit()` | `app/tax_validation.py` | Engine computation + filed-return reads on every Reconciliation tab interaction (the catalogue is applied after the cache, so edits show at once) |
 | `_load_invoices_df()` | `app/invoice_explorer.py` | Full `invoices` table scan + type conversions on every filter interaction |
 | `_sidebar_stats()` | `app/streamlit_app.py` | 5 DB queries on every widget interaction across all tabs |
 
-**Cache TTL:** 5 minutes. Results auto-refresh after 5 minutes, or immediately via the **↺ Refresh** button present in the Tax Validation and Invoice Explorer tabs.
+**Cache TTL:** 5 minutes. Results auto-refresh after 5 minutes, or immediately via the **↺ Refresh** button present in the Reconciliation and Invoice Explorer tabs.
 
 **Invalidation rules:**
-- Tax Validation: click **↺ Refresh** after running **Calculate tax** or loading new data to see updated figures
+- Reconciliation: click **↺ Refresh** after running **Calculate tax** or loading new data to see updated figures
 - Invoice Explorer: click **↺ Refresh** after extracting new invoices via OCR to see them in the table
 - Sidebar stats: auto-refresh every 5 minutes (no manual control needed)
 

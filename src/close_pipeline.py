@@ -14,7 +14,7 @@
 7. ``reta``        import a bank export of RETA (TGSS) debits.
 8. ``compute``     303/130/OSS/349/347 snapshots — persisted only when a payload changed.
 9. ``reconcile``   filed vs app for this quarter if filed, else the previous quarter.
-10. ``sheet``      filing sheet through ``filing_sheet_renderer`` (placeholder until #101).
+10. ``sheet``      filing sheet through ``filing_sheet_renderer`` (``src.filing_sheet``).
 11. ``gestor-pack`` Stripe report (frozen with ``freeze``), notes and a draft email.
 
 Every step returns a ``StepResult``; ``changes`` lists what the step wrote, so
@@ -47,6 +47,7 @@ from src.declared_reports import (
 )
 from src.excel_exporter import create_excel_report, generate_report_filename
 from src.exceptions import ReportAlreadyFrozenError
+from src.filing_sheet import render_filing_sheet
 from src.fx_rates import (
     STALE_TOLERANCE_DAYS,
     backfill_to_today,
@@ -72,7 +73,6 @@ from src.reconciliation import (
     load_catalogue,
     reconcile,
     result_boxes,
-    result_operators,
     to_markdown,
 )
 from src.social_security import get_ss_payments, load_bank_export, upsert_ss_payments
@@ -626,7 +626,7 @@ def step_reconcile(ctx: CloseContext) -> StepResult:
 
 
 # ---------------------------------------------------------------------------
-# 10. sheet — pluggable renderer, replaced by #101's filing sheet
+# 10. sheet — pluggable renderer, default ``src.filing_sheet.render_filing_sheet``
 # ---------------------------------------------------------------------------
 
 FilingSheetRenderer = Callable[[int, int, sqlite3.Connection, dict], str]
@@ -638,41 +638,9 @@ def _stored_results(year: int, quarter: int, conn: sqlite3.Connection) -> dict[s
             if r["model"] in QUARTERLY_MODELS}
 
 
-def placeholder_filing_sheet(year: int, quarter: int, conn: sqlite3.Connection, config: dict) -> str:
-    """Markdown of the stored snapshots' non-zero AEAT boxes (+ 349 operators).
-
-    A placeholder until #101 ships the real filing sheet (form order, copy
-    buttons, credit chain, deadlines); swap ``filing_sheet_renderer`` for it.
-    """
-    results = _stored_results(year, quarter, conn)
-    out = [f"# Filing sheet — {year} Q{quarter}", "",
-           "> Placeholder until the filing sheet of #101: the non-zero boxes of the stored "
-           "`compute` snapshots. Not a record of what was filed.", ""]
-    for model in QUARTERLY_MODELS:
-        out += [f"## Modelo {model}", ""]
-        result = results.get(model)
-        if result is None:
-            out += ["_No stored snapshot — run `compute` first._", ""]
-            continue
-        boxes = sorted(((b, v) for b, v in result_boxes(model, result).items() if abs(v) >= 0.005),
-                       key=_box_key)
-        if boxes:
-            out += ["| Box | Value (EUR) |", "|---|--:|"] + [f"| {b} | {v:,.2f} |" for b, v in boxes]
-        else:
-            out.append("_All boxes are zero._")
-        out.append("")
-        if model == "349":
-            ops = result_operators(result)
-            if ops:
-                out += ["| Country | VAT id | Name | Key | Base (EUR) |", "|---|---|---|---|--:|"]
-                out += [f"| {o.get('country') or ''} | {o.get('vat_id') or ''} | {o.get('name') or ''} "
-                        f"| {o.get('key') or ''} | {float(o.get('base') or 0):,.2f} |" for o in ops]
-                out.append("")
-    return "\n".join(out)
-
-
-# #101 replaces this with the real filing-sheet renderer (same signature).
-filing_sheet_renderer: FilingSheetRenderer = placeholder_filing_sheet
+# The real filing sheet (#101): AEAT form order, credit chain, deadlines,
+# filed-version diff. Swappable (tests and callers may plug in another).
+filing_sheet_renderer: FilingSheetRenderer = render_filing_sheet
 
 
 def step_sheet(ctx: CloseContext, renderer: Optional[FilingSheetRenderer] = None) -> StepResult:

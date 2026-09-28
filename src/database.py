@@ -463,7 +463,8 @@ def backfill_tax_snapshot_legacy_keys(conn: sqlite3.Connection) -> int:
     Returns the number of rows migrated.
     """
     rows = conn.execute(
-        "SELECT year, quarter, payload_json FROM tax_computation_snapshots WHERE model = '303'"
+        """SELECT year, quarter, snapshot_version, payload_json FROM tax_computation_snapshots
+           WHERE model = '303' AND status != 'FILED'"""
     ).fetchall()
     updated = 0
     for row in rows:
@@ -475,8 +476,8 @@ def backfill_tax_snapshot_legacy_keys(conn: sqlite3.Connection) -> int:
                 data[new_key] = data.pop(old_key)
         conn.execute(
             """UPDATE tax_computation_snapshots SET payload_json = ?
-               WHERE year = ? AND quarter = ? AND model = '303'""",
-            (json.dumps(data, ensure_ascii=False), row["year"], row["quarter"]),
+               WHERE year = ? AND quarter = ? AND model = '303' AND snapshot_version = ?""",
+            (json.dumps(data, ensure_ascii=False), row["year"], row["quarter"], row["snapshot_version"]),
         )
         updated += 1
     if updated:
@@ -517,6 +518,73 @@ def _ensure_audit_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_audit_log_period
             ON tax_audit_log(year, quarter, model, computed_at)
     """)
+
+
+# Snapshot statuses (a subset of ``src.tax_models.FilingStatus``).
+SNAPSHOT_COMPUTED = "COMPUTED"
+SNAPSHOT_FILED = "FILED"
+
+# Versioned tax snapshots (#101): one row per (year, quarter, model, version).
+# The latest COMPUTED version is the working draft, rewritten by every
+# recompute; a FILED version is born FILED ("Mark filed") and is immutable.
+_TAX_SNAPSHOTS_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS {name} (
+        year             INTEGER NOT NULL,
+        quarter          INTEGER NOT NULL,
+        model            TEXT NOT NULL,
+        snapshot_version INTEGER NOT NULL DEFAULT 1,
+        status           TEXT NOT NULL DEFAULT 'COMPUTED' CHECK (status IN ('COMPUTED', 'FILED')),
+        payload_json     TEXT NOT NULL,
+        computed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        justificante     TEXT,
+        presented_on     TEXT,
+        filed_at         TEXT,
+        PRIMARY KEY (year, quarter, model, snapshot_version)
+    )
+"""
+
+# Same pattern as the declared_reports triggers: the database itself refuses to
+# rewrite or delete a filed snapshot, and a row can only become FILED by being
+# inserted as such (so a COMPUTED draft cannot be flipped to FILED in place).
+_TAX_SNAPSHOTS_TRIGGERS_SQL = """
+    CREATE TRIGGER IF NOT EXISTS tax_snapshots_filed_no_update
+        BEFORE UPDATE ON tax_computation_snapshots
+        WHEN OLD.status = 'FILED' OR NEW.status = 'FILED'
+        BEGIN SELECT RAISE(ABORT, 'filed tax snapshots are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS tax_snapshots_filed_no_delete
+        BEFORE DELETE ON tax_computation_snapshots
+        WHEN OLD.status = 'FILED'
+        BEGIN SELECT RAISE(ABORT, 'filed tax snapshots are immutable'); END;
+"""
+
+
+def _ensure_tax_snapshots_schema(conn: sqlite3.Connection) -> None:
+    """Create the versioned ``tax_computation_snapshots`` table, migrating the old one.
+
+    Before #101 the table was keyed (year, quarter, model) and every recompute
+    overwrote the row. The key now includes ``snapshot_version``; SQLite cannot
+    change a primary key in place, so an old table is rebuilt once, each
+    existing row becoming version 1, status COMPUTED.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tax_computation_snapshots'"
+    ).fetchone()
+    if exists and "snapshot_version" not in _get_table_columns(conn, "tax_computation_snapshots"):
+        conn.executescript(
+            "BEGIN;"
+            + _TAX_SNAPSHOTS_TABLE_SQL.format(name="tax_computation_snapshots_v2") + ";"
+            + """INSERT INTO tax_computation_snapshots_v2 (year, quarter, model, payload_json, computed_at)
+                   SELECT year, quarter, model, payload_json, computed_at FROM tax_computation_snapshots;
+                 DROP TABLE tax_computation_snapshots;
+                 ALTER TABLE tax_computation_snapshots_v2 RENAME TO tax_computation_snapshots;
+                 COMMIT;"""
+        )
+        log.info("ℹ️ Migrated DB: tax_computation_snapshots is now versioned (snapshot_version, status)")
+    conn.executescript(
+        _TAX_SNAPSHOTS_TABLE_SQL.format(name="tax_computation_snapshots") + ";"
+        + "CREATE INDEX IF NOT EXISTS idx_tax_snapshots_year ON tax_computation_snapshots(year);"
+        + _TAX_SNAPSHOTS_TRIGGERS_SQL
+    )
 
 
 def init_db(db_path: Optional[str | Path] = None) -> None:
@@ -630,18 +698,6 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_status_key
                 ON tax_filing_status(year, model, COALESCE(quarter, -1));
 
-            CREATE TABLE IF NOT EXISTS tax_computation_snapshots (
-                year         INTEGER NOT NULL,
-                quarter      INTEGER NOT NULL,
-                model        TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                PRIMARY KEY (year, quarter, model)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_tax_snapshots_year
-                ON tax_computation_snapshots(year);
-
             CREATE TABLE IF NOT EXISTS social_security_payments (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 payment_date TEXT NOT NULL,
@@ -676,6 +732,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         _ensure_tax_entries_schema(conn)
         _ensure_audit_schema(conn)
         conn.commit()
+        _ensure_tax_snapshots_schema(conn)
         backfill_invoice_classifications(conn)
         backfill_invoice_ledger_fields(conn)
         backfill_tax_snapshot_legacy_keys(conn)
@@ -1619,19 +1676,26 @@ def upsert_filing_status(year: int, model: str, quarter: Optional[int],
     """Insert or update a filing status record."""
     conn = get_connection(db_path)
     try:
-        conn.execute(
-            """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(year, model, COALESCE(quarter, -1)) DO UPDATE SET
-                   status = excluded.status,
-                   amount_eur = excluded.amount_eur,
-                   notes = excluded.notes,
-                   filed_at = excluded.filed_at""",
-            (year, model, quarter, status, amount_eur, notes, filed_at),
-        )
+        upsert_filing_status_conn(conn, year, model, quarter, status, amount_eur, notes, filed_at)
         conn.commit()
     finally:
         conn.close()
+
+
+def upsert_filing_status_conn(conn: sqlite3.Connection, year: int, model: str, quarter: Optional[int],
+                              status: str, amount_eur: Optional[float] = None,
+                              notes: str = "", filed_at: Optional[str] = None) -> None:
+    """``upsert_filing_status`` on an open connection (the caller commits)."""
+    conn.execute(
+        """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(year, model, COALESCE(quarter, -1)) DO UPDATE SET
+               status = excluded.status,
+               amount_eur = excluded.amount_eur,
+               notes = excluded.notes,
+               filed_at = excluded.filed_at""",
+        (year, model, quarter, status, amount_eur, notes, filed_at),
+    )
 
 
 def get_all_filing_statuses(year: int,
@@ -1660,15 +1724,45 @@ def upsert_tax_snapshot_conn(
     payload_json: str,
     computed_at: str,
 ) -> None:
-    """Insert or replace one stored tax computation snapshot."""
+    """Store a freshly computed snapshot without ever touching a FILED version.
+
+    The single write path of ``compute_and_persist_tax_snapshots`` (so the
+    FILED guard lives here rather than in the engine):
+
+    - no snapshot yet → version 1, COMPUTED;
+    - latest version COMPUTED → that draft is rewritten in place;
+    - latest version FILED → a new COMPUTED version (latest + 1) is added,
+      unless the payload is identical to the filed one (nothing changed).
+    """
+    latest = conn.execute(
+        """SELECT snapshot_version, status, payload_json FROM tax_computation_snapshots
+           WHERE year = ? AND quarter = ? AND model = ?
+           ORDER BY snapshot_version DESC LIMIT 1""",
+        (year, quarter, model),
+    ).fetchone()
+    if latest is not None and latest[1] == SNAPSHOT_COMPUTED:
+        conn.execute(
+            """UPDATE tax_computation_snapshots SET payload_json = ?, computed_at = ?
+               WHERE year = ? AND quarter = ? AND model = ? AND snapshot_version = ?""",
+            (payload_json, computed_at, year, quarter, model, latest[0]),
+        )
+        return
+    if latest is not None and latest[2] == payload_json:
+        return  # recompute matches the filed version: no new draft
+    version = 1 if latest is None else latest[0] + 1
     conn.execute(
-        """INSERT INTO tax_computation_snapshots (year, quarter, model, payload_json, computed_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(year, quarter, model) DO UPDATE SET
-             payload_json = excluded.payload_json,
-             computed_at = excluded.computed_at""",
-        (year, quarter, model, payload_json, computed_at),
+        """INSERT INTO tax_computation_snapshots
+               (year, quarter, model, snapshot_version, status, payload_json, computed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (year, quarter, model, version, SNAPSHOT_COMPUTED, payload_json, computed_at),
     )
+    if latest is not None:
+        log.info("ℹ️ Modelo %s %s Q%s is filed (version %d): recompute stored as new draft version %d",
+                 model, year, quarter, latest[0], version)
+
+
+_SNAPSHOT_COLUMNS = ("model, quarter, snapshot_version, status, payload_json, computed_at, "
+                     "justificante, presented_on, filed_at")
 
 
 def load_tax_snapshots_for_period(
@@ -1676,13 +1770,68 @@ def load_tax_snapshots_for_period(
     quarter: int,
     conn: sqlite3.Connection,
 ) -> list[sqlite3.Row]:
-    """Load snapshots for quarterly models for ``quarter``, plus annual Modelo 347 (``quarter`` 0)."""
+    """Latest snapshot version of each quarterly model for ``quarter``, plus annual Modelo 347 (``quarter`` 0)."""
     return conn.execute(
-        """SELECT model, quarter, payload_json, computed_at
-           FROM tax_computation_snapshots
-           WHERE year = ? AND (quarter = ? OR (model = '347' AND quarter = ?))""",
+        f"""SELECT {_SNAPSHOT_COLUMNS}
+            FROM tax_computation_snapshots s
+            WHERE year = ? AND (quarter = ? OR (model = '347' AND quarter = ?))
+              AND snapshot_version = (
+                  SELECT MAX(t.snapshot_version) FROM tax_computation_snapshots t
+                  WHERE t.year = s.year AND t.quarter = s.quarter AND t.model = s.model)""",
         (year, quarter, TAX_SNAPSHOT_QUARTER_ANNUAL),
     ).fetchall()
+
+
+def load_tax_snapshot_versions(
+    conn: sqlite3.Connection, year: int, quarter: int, model: str,
+) -> list[sqlite3.Row]:
+    """Every stored version of one model's snapshot, oldest first."""
+    return conn.execute(
+        f"""SELECT {_SNAPSHOT_COLUMNS} FROM tax_computation_snapshots
+            WHERE year = ? AND quarter = ? AND model = ? ORDER BY snapshot_version""",
+        (year, quarter, model),
+    ).fetchall()
+
+
+def insert_filed_tax_snapshot_conn(
+    conn: sqlite3.Connection,
+    year: int,
+    quarter: int,
+    model: str,
+    justificante: str,
+    presented_on: str,
+    filed_at: str,
+) -> tuple[int, str]:
+    """Freeze the latest COMPUTED snapshot as a new, immutable FILED version.
+
+    Returns ``(new_version, payload_json)``. Raises ``ValueError`` when there is
+    no snapshot, or when the latest version is already FILED (recompute first
+    to file a corrected return: that creates the draft to freeze). The caller
+    commits.
+    """
+    latest = conn.execute(
+        """SELECT snapshot_version, status, payload_json, computed_at FROM tax_computation_snapshots
+           WHERE year = ? AND quarter = ? AND model = ?
+           ORDER BY snapshot_version DESC LIMIT 1""",
+        (year, quarter, model),
+    ).fetchone()
+    if latest is None:
+        raise ValueError(f"no computed snapshot for Modelo {model} {year} Q{quarter} — calculate it first")
+    if latest[1] == SNAPSHOT_FILED:
+        raise ValueError(
+            f"Modelo {model} {year} Q{quarter} version {latest[0]} is already filed — "
+            "recompute to create a new draft before filing again"
+        )
+    version = latest[0] + 1
+    conn.execute(
+        """INSERT INTO tax_computation_snapshots
+               (year, quarter, model, snapshot_version, status, payload_json, computed_at,
+                justificante, presented_on, filed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (year, quarter, model, version, SNAPSHOT_FILED, latest[2], latest[3],
+         justificante, presented_on, filed_at),
+    )
+    return version, latest[2]
 
 
 # ---------------------------------------------------------------------------

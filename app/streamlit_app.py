@@ -95,7 +95,7 @@ with st.sidebar:
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr, tab_invoice_ledger,
  tab_invoice_dedupe, tab_vendors, tab_fixed_assets, tab_invoice_explorer, tab_ss, tab_tax,
- tab_validation, tab_audit) = st.tabs([
+ tab_filing_sheet, tab_validation, tab_audit) = st.tabs([
     "Welcome",
     "Quarter Report",
     "Transaction Browser",
@@ -111,6 +111,7 @@ with st.sidebar:
     "Invoice Explorer",
     "Seguridad Social",
     "Tax Obligations",
+    "Filing Sheet",
     "Reconciliation",
     "Tax Audit",
 ])
@@ -131,6 +132,7 @@ from app.invoice_dedupe_tab import render as render_invoice_dedupe
 from app.vendor_registry_tab import render as render_vendor_registry
 from app.fixed_assets_tab import render as render_fixed_assets
 from app.invoice_explorer import render as render_invoice_explorer
+from app.filing_sheet_tab import render as render_filing_sheet
 from app.tax_validation import render as render_tax_validation
 from app.tax_audit import render as render_tax_audit
 
@@ -178,6 +180,9 @@ with tab_ss:
 
 with tab_tax:
     render_tax_obligations()
+
+with tab_filing_sheet:
+    render_filing_sheet()
 
 with tab_validation:
     render_tax_validation()

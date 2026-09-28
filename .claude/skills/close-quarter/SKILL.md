@@ -136,9 +136,13 @@ AEAT receipt still needs importing (`python -m src.filed_returns import <pdf>`).
 
 ### 10. Filing sheet — `sheet`
 
-Writes `filing_sheet_<Y>_Q<Q>.md` from the stored `compute` snapshots (a
-placeholder: non-zero boxes per model plus the 349 operators, until the real
-filing sheet ships). `⚠ run compute first` means the snapshots are missing.
+Writes `filing_sheet_<Y>_Q<Q>.md` from the stored `compute` snapshots: the
+non-zero boxes of the 303 (form order), 130 and 349 (+ operator list), the 303
+credit chain, each model's result and the deadlines (direct debit / filing).
+A `⚠ Recomputed after filing` block lists boxes that differ from the filed
+version. `⚠ run compute first` means the snapshots are missing. After filing,
+the user marks each model filed in the **Filing Sheet** tab (justificante +
+date) and imports the receipt PDF (`python -m src.filed_returns import <pdf>`).
 
 ### 11. Accountant's pack — `gestor-pack`
 

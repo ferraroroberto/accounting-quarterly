@@ -526,13 +526,15 @@ def _is_aeat(result: Any) -> bool:
     return callable(getattr(result, "aeat_boxes", None))
 
 
-def _boxes_of(model: str, result: Any) -> dict[str, float]:
+def result_boxes(model: str, result: Any) -> dict[str, float]:
+    """AEAT box → value of one engine result: ``aeat_boxes()`` when present, else the legacy map."""
     if _is_aeat(result):
         return {normalize_box(k): float(v) for k, v in result.aeat_boxes().items() if v is not None}
     return legacy_boxes(model, result)
 
 
-def _operators_of(result: Any) -> list[dict]:
+def result_operators(result: Any) -> list[dict]:
+    """The 349 operator rows of one engine result: ``operators()`` when present, else the legacy map."""
     if callable(getattr(result, "operators", None)):
         return list(result.operators())
     return legacy_operators(result)
@@ -553,7 +555,7 @@ def app_boxes(
         return legacy_390_boxes(year, conn, config)
     if model not in QUARTERLY_MODELS or quarter is None:
         raise ValueError(f"unsupported model/period: {model} {year} Q{quarter}")
-    return _boxes_of(model, _compute(model, year, quarter, conn, config))
+    return result_boxes(model, _compute(model, year, quarter, conn, config))
 
 
 # ---------------------------------------------------------------------------
@@ -624,10 +626,10 @@ def reconcile(
     else:
         result = _compute(model, year, quarter, conn, config)
         engine = "aeat" if _is_aeat(result) else "legacy"
-        app = _boxes_of(model, result)
+        app = result_boxes(model, result)
         notes = {} if engine == "aeat" else legacy_notes(model)
         if model == "349":
-            app_ops = _operators_of(result)
+            app_ops = result_operators(result)
         live_audit = _audit_dicts(getattr(result, "audit", []) or [])
 
     rec = Reconciliation(

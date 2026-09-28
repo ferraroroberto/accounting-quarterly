@@ -1,6 +1,6 @@
 """Tests for src/reconciliation.py — filed-vs-app matching, catalogue, 349
-operators, markdown export and the engine → AEAT box adapter (303 and 130 native,
-349 via the legacy mapping).
+operators, markdown export and the engine → AEAT box adapter (303, 130, 349
+and the Modelo 390 engine, all through ``aeat_boxes()``).
 
 All data is synthetic (fake VAT ids, round amounts)."""
 from __future__ import annotations
@@ -35,10 +35,10 @@ from src.reconciliation import (
     operator_box,
     parse_entry,
     reconcile,
+    result_boxes,
     save_catalogue,
     to_markdown,
 )
-from src.legacy_aeat_boxes import legacy_boxes
 from src.tax_engine import compute_modelo_130, compute_modelo_303
 from src.tax_models import AuditEntry
 
@@ -327,10 +327,10 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
 
 class TestAppBoxesAdapter:
     def test_no_legacy_mapping_is_left(self):
-        # The 303 (#97), 130 (#98) and 349 (#99) have their own aeat_boxes(): no legacy mapping left.
+        # Every engine has its own aeat_boxes() (#97/#98/#99/#103): a result without one maps to nothing.
         legacy = SimpleNamespace(rows=[], total=9.5)
-        for model in ("303", "130", "349"):
-            assert legacy_boxes(model, legacy) == {}
+        for model in ("303", "130", "349", "390"):
+            assert result_boxes(model, legacy) == {}
 
     def test_303_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_303(2025, 1, db_conn, CFG)
@@ -409,7 +409,11 @@ class TestReconcile:
     def test_390_is_annual(self, db_conn):
         rec = reconcile("390", 2025, 3, db_conn, CFG)
         assert rec.quarter is None and rec.period == "2025 annual"
+        assert rec.engine == "aeat"
         assert "05" in {ln.box for ln in rec.lines}
+        # The 390 engine's audit trail backs the drill-down (cells named after the box).
+        cells = [e["cell"] for e in audit_entries_for_box(rec.live_audit, "390", "65", rec.engine)]
+        assert cells == ["c65"]
 
 
 # ---------------------------------------------------------------------------

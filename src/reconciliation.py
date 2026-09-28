@@ -26,9 +26,9 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 ``app_choice``) and an ``explanation``.
 
 **App side** — ``app_boxes(model, year, quarter, conn, config)`` calls the
-engine result's ``aeat_boxes()`` when it has one (#97/#98/#99) and otherwise
-maps the 349 field names through ``src/legacy_aeat_boxes.py`` (the 303 has
-``aeat_boxes()`` since #97, the 130 since #98).
+engine result's ``aeat_boxes()``: the 303 (#97), 130 (#98) and 349 (#99)
+quarterly engines and the Modelo 390 engine (``src/modelo_390.py``, #103),
+which is built from the year's four 303 results.
 
 No Streamlit here: the UI lives in ``app/tax_validation.py``.
 """
@@ -44,13 +44,8 @@ from typing import Any, Iterable, Optional
 
 from src.exceptions import StripeAutomationError
 from src.filed_returns import VALIDATOR_KEYS
-from src.legacy_aeat_boxes import (
-    legacy_390_boxes,
-    legacy_audit_cells,
-    legacy_boxes,
-    legacy_notes,
-)
 from src.logger import get_logger
+from src.modelo_390 import MODELO390_LABELS, compute_modelo_390
 from src.tax_engine import (
     compute_modelo_130,
     compute_modelo_303,
@@ -133,15 +128,7 @@ BOX_LABELS: dict[str, dict[str, str]] = {
         "01": "Número total de operadores", "02": "Importe de las operaciones intracomunitarias",
         "03": "Número de operadores con rectificaciones", "04": "Importe de las rectificaciones",
     },
-    "390": {
-        "05": "Base régimen ordinario 21 %", "06": "Cuota régimen ordinario 21 %",
-        "33": "Total bases IVA devengado", "34": "Total cuotas IVA devengado",
-        "48": "Deducible interiores corrientes — base", "49": "Deducible interiores corrientes — cuota",
-        "64": "Suma de deducciones", "65": "Resultado régimen general",
-        "86": "Resultado de la liquidación", "99": "Operaciones en régimen general",
-        "103": "Entregas intracomunitarias exentas", "104": "Exportaciones y exentas con derecho a deducción",
-        "108": "Total volumen de operaciones",
-    },
+    "390": dict(MODELO390_LABELS),
 }
 
 
@@ -526,10 +513,10 @@ def _is_aeat(result: Any) -> bool:
 
 
 def result_boxes(model: str, result: Any) -> dict[str, float]:
-    """AEAT box → value of one engine result: ``aeat_boxes()`` when present, else the legacy map."""
+    """AEAT box → value of one engine result's ``aeat_boxes()`` ({} for a result without one)."""
     if _is_aeat(result):
         return {normalize_box(k): float(v) for k, v in result.aeat_boxes().items() if v is not None}
-    return legacy_boxes(model, result)
+    return {}
 
 
 def result_operators(result: Any) -> list[dict]:
@@ -542,14 +529,13 @@ def app_boxes(
 ) -> dict[str, float]:
     """The app's value for every AEAT box it computes, keyed as printed on the form.
 
-    Uses the engine result's ``aeat_boxes()`` when available (#97/#98/#99);
-    otherwise maps the legacy field names (``src/legacy_aeat_boxes.py``).
-    Modelo 390 is aggregated from the four 303 quarters.
+    Uses the engine result's ``aeat_boxes()`` (#97/#98/#99); the Modelo 390
+    engine (#103) builds its boxes from the year's four 303 results.
     """
     if config is None:
         config = load_app_config()
     if model == "390":
-        return legacy_390_boxes(year, conn, config)
+        return result_boxes(model, compute_modelo_390(year, conn, config))
     if model not in QUARTERLY_MODELS or quarter is None:
         raise ValueError(f"unsupported model/period: {model} {year} Q{quarter}")
     return result_boxes(model, _compute(model, year, quarter, conn, config))
@@ -616,24 +602,22 @@ def reconcile(
     if filing is not None:
         filed_boxes, filed_complete, filed_ops = _filed_side(filing, model)
 
-    live_audit: list[dict] = []
     app_ops: list[dict] = []
     if model == "390":
-        engine, app, notes = "legacy", legacy_390_boxes(year, conn, config), legacy_notes("390")
+        result = compute_modelo_390(year, conn, config)
     else:
         result = _compute(model, year, quarter, conn, config)
-        engine = "aeat" if _is_aeat(result) else "legacy"
-        app = result_boxes(model, result)
-        notes = {} if engine == "aeat" else legacy_notes(model)
-        if model == "349":
-            app_ops = result_operators(result)
-        live_audit = _audit_dicts(getattr(result, "audit", []) or [])
+    engine = "aeat" if _is_aeat(result) else "legacy"
+    app = result_boxes(model, result)
+    if model == "349":
+        app_ops = result_operators(result)
+    live_audit = _audit_dicts(getattr(result, "audit", []) or [])
 
     rec = Reconciliation(
         model=model, year=year, quarter=quarter, filed_found=filing is not None, engine=engine,
         filed_source=(filing or {}).get("source", ""), filed_date=(filing or {}).get("filed_date", ""),
         lines=build_lines(model, filed_boxes, app, filed_complete=filed_complete,
-                          filed_operators=filed_ops, app_ops=app_ops, notes=notes),
+                          filed_operators=filed_ops, app_ops=app_ops),
         live_audit=live_audit,
     )
     apply_catalogue(rec, catalogue or [])
@@ -649,17 +633,16 @@ def reconcile(
 def audit_entries_for_box(entries: Iterable[dict], model: str, box: str, engine: str) -> list[dict]:
     """The audit entries (``tax_audit_log`` row dicts) that produced ``box``.
 
-    Legacy results use the explicit field map; AEAT-numbered results match
-    cells named after the box (``c07_base``, ``box_07``, ``07``). A 349
-    operator row matches the cells that name its VAT id.
+    AEAT-numbered results match cells named after the box (``c07_base``,
+    ``box_07``, ``07``); a legacy result has no field map left (nothing
+    matches). A 349 operator row matches the cells that name its VAT id.
     """
     entries = list(entries)
     if box.startswith(OPERATOR_PREFIX):
         vat = box[len(OPERATOR_PREFIX):].rsplit(":", 1)[0]
         return [e for e in entries if vat in _VAT_SEPARATORS_RE.sub("", str(e.get("cell", "")).upper())]
     if engine == "legacy":
-        order = {c: i for i, c in enumerate(legacy_audit_cells(model, box))}
-        return sorted((e for e in entries if e.get("cell") in order), key=lambda e: order[e["cell"]])
+        return []
     pattern = re.compile(rf"^(?:c|box_?)?{re.escape(box)}(?:_|$)", re.IGNORECASE)
     return [e for e in entries if pattern.match(str(e.get("cell", "")))]
 

@@ -18,7 +18,7 @@ import yaml
 
 from src.database import normalize_vat_id
 from src.filed_returns import load_filings as load_db_filings
-from src.legacy_aeat_boxes import legacy_390_boxes
+from src.modelo_390 import compute_modelo_390
 from src.tax_engine import (
     compute_modelo_130,
     compute_modelo_303,
@@ -265,7 +265,7 @@ def validate_modelo_390(
         )
 
     config = load_app_config()
-    app = legacy_390_boxes(year, conn, config)
+    app = compute_modelo_390(year, conn, config).aeat_boxes()
     m130 = compute_modelo_130(year, 4, conn, config)
 
     # M130 cross-check filed reference: the annual income computed for Modelo 390

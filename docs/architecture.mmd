@@ -69,7 +69,7 @@ flowchart TB
   end
 
   subgraph scripts["scripts/ — operational tooling"]
-    CLOSEQ["close_quarter.py\nthin CLI over close_pipeline.py (+ all) and the\nstripe-fetch / reclassify / report (+ freeze) / fx helpers\n(driven by /close-quarter skill, outputs to tmp/, git-ignored)"]
+    CLOSEQ["close_quarter.py\nthin CLI over close_pipeline.py (+ all) and the\nstripe-fetch / reclassify / report (+ freeze) / freeze-sent / fx helpers\n(driven by /close-quarter skill, outputs to tmp/, git-ignored)"]
   end
 
   STRIPE --> STRIPECLIENT

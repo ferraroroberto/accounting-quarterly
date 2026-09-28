@@ -16,3 +16,7 @@ class StaleClassificationError(StripeAutomationError):
 
 class ReportAlreadyFrozenError(StripeAutomationError):
     """Raised when freezing a quarter that already has a declared report."""
+
+
+class InvalidSentReportError(StripeAutomationError):
+    """Raised when a previously sent Stripe report file fails validation (nothing is stored)."""

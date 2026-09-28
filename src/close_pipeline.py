@@ -43,6 +43,7 @@ from src.database import (
 from src.declared_reports import (
     declared_vs_live_drift,
     freeze_report,
+    freeze_sent_report,
     get_declared_report,
 )
 from src.excel_exporter import create_excel_report, generate_report_filename
@@ -712,6 +713,39 @@ def write_stripe_report(ctx: CloseContext, freeze: bool = False, supersede: bool
                 f"{declared.sha256[:12]}…); the tax engine uses the declared EUR amounts. Live vs "
                 f"declared: {len(drift['amount_differs'])} amount difference(s), "
                 f"{len(drift['live_not_declared'])} live-only, {len(drift['declared_not_live'])} declared-only.")
+    finally:
+        conn.close()
+    return res
+
+
+def freeze_sent_stripe_report(ctx: CloseContext, report_file: Path, supersede: bool = False) -> StepResult:
+    """Freeze a Stripe report file already sent to the gestor as the quarter's declared report.
+
+    For quarters sent before freezing existed: the declared EUR amounts come
+    from the file, not the live rows. Raises ``InvalidSentReportError`` (bad
+    file, a row outside the quarter, duplicate ids) or
+    ``ReportAlreadyFrozenError`` (declared already, no ``supersede``); nothing
+    is stored on either.
+    """
+    res = StepResult("freeze-sent")
+    conn = ctx.connect()
+    try:
+        frozen = freeze_sent_report(conn, ctx.year, ctx.quarter, report_file, supersede=supersede)
+        report = frozen.report
+        res.changes.append(f"froze {report.file_name} as declared report v{report.version}: "
+                           f"{report.n_transactions} transactions, net {report.total_net_eur:,.2f} EUR, "
+                           f"sha256 {report.sha256}")
+        if frozen.missing_from_live:
+            res.warnings.append(
+                f"{len(frozen.missing_from_live)} id(s) in the file are not in the live transactions "
+                f"table (frozen anyway; used once fetched): {', '.join(frozen.missing_from_live[:10])}")
+        drift = declared_vs_live_drift(conn, ctx.year, ctx.quarter, _quarter_payments(ctx))
+        res.info.append(f"{len(drift['amount_differs'])} live row(s) had a different EUR amount; "
+                        f"the tax engine now uses the file's.")
+        if drift["live_not_declared"]:
+            res.warnings.append(
+                f"{len(drift['live_not_declared'])} live transaction(s) of {ctx.period} are not in the "
+                f"file (the engine keeps their live amounts): {', '.join(drift['live_not_declared'][:10])}")
     finally:
         conn.close()
     return res

@@ -193,6 +193,14 @@ Writes the Stripe report (`Stripe_Report_Q<Q>_<Y>.xlsx`, reclassified first), `g
 
 Run `--freeze` **only for the version you actually send**: it stores the report as the quarter's immutable declared report, and the tax engine then uses its EUR amounts. A corrected re-send is `report --freeze --supersede`.
 
+A quarter whose report was sent **before freezing existed** is frozen from the sent file itself:
+
+```bash
+.venv/Scripts/python.exe scripts/close_quarter.py freeze-sent --year Y --quarter Q --file tmp/close_quarter/<Y>_Q<Q>/Stripe_Report_Q<Q>_<Y>.xlsx
+```
+
+It reads the file's `import` sheet and stores its EUR amounts (not the live rows) as the declared report, so non-EUR charges stop drifting with the stored ECB rate and the reconciliation loses that FX noise. A row dated outside the quarter, a duplicate id or an unreadable row aborts it with nothing stored. File ids missing from the live table are listed but frozen anyway, and live charges missing from the file keep their live amounts. Only amounts are frozen; activity and region stay live. `--supersede` works as for `report`.
+
 In a shadow quarter:
 1. Run steps 1–10 and keep `filing_sheet_<Y>_Q<Q>.md` as the app's frozen figures **before** the accountant files. Do not **Mark filed**: that records figures *you* presented.
 2. When the accountant has filed, download their receipts and import them (step 17).
@@ -304,6 +312,7 @@ Keep them at least as long as the returns can be reviewed: four years from the e
 | `reclassify --from YYYY-MM-DD [--to YYYY-MM-DD] [--dry-run]` | Re-run the classifier over stored charges after a rule change |
 | `backfill-emails [--dry-run]` | Fill empty email/country from the saved raw charges |
 | `report [--freeze [--supersede]]` | Regenerate (and freeze) the quarter's Stripe report |
+| `freeze-sent --file <xlsx> [--supersede]` | Freeze a Stripe report file sent before freezing existed (its EUR amounts become the declared basis) |
 | `fx-backfill` | ECB rates up to today |
 | `fx-recompute [--dry-run] [--since YYYY-MM-DD]` | Re-resolve every stored non-EUR invoice at the ECB rate |
 

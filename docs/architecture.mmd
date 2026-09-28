@@ -40,6 +40,7 @@ flowchart TB
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
+    FILINGSHEET["filing_sheet.py\nfiling sheet: AEAT form order, credit chain,\ndeadlines (direct debit / filing), mark filed\n(immutable FILED snapshot versions)"]
     LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY Modelo 390 = sum of the four 303s\n(until the annual pack, #103)"]
   end
 
@@ -57,11 +58,11 @@ flowchart TB
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
     INVTABS["invoice_upload · invoice_ocr_tab (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe_tab · invoice_explorer · vendor_registry_tab ·\nfixed_assets_tab"]
     SSTAB["social_security_tab"]
-    TAXTABS["tax_obligations · tax_validation (Reconciliation) · tax_audit"]
+    TAXTABS["tax_obligations · filing_sheet_tab · tax_validation (Reconciliation) · tax_audit"]
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_close_pipeline · test_invoice_ocr_tab ·\ntest_modelo_349"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_close_pipeline · test_invoice_ocr_tab ·\ntest_modelo_349 · test_filing_sheet · test_filing_sheet_tab"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]
@@ -87,6 +88,7 @@ flowchart TB
   PIPELINE --> AGGEXPORT
   PIPELINE --> TAXENGINE
   PIPELINE --> RECONCILIATION
+  PIPELINE -->|sheet renderer| FILINGSHEET
   VENDORSFILE --> VENDORS --> DB
   SOCSEC --> DB
   ACCCLIENT -.-> DB
@@ -115,6 +117,8 @@ flowchart TB
   TAXVALIDATOR --> LEGACYBOXES
   LEGACYBOXES --> TAXENGINE
   DIVERGENCESFILE --> RECONCILIATION
+  FILINGSHEET -->|result_boxes / operators| RECONCILIATION
+  FILINGSHEET -->|versioned snapshots| DB
 
   LOADER --> DB
   LOADER --> CLASSIFIER
@@ -131,6 +135,7 @@ flowchart TB
   TAXTABS --> RECONCILIATION
   TAXTABS --> FILEDRETURNS
   TAXTABS --> SNAPSHOTCODEC
+  TAXTABS --> FILINGSHEET
 
   TESTFILES -.->|exercise| ingest
   TESTFILES -.->|exercise| taxcore

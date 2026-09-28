@@ -114,6 +114,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
 │   ├── invoice_ingest.py          # OCR → FX → vendor registry → DB save path (OCR tab + close_quarter.py ocr)
 │   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
+│   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
@@ -134,6 +135,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
+│   ├── filing_sheet_tab.py        # Filing Sheet tab (copyable box values, deadlines, Mark filed)
 │   ├── tax_validation.py          # Reconciliation tab (filed vs app per box, drill-down, catalogue editor)
 │   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
 ├── tests/                         # Pytest test suite
@@ -161,6 +163,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
 │   ├── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
 │   ├── test_close_pipeline.py     # Every close step on a temp DB (OCR/ECB/Stripe mocked), idempotence, skill ↔ CLI
+│   ├── test_filing_sheet.py       # Filing sheet boxes, deadlines, filed-version freeze, triggers, migration
+│   ├── test_filing_sheet_tab.py   # Filing Sheet tab (AppTest)
 │   └── test_invoice_ocr_tab.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
@@ -288,7 +292,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **social_security_payments** — Seguridad Social cuota payments imported from bank account exports (or entered manually). Deduplication key: `(payment_date, amount_eur, description)`. Refunds are stored as negative amounts. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
-- **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
+- **tax_computation_snapshots** — Versioned JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations. Keyed by `(year, quarter, model, snapshot_version)` with `status` `COMPUTED` or `FILED`: a recompute rewrites the latest `COMPUTED` draft; **Mark filed** adds a new `FILED` version (with `justificante`, `presented_on`) that SQLite triggers make immutable — see [Filing Sheet](#filing-sheet)
 - **filed_returns** — One row per non-empty box (casilla) of each filed AEAT return imported from its receipt PDF (model, year, period, box, value, justificante, CSV, presentation timestamp, source file). Reference data for the Reconciliation tab — see "Importing filed AEAT receipts"
 - **filed_349_operators** — Operator rows (country, VAT id, name, clave, base) of each imported Modelo 349 receipt
 - **tax_audit_log** — Per-cell calculation audit entries: every box in every model records the formula applied, named inputs, and computed value. Written alongside snapshots; queryable by year/quarter/model/run timestamp
@@ -332,7 +336,7 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 .venv/Scripts/python.exe scripts/close_quarter.py reta --file <bank export>   # 7. RETA (TGSS) debits
 .venv/Scripts/python.exe scripts/close_quarter.py compute                     # 8. 303/130/349 (+ OSS, 347) snapshots
 .venv/Scripts/python.exe scripts/close_quarter.py reconcile                   # 9. filed vs app, markdown table
-.venv/Scripts/python.exe scripts/close_quarter.py sheet                       # 10. filing sheet (placeholder until #101)
+.venv/Scripts/python.exe scripts/close_quarter.py sheet                       # 10. filing sheet (form order, deadlines)
 .venv/Scripts/python.exe scripts/close_quarter.py gestor-pack [--freeze]      # 11. accountant's pack
 .venv/Scripts/python.exe scripts/close_quarter.py all [--apply] [--freeze] [--reta-file F] [--model ID]  # 1-11 in order
 ```
@@ -345,7 +349,7 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 - **`reta`** imports a bank export of the Social Security debits (column names from `config.json → social_security`, see [Seguridad Social](#seguridad-social-social-security-cuotas)); rows already stored are skipped.
 - **`compute`** computes the quarter and saves the snapshots only when a figure changed (so a re-run doesn't touch `computed_at`).
 - **`reconcile`** reconciles 303/130/349 against the quarter's filed returns when they are imported, otherwise against the previous quarter's (the chain the carry-forwards start from), and writes `reconciliation_<Y>_Q<Q>.md`.
-- **`sheet`** writes `filing_sheet_<Y>_Q<Q>.md` from the stored snapshots — a placeholder (non-zero boxes + 349 operators) behind the `src.close_pipeline.filing_sheet_renderer` hook, which the filing sheet of #101 replaces.
+- **`sheet`** writes `filing_sheet_<Y>_Q<Q>.md` from the stored snapshots — see [Filing Sheet](#filing-sheet) (rendered by `src/filing_sheet.py` through the pluggable `src.close_pipeline.filing_sheet_renderer` hook).
 - **`gestor-pack`** (while an external accountant is engaged) writes the reclassified Stripe report, `gestor_notes_<Y>_Q<Q>.md` — your free text from the git-ignored `gestor_notes.md` at the repo root (a template when absent) plus the special treatments detected in the ledger (partial business use, exclusions, non-default VAT treatment, fixed assets, foreign currency) — and a draft email `gestor_email_<Y>_Q<Q>.txt`. `--freeze` stores the report as the declared report (below); once declared the pack never regenerates it. Nothing is ever sent.
 - **`all`** stops at the first failing step; completed steps are no-ops on the re-run. `--apply` lets `dedupe`/`fx` write, `--freeze` lets `gestor-pack` freeze.
 
@@ -692,6 +696,27 @@ Uncomment and fill in the appropriate template block in `tmp/validation/validati
     "01_ingresos_ytd": 0.00
     # ... (copy from gestor PDF)
 ```
+
+---
+
+## Filing Sheet
+
+The **Filing Sheet** tab (and `scripts/close_quarter.py sheet`, which writes `filing_sheet_<Y>_Q<Q>.md`) lists what to type into each AEAT form for a quarter, built by `src/filing_sheet.py` from the **stored** snapshots — run **Calculate tax** (or `close_quarter.py compute`) first:
+
+- **Modelo 303** boxes in form order (page 1 devengado / deducible, page 3 información adicional / resultado), the **credit chain** (110 → 78 → 87, 71, 72/73, and what carries to next quarter's 110), and the result (to pay / compensate / refund).
+- **Modelo 130** boxes 01–19 and the result (box 19).
+- **Modelo 349** summary boxes and the operator list (country, VAT id, name, key, base).
+- Only non-zero boxes by default (**Show zero boxes** lists every modelled box). In the tab each value sits in a copyable block, formatted as the Sede form expects (`1234,56`); the markdown has the same value in its last column.
+- **Deadlines** per model: filing until the 20th of the month after the quarter (Q4: 30 January), moved to the next business day when it falls on a weekend or holiday; **direct debit** (303/130 only) until the latest day leaving at least three business days or five calendar days before that — the 15th for the 20th, 27 January for 30 January 2026 (Orden HAC/241/2025, BOE-A-2025-5048, amending Orden EHA/1658/2009; AEAT *calendario del contribuyente*, "Plazos de presentación de autoliquidaciones con domiciliación bancaria"). Only national holidays plus Maundy Thursday and Good Friday are built in — check the AEAT calendar each period.
+
+### Mark filed (immutable filed snapshots)
+
+After presenting a return, **Mark filed** (per model, in the tab) asks for the **justificante** and the **presentation date** and stores a **new** snapshot version with `status = 'FILED'`, a copy of the computed figures. It also flags the period FILED in `tax_filing_status` (amount = 303 box 71 / 130 box 19). Then import the official receipt PDF (**Reconciliation** tab → **📥 Import filed AEAT receipts**) so the filed return is reconciled box by box.
+
+- FILED rows are never overwritten or deleted: SQLite triggers reject any UPDATE or DELETE of a FILED row, and a draft cannot be flipped to FILED in place.
+- A later **Calculate tax** never touches a FILED version: the snapshot writer (`src/database.upsert_tax_snapshot_conn`) adds a new `COMPUTED` version (or rewrites that newer draft), and skips the write when the figures equal the filed ones. The sheet then shows the new draft with a **Recomputed after filing** table of the boxes that differ from the filed version.
+- A period whose latest version is FILED cannot be marked filed again; recompute first (a corrected return is filed from the new draft).
+- The **Mark Filed** button of the Tax Obligations calendar only flips `tax_filing_status`; use the Filing Sheet tab to freeze the figures.
 
 ---
 

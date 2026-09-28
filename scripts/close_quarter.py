@@ -25,7 +25,8 @@ step is idempotent and prints what it changed ("no changes" on a re-run):
                   figure changed.
     reconcile     Filed vs app, box by box: this quarter if already filed, else
                   the previous quarter. Writes reconciliation_<Y>_Q<Q>.md.
-    sheet         Filing sheet from the stored snapshots (placeholder until #101).
+    sheet         Filing sheet from the stored snapshots: boxes in AEAT form order,
+                  credit chain, deadlines. Writes filing_sheet_<Y>_Q<Q>.md.
     gestor-pack   Stripe report (--freeze stores it as the declared report),
                   notes on special treatments (from git-ignored gestor_notes.md)
                   and a draft email. Never sends anything.
@@ -398,7 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_step("compute", cmd_compute, "8. Compute and snapshot Modelo 303/130/349 (+ OSS, 347)")
     add_step("reconcile", cmd_reconcile, "9. Filed vs app (this quarter if filed, else the previous)")
-    add_step("sheet", cmd_sheet, "10. Filing sheet from the stored snapshots (placeholder until #101)")
+    add_step("sheet", cmd_sheet, "10. Filing sheet from the stored snapshots (AEAT form order, deadlines)")
 
     p_pack = add_step("gestor-pack", cmd_gestor_pack, "11. Stripe report + notes + draft email for the accountant")
     p_pack.add_argument("--freeze", action="store_true",

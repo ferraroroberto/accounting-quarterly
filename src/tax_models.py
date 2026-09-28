@@ -7,7 +7,8 @@ from datetime import date
 from typing import Any, Literal, Optional
 
 
-FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "FILED"]
+# COMPUTED / FILED are also the ``tax_computation_snapshots.status`` values (#101).
+FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "COMPUTED", "FILED"]
 
 TaxModel = Literal["303", "390", "130", "100", "347", "349", "OSS"]
 

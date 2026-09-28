@@ -517,7 +517,11 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
                "vendor": str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40],
                "description": str(inv.get("description") or "")[:50],
                "subtotal_eur": round(base, 2), "iva_amount": round(iva, 2),
-               "deductible_pct_vat": inv["deductible_pct_vat"], "tax_treatment": tt}
+               "deductible_pct_vat": inv["deductible_pct_vat"], "tax_treatment": tt,
+               # The invoice's own stored rate (#137) — the 390 prefers this over
+               # inferring the rate from VAT ÷ base, which a blended-rate bill or
+               # rounding can misroute into the wrong rate row.
+               "iva_rate": _rate_pct(inv.get("iva_rate"))}
 
         if tt in ("DOMESTIC", "DOMESTIC_CAPITAL"):
             linked = capital_by_invoice.get(inv.get("id"), [])

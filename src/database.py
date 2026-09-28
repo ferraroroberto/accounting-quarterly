@@ -156,6 +156,151 @@ def derive_vat_treatment_for_invoice(
         return "IVA_EXEMPT"
 
 
+# ---------------------------------------------------------------------------
+# Invoice ledger: tax treatment, exclusion reasons, locks (issue #90)
+# ---------------------------------------------------------------------------
+
+# Per-invoice tax treatment. Expense (direction='in') and income ('out') use
+# disjoint value sets so a treatment always implies its direction.
+TAX_TREATMENTS_IN: tuple[str, ...] = (
+    "DOMESTIC",           # Spanish VAT charged by the vendor → deductible input VAT
+    "DOMESTIC_CAPITAL",   # as DOMESTIC, but a capital good (303 boxes 30/31)
+    "INTRA_EU_RC",        # intra-EU acquisition, reverse charge (boxes 10/11 + 36/37)
+    "NON_EU_RC",          # non-EU service, reverse charge (boxes 12/13 + 28/29)
+    "NO_VAT",             # no VAT involved (bank fees, exempt supplies, …)
+    "NOT_DEDUCTIBLE",     # VAT charged but not deductible
+)
+TAX_TREATMENTS_OUT: tuple[str, ...] = (
+    "ES_21",              # Spanish 21% to a Spanish client
+    "EU_B2C_ES21",        # EU consumer charged Spanish 21% (no OSS)
+    "EU_B2B",             # intra-EU B2B service, reverse charge at the client (box 59)
+    "NON_EU_NOT_SUBJECT", # non-EU client, not subject by location rules
+    "EXEMPT_TEACHING",    # exempt teaching (art. 20.1.9º LIVA)
+)
+EXCLUDED_REASONS: tuple[str, ...] = (
+    "duplicate", "receipt", "personal", "other_period", "superseded",
+)
+
+# Legacy `vat_treatment` (+ geo_region for the ambiguous IVA_EXEMPT bucket) →
+# `tax_treatment`. The mapping preserves what the tax engine did with the
+# legacy value: VAT-charged expenses stay deductible, zero-VAT rows stay
+# VAT-neutral. `None` means "cannot be decided from the legacy data — review".
+#   in  IVA_ES_21                    → DOMESTIC
+#   in  IVA_EU_B2B                   → INTRA_EU_RC
+#   in  IVA_EXEMPT + OUTSIDE_EU      → NON_EU_RC
+#   in  IVA_EXEMPT + other geo / any other legacy value → NO_VAT
+#   out IVA_ES_21                    → ES_21
+#   out OSS_EU                       → EU_B2C_ES21
+#   out IVA_EU_B2B                   → EU_B2B
+#   out IVA_EXPORT                   → NON_EU_NOT_SUBJECT
+#   out IVA_EXEMPT + SPAIN           → EXEMPT_TEACHING
+#   out IVA_EXEMPT + other geo       → None (review)
+_LEGACY_TO_TAX_TREATMENT: dict[tuple[str, str], str] = {
+    ("in", "IVA_ES_21"): "DOMESTIC",
+    ("in", "IVA_EU_B2B"): "INTRA_EU_RC",
+    ("out", "IVA_ES_21"): "ES_21",
+    ("out", "OSS_EU"): "EU_B2C_ES21",
+    ("out", "IVA_EU_B2B"): "EU_B2B",
+    ("out", "IVA_EXPORT"): "NON_EU_NOT_SUBJECT",
+}
+
+# Reverse direction: keeps the legacy `vat_treatment` column (still read by the
+# engine until the #97 box model lands) consistent when `tax_treatment` is edited.
+_TAX_TREATMENT_TO_LEGACY: dict[str, str] = {
+    "DOMESTIC": "IVA_ES_21",
+    "DOMESTIC_CAPITAL": "IVA_ES_21",
+    "INTRA_EU_RC": "IVA_EU_B2B",
+    "NON_EU_RC": "IVA_EXEMPT",
+    "NO_VAT": "IVA_EXEMPT",
+    "NOT_DEDUCTIBLE": "IVA_EXEMPT",
+    "ES_21": "IVA_ES_21",
+    "EU_B2C_ES21": "IVA_ES_21",
+    "EU_B2B": "IVA_EU_B2B",
+    "NON_EU_NOT_SUBJECT": "IVA_EXPORT",
+    "EXEMPT_TEACHING": "IVA_EXEMPT",
+}
+
+# Fields a user may edit on an invoice. Any edited field is added to
+# `locked_fields`; re-extraction (`upsert_invoice`) never overwrites it.
+INVOICE_EDITABLE_FIELDS: tuple[str, ...] = (
+    # OCR-extracted fields (corrections)
+    "invoice_number", "invoice_date", "supply_date",
+    "vendor_name", "vendor_nif", "client_name", "client_nif", "description",
+    "subtotal_eur", "iva_rate", "iva_amount", "irpf_rate", "irpf_amount", "total_eur",
+    "original_currency", "original_amount", "fx_rate", "category", "notes",
+    # Ledger fields
+    "tax_treatment", "deductible_pct_vat", "deductible_pct_irpf",
+    "is_capital_asset", "asset_class", "excluded", "excluded_reason",
+    "eur_received", "payment_date",
+)
+
+# Ledger-owned columns the OCR never produces: `upsert_invoice` only writes them
+# on conflict when the caller passes them explicitly, so a re-extract keeps them.
+_INVOICE_LEDGER_ONLY_FIELDS: tuple[str, ...] = (
+    "is_capital_asset", "asset_class", "excluded", "excluded_reason",
+    "eur_received", "payment_date",
+)
+
+_VAT_ID_SEPARATORS_RE = re.compile(r"[\s.\-/_]")
+
+
+def normalize_vat_id(raw: Optional[str]) -> Optional[str]:
+    """Canonical VAT id for matching: upper-case, separators stripped, Spanish ids ES-prefixed.
+
+    ``"es-b12.345.678"`` and ``"B12345678"`` both become ``"ESB12345678"``; other
+    ids keep whatever country prefix they carry. Returns ``None`` for blank input.
+    """
+    if not raw or not raw.strip():
+        return None
+    n = _VAT_ID_SEPARATORS_RE.sub("", raw.strip().upper())
+    if not n:
+        return None
+    if not n.startswith("ES") and _SPANISH_NIF_RE.match(n):
+        n = "ES" + n
+    return n
+
+
+def derive_tax_treatment_for_invoice(
+    direction: str,
+    vat_treatment: Optional[str],
+    geo_region: Optional[str],
+    iva_amount: Optional[float] = None,
+) -> Optional[str]:
+    """Map the legacy ``vat_treatment`` (derived first when missing) to a ``tax_treatment``.
+
+    See the mapping table above ``_LEGACY_TO_TAX_TREATMENT``. Returns ``None``
+    when the legacy data cannot decide (an income invoice without VAT to a
+    non-Spanish or unknown counterparty).
+    """
+    geo = geo_region or "UNKNOWN"
+    legacy = vat_treatment or derive_vat_treatment_for_invoice(direction, geo, iva_amount)
+    mapped = _LEGACY_TO_TAX_TREATMENT.get((direction, legacy))
+    if mapped:
+        return mapped
+    if direction == "in":
+        return "NON_EU_RC" if (legacy == "IVA_EXEMPT" and geo == "OUTSIDE_EU") else "NO_VAT"
+    if legacy == "IVA_EXEMPT" and geo == "SPAIN":
+        return "EXEMPT_TEACHING"
+    return None
+
+
+def legacy_vat_treatment_for(tax_treatment: str) -> Optional[str]:
+    """Legacy ``vat_treatment`` equivalent of a ``tax_treatment`` (None if unknown)."""
+    return _TAX_TREATMENT_TO_LEGACY.get(tax_treatment)
+
+
+def parse_locked_fields(raw: Optional[str]) -> list[str]:
+    """Decode the ``locked_fields`` JSON list (tolerates NULL / malformed values)."""
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        log.warning("⚠️ Ignoring malformed invoices.locked_fields value: %r", raw)
+        return []
+    return [str(v) for v in value] if isinstance(value, list) else []
+
+
 def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
     """Add missing columns to the `invoices` table."""
     existing = _get_table_columns(conn, "invoices")
@@ -177,6 +322,20 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "vat_treatment": "TEXT",     # IVA_ES_21 | IVA_EU_B2B | IVA_EXPORT | IVA_EXEMPT | OSS_EU
         "activity_type": "TEXT",     # CONSULTING | TRAINING | SOFTWARE | SUBSCRIPTIONS | …
         "supply_country": "TEXT",    # ISO-2 country code of the vendor / client
+        # Invoice ledger (#90). The accounting date is `invoice_date`;
+        # `supply_date` is informational only.
+        "tax_treatment": "TEXT",           # TAX_TREATMENTS_IN / TAX_TREATMENTS_OUT
+        "deductible_pct_vat": "REAL",      # backfilled from deductible_pct
+        "deductible_pct_irpf": "REAL",     # backfilled from deductible_pct
+        "is_capital_asset": "INTEGER NOT NULL DEFAULT 0",
+        "asset_class": "TEXT",
+        "excluded": "INTEGER NOT NULL DEFAULT 0",  # 1 → ignored by every tax computation
+        "excluded_reason": "TEXT",         # EXCLUDED_REASONS
+        "eur_received": "REAL",            # EUR actually received (foreign-currency income)
+        "payment_date": "TEXT",
+        "vendor_vat_id_norm": "TEXT",      # normalize_vat_id(vendor_nif)
+        "locked_fields": "TEXT",           # JSON list of user-edited field names
+        "reviewed_at": "TEXT",
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -185,6 +344,57 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
                 log.info("ℹ️ Migrated DB: added invoices.%s", col)
             except Exception as exc:
                 log.warning("⚠️ DB migration skipped for invoices.%s: %s", col, exc)
+
+
+def backfill_invoice_ledger_fields(conn: sqlite3.Connection) -> dict[str, int]:
+    """Fill the #90 ledger columns on rows that predate them (idempotent).
+
+    Only NULL targets are touched, so user edits and earlier backfills are never
+    overwritten:
+
+    - ``deductible_pct_vat`` / ``deductible_pct_irpf`` ← ``COALESCE(deductible_pct, 100)``
+    - ``vendor_vat_id_norm`` ← ``normalize_vat_id(vendor_nif)``
+    - ``tax_treatment`` ← ``derive_tax_treatment_for_invoice`` over the legacy
+      ``vat_treatment`` / ``geo_region`` (rows it cannot decide stay NULL).
+
+    Returns the number of rows updated per column.
+    """
+    counts: dict[str, int] = {}
+    for col in ("deductible_pct_vat", "deductible_pct_irpf"):
+        cur = conn.execute(
+            f"UPDATE invoices SET {col} = COALESCE(deductible_pct, 100.0) WHERE {col} IS NULL"
+        )
+        counts[col] = cur.rowcount
+
+    rows = conn.execute(
+        "SELECT id, vendor_nif FROM invoices WHERE vendor_vat_id_norm IS NULL AND vendor_nif IS NOT NULL"
+    ).fetchall()
+    n_norm = 0
+    for row in rows:
+        norm = normalize_vat_id(row["vendor_nif"])
+        if norm:
+            conn.execute("UPDATE invoices SET vendor_vat_id_norm = ? WHERE id = ?", (norm, row["id"]))
+            n_norm += 1
+    counts["vendor_vat_id_norm"] = n_norm
+
+    rows = conn.execute(
+        """SELECT id, direction, vat_treatment, geo_region, iva_amount
+           FROM invoices WHERE tax_treatment IS NULL"""
+    ).fetchall()
+    n_tt = 0
+    for row in rows:
+        tt = derive_tax_treatment_for_invoice(
+            row["direction"], row["vat_treatment"], row["geo_region"], row["iva_amount"]
+        )
+        if tt:
+            conn.execute("UPDATE invoices SET tax_treatment = ? WHERE id = ?", (tt, row["id"]))
+            n_tt += 1
+    counts["tax_treatment"] = n_tt
+
+    conn.commit()
+    if any(counts.values()):
+        log.info("ℹ️ Backfilled invoice ledger fields: %s", counts)
+    return counts
 
 
 def backfill_invoice_classifications(conn: sqlite3.Connection) -> int:
@@ -423,6 +633,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         _ensure_audit_schema(conn)
         conn.commit()
         backfill_invoice_classifications(conn)
+        backfill_invoice_ledger_fields(conn)
         backfill_tax_snapshot_legacy_keys(conn)
         log.info("ℹ️ Database initialised at %s", _DB_PATH)
     finally:
@@ -826,93 +1037,70 @@ def get_uploaded_files(direction: str,
 # ---------------------------------------------------------------------------
 
 def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
-    """Insert or replace a parsed invoice record. Returns the record id."""
+    """Insert or update a parsed invoice record keyed on (filename, direction). Returns its id.
+
+    Re-extraction rules (#90):
+
+    - Every field named in the stored row's ``locked_fields`` keeps its stored
+      value — a user correction always survives a re-OCR. Derived columns
+      (``geo_region``, ``vat_treatment``, ``tax_treatment``,
+      ``vendor_vat_id_norm``) are recomputed from the merged values.
+    - Ledger-only columns (``excluded``, ``eur_received``, …) are written on
+      conflict only when ``data`` carries them, so a plain re-extract keeps them.
+    - ``locked_fields`` and ``reviewed_at`` are owned by
+      ``update_invoice_fields`` / ``unlock_invoice_fields`` and never written here.
+    """
     import uuid
+    data = dict(data)
     conn = get_connection(db_path)
     try:
-        record_id = data.get("id") or str(uuid.uuid4())
         direction = data.get("direction", "in")
+        filename = data.get("filename", "")
+        existing = conn.execute(
+            "SELECT * FROM invoices WHERE filename = ? AND direction = ?",
+            (filename, direction),
+        ).fetchone()
+        if existing is not None:
+            record_id = existing["id"]
+            locked = parse_locked_fields(existing["locked_fields"])
+            for field in locked:
+                if field in existing.keys():
+                    data[field] = existing[field]
+            if locked:
+                log.info("ℹ️ Re-extract of %s kept %d locked field(s): %s",
+                         filename, len(locked), ", ".join(locked))
+        else:
+            record_id = data.get("id") or str(uuid.uuid4())
+
         iva_amount = data.get("iva_amount")
         vendor_nif = data.get("vendor_nif")
         client_nif = data.get("client_nif")
         # Auto-derive geo_region from NIF if not explicitly provided
         nif_for_geo = vendor_nif if direction == "in" else client_nif
         geo_region = data.get("geo_region") or derive_geo_region_from_nif(nif_for_geo)
-        vat_treatment = data.get("vat_treatment") or derive_vat_treatment_for_invoice(
-            direction, geo_region, iva_amount
-        )
+        tax_treatment = data.get("tax_treatment")
+        if tax_treatment:
+            vat_treatment = (data.get("vat_treatment")
+                             or legacy_vat_treatment_for(tax_treatment)
+                             or derive_vat_treatment_for_invoice(direction, geo_region, iva_amount))
+        else:
+            vat_treatment = data.get("vat_treatment") or derive_vat_treatment_for_invoice(
+                direction, geo_region, iva_amount
+            )
+            tax_treatment = derive_tax_treatment_for_invoice(
+                direction, vat_treatment, geo_region, iva_amount
+            )
         # Map category → activity_type when not explicitly set
         activity_type = data.get("activity_type") or data.get("category")
+        # The split VAT/IRPF percentages default to the OCR's single deductible_pct.
+        ded_pct = data.get("deductible_pct", 100)
+        ded_default = 100.0 if ded_pct is None else ded_pct
+        ded_vat = data.get("deductible_pct_vat")
+        ded_irpf = data.get("deductible_pct_irpf")
 
-        conn.execute("""
-            INSERT INTO invoices (
-                id, filename, direction, invoice_number, invoice_date,
-                vendor_name, vendor_nif, vendor_address,
-                client_name, client_nif, client_address,
-                description, subtotal_eur, iva_rate, iva_amount,
-                irpf_rate, irpf_amount, total_eur,
-                currency, original_currency, original_amount, fx_rate,
-                payment_method, category, notes, raw_json, file_hash,
-                invoice_type, supply_date, due_date, is_rectificativa,
-                rectified_invoice_ref, vat_exempt_reason, iva_breakdown,
-                deductible_pct, billing_period_start, billing_period_end,
-                geo_region, vat_treatment, activity_type, supply_country
-            ) VALUES (
-                :id, :filename, :direction, :invoice_number, :invoice_date,
-                :vendor_name, :vendor_nif, :vendor_address,
-                :client_name, :client_nif, :client_address,
-                :description, :subtotal_eur, :iva_rate, :iva_amount,
-                :irpf_rate, :irpf_amount, :total_eur,
-                :currency, :original_currency, :original_amount, :fx_rate,
-                :payment_method, :category, :notes, :raw_json, :file_hash,
-                :invoice_type, :supply_date, :due_date, :is_rectificativa,
-                :rectified_invoice_ref, :vat_exempt_reason, :iva_breakdown,
-                :deductible_pct, :billing_period_start, :billing_period_end,
-                :geo_region, :vat_treatment, :activity_type, :supply_country
-            )
-            ON CONFLICT(filename, direction) DO UPDATE SET
-                invoice_number = excluded.invoice_number,
-                invoice_date = excluded.invoice_date,
-                vendor_name = excluded.vendor_name,
-                vendor_nif = excluded.vendor_nif,
-                vendor_address = excluded.vendor_address,
-                client_name = excluded.client_name,
-                client_nif = excluded.client_nif,
-                client_address = excluded.client_address,
-                description = excluded.description,
-                subtotal_eur = excluded.subtotal_eur,
-                iva_rate = excluded.iva_rate,
-                iva_amount = excluded.iva_amount,
-                irpf_rate = excluded.irpf_rate,
-                irpf_amount = excluded.irpf_amount,
-                total_eur = excluded.total_eur,
-                currency = excluded.currency,
-                original_currency = excluded.original_currency,
-                original_amount = excluded.original_amount,
-                fx_rate = excluded.fx_rate,
-                payment_method = excluded.payment_method,
-                category = excluded.category,
-                notes = excluded.notes,
-                raw_json = excluded.raw_json,
-                file_hash = excluded.file_hash,
-                invoice_type = excluded.invoice_type,
-                supply_date = excluded.supply_date,
-                due_date = excluded.due_date,
-                is_rectificativa = excluded.is_rectificativa,
-                rectified_invoice_ref = excluded.rectified_invoice_ref,
-                vat_exempt_reason = excluded.vat_exempt_reason,
-                iva_breakdown = excluded.iva_breakdown,
-                deductible_pct = excluded.deductible_pct,
-                billing_period_start = excluded.billing_period_start,
-                billing_period_end = excluded.billing_period_end,
-                geo_region = excluded.geo_region,
-                vat_treatment = excluded.vat_treatment,
-                activity_type = excluded.activity_type,
-                supply_country = excluded.supply_country,
-                extracted_at = datetime('now')
-        """, {
+        values: dict = {
             "id": record_id,
-            "filename": data.get("filename", ""),
+            "filename": filename,
             "direction": direction,
             "invoice_number": data.get("invoice_number"),
             "invoice_date": data.get("invoice_date"),
@@ -945,16 +1133,159 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
             "rectified_invoice_ref": data.get("rectified_invoice_ref"),
             "vat_exempt_reason": data.get("vat_exempt_reason"),
             "iva_breakdown": data.get("iva_breakdown"),
-            "deductible_pct": data.get("deductible_pct", 100),
+            "deductible_pct": ded_pct,
             "billing_period_start": data.get("billing_period_start"),
             "billing_period_end": data.get("billing_period_end"),
             "geo_region": geo_region,
             "vat_treatment": vat_treatment,
             "activity_type": activity_type,
             "supply_country": data.get("supply_country"),
-        })
+            "tax_treatment": tax_treatment,
+            "deductible_pct_vat": ded_default if ded_vat is None else ded_vat,
+            "deductible_pct_irpf": ded_default if ded_irpf is None else ded_irpf,
+            "vendor_vat_id_norm": normalize_vat_id(vendor_nif),
+            "is_capital_asset": 1 if data.get("is_capital_asset") else 0,
+            "asset_class": data.get("asset_class"),
+            "excluded": 1 if data.get("excluded") else 0,
+            "excluded_reason": data.get("excluded_reason"),
+            "eur_received": data.get("eur_received"),
+            "payment_date": data.get("payment_date"),
+        }
+        update_cols = [
+            c for c in values
+            if c not in ("id", "filename", "direction")
+            and (c not in _INVOICE_LEDGER_ONLY_FIELDS or c in data)
+        ]
+        cols = ", ".join(values)
+        params = ", ".join(f":{c}" for c in values)
+        sets = ",\n                ".join(f"{c} = excluded.{c}" for c in update_cols)
+        conn.execute(f"""
+            INSERT INTO invoices ({cols}) VALUES ({params})
+            ON CONFLICT(filename, direction) DO UPDATE SET
+                {sets},
+                extracted_at = datetime('now')
+        """, values)
         conn.commit()
         return record_id
+    finally:
+        conn.close()
+
+
+def _coerce_invoice_field(field: str, value, direction: str):
+    """Validate and normalise one user-edited invoice field; raises ValueError."""
+    if isinstance(value, float) and value != value:  # NaN from pandas → cleared cell
+        value = None
+    if isinstance(value, str) and not value.strip():
+        value = None  # blank text box → NULL; non-blank text is kept verbatim
+    if field == "tax_treatment":
+        allowed = TAX_TREATMENTS_IN if direction == "in" else TAX_TREATMENTS_OUT
+        if value is not None and value not in allowed:
+            raise ValueError(
+                f"tax_treatment {value!r} is not valid for direction {direction!r} "
+                f"(allowed: {', '.join(allowed)})"
+            )
+    elif field == "excluded_reason":
+        if value is not None and value not in EXCLUDED_REASONS:
+            raise ValueError(
+                f"excluded_reason {value!r} is not one of {', '.join(EXCLUDED_REASONS)}"
+            )
+    elif field in ("excluded", "is_capital_asset"):
+        value = 1 if value else 0
+    elif field in ("deductible_pct_vat", "deductible_pct_irpf"):
+        if value is not None:
+            value = float(value)
+            if not 0.0 <= value <= 100.0:
+                raise ValueError(f"{field} must be between 0 and 100, got {value}")
+    elif field in ("invoice_date", "supply_date", "payment_date"):
+        if value is not None:
+            value = str(value)[:10]
+            try:
+                datetime.strptime(value, "%Y-%m-%d")
+            except ValueError as exc:
+                raise ValueError(f"{field} must be an ISO date (YYYY-MM-DD), got {value!r}") from exc
+    elif field in ("subtotal_eur", "iva_rate", "iva_amount", "irpf_rate", "irpf_amount",
+                   "total_eur", "original_amount", "fx_rate", "eur_received"):
+        if value is not None:
+            value = float(value)
+    return value
+
+
+def update_invoice_fields(
+    invoice_id: str,
+    changes: dict,
+    db_path: Optional[str | Path] = None,
+) -> list[str]:
+    """Apply user edits to one invoice, lock every changed field and stamp ``reviewed_at``.
+
+    Only fields whose value actually differs from the stored one are written and
+    added to ``locked_fields`` (so re-extraction keeps them). Editing
+    ``tax_treatment`` also re-syncs the legacy ``vat_treatment``; editing
+    ``vendor_nif`` re-derives ``vendor_vat_id_norm``. ``reviewed_at`` is stamped
+    even when nothing changed (saving an unchanged form marks it reviewed).
+
+    Returns the list of fields that changed. Raises ``KeyError`` for an unknown
+    invoice and ``ValueError`` for a non-editable field or an invalid value.
+    """
+    unknown = [f for f in changes if f not in INVOICE_EDITABLE_FIELDS]
+    if unknown:
+        raise ValueError(f"Not user-editable invoice field(s): {', '.join(unknown)}")
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"No invoice with id {invoice_id!r}")
+        direction = row["direction"]
+        updates: dict = {}
+        for field, raw in changes.items():
+            value = _coerce_invoice_field(field, raw, direction)
+            if value != row[field]:
+                updates[field] = value
+        changed = list(updates)
+
+        if updates.get("tax_treatment"):
+            legacy = legacy_vat_treatment_for(updates["tax_treatment"])
+            if legacy:
+                updates["vat_treatment"] = legacy
+        if "vendor_nif" in updates:
+            updates["vendor_vat_id_norm"] = normalize_vat_id(updates["vendor_nif"])
+
+        locked = sorted(set(parse_locked_fields(row["locked_fields"])) | set(changed))
+        updates["locked_fields"] = json.dumps(locked) if locked else None
+        updates["reviewed_at"] = datetime.now().isoformat(timespec="seconds")
+
+        sets = ", ".join(f"{c} = :{c}" for c in updates)
+        conn.execute(f"UPDATE invoices SET {sets} WHERE id = :_id", {**updates, "_id": invoice_id})
+        conn.commit()
+        if changed:
+            log.info("ℹ️ Invoice %s edited and locked: %s", row["filename"], ", ".join(changed))
+        return changed
+    finally:
+        conn.close()
+
+
+def unlock_invoice_fields(
+    invoice_id: str,
+    fields: Optional[list[str]] = None,
+    db_path: Optional[str | Path] = None,
+) -> list[str]:
+    """Release locks so the next re-extract may overwrite those fields again.
+
+    ``fields=None`` releases every lock. Stored values are left as they are.
+    Returns the fields that remain locked.
+    """
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT locked_fields FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"No invoice with id {invoice_id!r}")
+        locked = parse_locked_fields(row["locked_fields"])
+        remaining = [] if fields is None else [f for f in locked if f not in set(fields)]
+        conn.execute(
+            "UPDATE invoices SET locked_fields = ? WHERE id = ?",
+            (json.dumps(remaining) if remaining else None, invoice_id),
+        )
+        conn.commit()
+        return remaining
     finally:
         conn.close()
 

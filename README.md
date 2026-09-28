@@ -110,6 +110,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub / Gemini)
+│   ├── invoice_ledger.py          # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
@@ -124,6 +125,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_rules_engine.py
 │   ├── test_aggregator.py
 │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
+│   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   └── test_tax_validator.py      # Gestor-filed vs DB-computed validation
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
@@ -209,7 +212,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **transactions** — Stripe payment records with classification and FX conversion data. The VAT columns (`vat_treatment`, `vat_base_eur`, `vat_amount_eur`) are reserved for manual overrides; they are normally NULL — VAT treatment is derived on-the-fly by the tax engine at computation time, not stored per transaction
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
-- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly
+- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly — plus the ledger columns described in [Invoice Ledger](#invoice-ledger) (`tax_treatment`, split business-use %, `excluded`, `locked_fields`, …)
 - **social_security_payments** — Seguridad Social cuota payments imported from bank account exports (or entered manually). Deduplication key: `(payment_date, amount_eur, description)`. Refunds are stored as negative amounts. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
@@ -386,16 +389,18 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 
 | Model | Source | Contribution |
 |-------|--------|-------------|
-| **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota) |
+| **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota), weighted by `deductible_pct_vat` |
 | **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
 | **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD |
-| **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct`) YTD |
+| **Modelo 130** box_02 | Expense invoices (`direction='in'`) | Subtotal gastos (weighted by `deductible_pct_irpf`) YTD |
 | **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
 | **Modelo 130** box_07 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
 | **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. |
 | **Modelo 349** | Income invoices | EU B2B invoice income alongside Stripe |
 
 Geographic classification is auto-derived from the vendor NIF (expenses) or client NIF (income) at OCR extraction time. Existing rows are backfilled automatically on database init.
+
+Invoices are assigned to a quarter by **`invoice_date`** (the accounting date); `supply_date` is informational only, so an invoice dated in April for a service supplied in March counts in Q2. Rows marked `excluded = 1` (duplicates, receipts, personal, other period, superseded) are ignored by every model.
 
 ### Manual entries
 
@@ -639,6 +644,46 @@ GOOGLE_CLOUD_LOCATION=us-central1   # or europe-west1, etc.
 ```
 
 When `GOOGLE_APPLICATION_CREDENTIALS` is set the module switches to Vertex AI mode automatically (no API key needed).
+
+---
+
+## Invoice Ledger
+
+The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a direction (expenses / income) and optionally a quarter (by invoice date), then:
+
+- **Bulk edit** — an `st.data_editor` grid over the ledger columns (invoice date, tax treatment, VAT/IRPF business-use %, capital asset, exclusion, EUR received, payment date). Edits apply on **Save changes**.
+- **Edit one invoice** — a form covering the OCR fields (number, dates, parties, amounts, …) and the ledger columns. Saving stamps `reviewed_at` even when nothing changed.
+
+**Locks.** Every field you change is added to the invoice's `locked_fields` (JSON list). Re-extracting the PDF in the Invoice OCR tab never overwrites a locked field — enforced in `src/database.py` (`upsert_invoice`), not just in the UI. Ledger-only columns (`excluded`, `eur_received`, …) also survive a plain re-extract. **Unlock all fields** releases the locks (values stay as they are) so the next re-extract may overwrite them.
+
+**Ledger columns** (added by an idempotent migration on startup):
+
+| Column | Meaning |
+|--------|---------|
+| `tax_treatment` | Expenses: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT`, `NOT_DEDUCTIBLE`. Income: `ES_21`, `EU_B2C_ES21`, `EU_B2B`, `NON_EU_NOT_SUBJECT`, `EXEMPT_TEACHING`. |
+| `deductible_pct_vat` / `deductible_pct_irpf` | Business-use share for the VAT deduction (303) and the IRPF expense (130), independently. Backfilled from the legacy `deductible_pct`. |
+| `is_capital_asset`, `asset_class` | Capital-asset flag and class (depreciation comes with the fixed-assets step). |
+| `excluded`, `excluded_reason` | `1` removes the row from every tax computation; reason ∈ `duplicate`, `receipt`, `personal`, `other_period`, `superseded`. |
+| `eur_received`, `payment_date` | EUR actually received for foreign-currency income, and when. |
+| `vendor_vat_id_norm` | `vendor_nif` normalised for matching: upper-case, separators stripped, Spanish ids `ES`-prefixed. |
+| `locked_fields`, `reviewed_at` | User-edited fields (never overwritten by re-OCR) and last review time. |
+
+**Backfill of `tax_treatment`** from the legacy `vat_treatment` (still stored and kept in sync when you edit the treatment). The mapping preserves what the engine did with the legacy value:
+
+| Direction | Legacy `vat_treatment` (+ `geo_region`) | `tax_treatment` |
+|-----------|------------------------------------------|-----------------|
+| in | `IVA_ES_21` | `DOMESTIC` |
+| in | `IVA_EU_B2B` | `INTRA_EU_RC` |
+| in | `IVA_EXEMPT` + `OUTSIDE_EU` | `NON_EU_RC` |
+| in | `IVA_EXEMPT` + any other region | `NO_VAT` |
+| out | `IVA_ES_21` | `ES_21` |
+| out | `OSS_EU` | `EU_B2C_ES21` |
+| out | `IVA_EU_B2B` | `EU_B2B` |
+| out | `IVA_EXPORT` | `NON_EU_NOT_SUBJECT` |
+| out | `IVA_EXEMPT` + `SPAIN` | `EXEMPT_TEACHING` |
+| out | `IVA_EXEMPT` + other / unknown region | left empty — review it in the Ledger tab |
+
+The tax engine currently uses `excluded`, `invoice_date` and the split business-use percentages; the per-treatment Modelo 303 box model (reverse charge, capital goods, pro-rata) is a later step.
 
 ---
 

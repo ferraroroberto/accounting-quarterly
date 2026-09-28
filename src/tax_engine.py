@@ -259,8 +259,12 @@ def _get_vat_treatment(row: dict, config: Optional[dict] = None) -> str:
     stored = row.get("vat_treatment")
     if stored and stored != "UNKNOWN":
         return stored
-    # Derive from activity × geo (fallback for rows not yet VAT-classified)
-    return vat_treatment(row.get("activity_type"), row.get("geo_region"), config=config)
+    # Derive from activity × geo (fallback for rows not yet VAT-classified).
+    # buyer_vat_id (accounting-quarterly#113) decides the EU B2B/B2C split.
+    return vat_treatment(
+        row.get("activity_type"), row.get("geo_region"), config=config,
+        buyer_vat_id=row.get("buyer_vat_id"),
+    )
 
 
 def _oss_country_code(row: dict) -> str:

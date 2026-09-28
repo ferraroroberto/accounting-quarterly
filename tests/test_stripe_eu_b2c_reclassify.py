@@ -27,6 +27,7 @@ from src.tax_engine import (
     compute_eu_b2c_threshold,
     compute_modelo_130,
     compute_modelo_303,
+    compute_modelo_349,
     compute_oss_return,
 )
 from src.vat_rules import vat_amount_on_base, vat_base_from_inclusive, vat_treatment
@@ -95,8 +96,24 @@ class TestEuB2CSpanish21:
         cfg = {"tax": {"vat_registered": False}}
         assert vat_treatment("NEWSLETTER", "EU_NOT_SPAIN", cfg) == "IVA_EXEMPT"
 
-    def test_eu_b2b_coaching_unchanged(self):
-        assert vat_treatment("COACHING", "EU_NOT_SPAIN") == "IVA_EU_B2B"
+    def test_eu_coaching_and_illustrations_without_vat_id_default_to_b2c(self):
+        # #113: EU sales follow the customer's status, not the activity — with
+        # no VAT id on file, coaching/illustrations default to B2C (21%) just
+        # like newsletter, instead of the old always-B2B default.
+        assert vat_treatment("COACHING", "EU_NOT_SPAIN") == "EU_B2C_ES21"
+        assert vat_treatment("ILLUSTRATIONS", "EU_NOT_SPAIN") == "EU_B2C_ES21"
+
+    def test_eu_coaching_and_illustrations_with_vat_id_is_b2b(self):
+        assert vat_treatment("COACHING", "EU_NOT_SPAIN", buyer_vat_id="DE123456789") == "IVA_EU_B2B"
+        assert vat_treatment("ILLUSTRATIONS", "EU_NOT_SPAIN", buyer_vat_id="FR12345678901") == "IVA_EU_B2B"
+        # Blank/whitespace-only VAT id is treated as unknown.
+        assert vat_treatment("COACHING", "EU_NOT_SPAIN", buyer_vat_id="  ") == "EU_B2C_ES21"
+
+    def test_legacy_b2b_config_default_no_longer_forces_b2b(self):
+        # A stale config value from before #113 is accepted (doesn't crash) but
+        # ignored: B2B can no longer be forced without a known customer VAT id.
+        cfg = {"tax": {"default_vat_treatment_eu_coaching": "IVA_EU_B2B"}}
+        assert vat_treatment("COACHING", "EU_NOT_SPAIN", cfg) == "EU_B2C_ES21"
 
     def test_base_and_cuota_at_21(self):
         base = vat_base_from_inclusive(121.0, "EU_B2C_ES21")
@@ -121,6 +138,38 @@ class TestEuB2CSpanish21:
         oss = compute_oss_return(2025, 1, conn, {"tax": {}})
         assert oss.rows == []
         assert any(a.cell == "oss_not_registered" for a in oss.audit)
+
+    def test_eu_coaching_without_vat_id_books_at_21_not_b2b(self, db_path, conn, sample_rules):
+        # Acceptance criterion (accounting-quarterly#113): an EU coaching sale
+        # with no customer VAT id on file is 21% Spanish IVA, not B2B.
+        _store(db_path, [_payment("ch_eu_coach", "2025-02-10T10:00:00", 121.0,
+                                  desc="Calendly coaching", email_meta="test@example.de")],
+               sample_rules)
+        r303 = compute_modelo_303(2025, 1, conn, {"tax": {}})
+        assert r303.box_01_base == pytest.approx(100.0)
+        assert r303.box_03_cuota == pytest.approx(21.0)
+        assert r303.box_59_intracom_entregas == 0.0
+        assert compute_modelo_349(2025, 1, conn, {"tax": {}}).rows == []
+
+    def test_eu_coaching_with_vat_id_is_b2b_and_lists_on_349(self, db_path, conn, sample_rules):
+        # Acceptance criterion (accounting-quarterly#113): an EU coaching sale
+        # with a customer VAT id on file is EU B2B, listed on Modelo 349 key S.
+        rules = json.loads(json.dumps(sample_rules))
+        rules["customer_vat_ids"] = {
+            "email_vat_ids": {"test@example.de": "DE123456789"}, "name_vat_ids": {},
+        }
+        _store(db_path, [_payment("ch_eu_coach_b2b", "2025-02-10T10:00:00", 500.0,
+                                  desc="Calendly coaching", email_meta="test@example.de")],
+               rules)
+
+        r303 = compute_modelo_303(2025, 1, conn, {"tax": {}})
+        assert r303.box_01_base == 0.0
+        assert r303.box_59_intracom_entregas == pytest.approx(500.0)
+
+        r349 = compute_modelo_349(2025, 1, conn, {"tax": {}})
+        assert len(r349.rows) == 1
+        assert r349.rows[0].buyer_vat_id == "DE123456789"
+        assert r349.rows[0].total_amount == pytest.approx(500.0)
 
 
 # ---------------------------------------------------------------------------

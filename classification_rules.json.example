@@ -62,5 +62,13 @@
       "client@example.com": "EU_NOT_SPAIN",
       "another@example.com": "OUTSIDE_EU"
     }
+  },
+  "customer_vat_ids": {
+    "email_vat_ids": {
+      "client@example.com": "DE123456789"
+    },
+    "name_vat_ids": {
+      "client name as it appears in description": "DE123456789"
+    }
   }
 }

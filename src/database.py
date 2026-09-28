@@ -783,7 +783,14 @@ def upsert_payments(payments: list[Payment], source: str = "api",
 
 def upsert_classified(payments: list[ClassifiedPayment],
                       db_path: Optional[str | Path] = None) -> None:
-    """Update classification columns for already-stored transactions."""
+    """Update classification columns for already-stored transactions.
+
+    Also writes ``buyer_vat_id`` (the customer's EU VAT id, resolved by
+    ``src.classifier.customer_vat_id`` — accounting-quarterly#113) so the
+    tax engine's on-the-fly ``vat_treatment`` derivation and Modelo 349 key S
+    grouping (``src.tax_engine._load_classified_for_quarter``) can read it
+    straight from the ``transactions`` table.
+    """
     conn = get_connection(db_path)
     try:
         _ensure_transactions_schema(conn)
@@ -792,10 +799,11 @@ def upsert_classified(payments: list[ClassifiedPayment],
                 UPDATE transactions SET
                     activity_type = ?, geo_region = ?,
                     classification_rule = ?, geo_rule = ?,
+                    buyer_vat_id = ?,
                     updated_at = datetime('now')
                 WHERE id = ?
             """, (p.activity_type, p.geo_region,
-                  p.classification_rule, p.geo_rule, p.id))
+                  p.classification_rule, p.geo_rule, p.buyer_vat_id, p.id))
         conn.commit()
     finally:
         conn.close()
@@ -847,6 +855,7 @@ def load_classified_payments(
                 geo_region=row["geo_region"] or "UNKNOWN",
                 classification_rule=row["classification_rule"] or "",
                 geo_rule=row["geo_rule"] or "",
+                buyer_vat_id=row["buyer_vat_id"],
             ))
         return payments
     finally:

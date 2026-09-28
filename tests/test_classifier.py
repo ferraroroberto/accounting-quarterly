@@ -1,7 +1,13 @@
 """Tests for the classification engine."""
 import pytest
 
-from src.classifier import classify_activity, classify_batch, classify_geography, classify_payment
+from src.classifier import (
+    classify_activity,
+    classify_batch,
+    classify_geography,
+    classify_payment,
+    customer_vat_id,
+)
 from src.models import Payment
 
 
@@ -213,3 +219,68 @@ class TestClassifyBatch:
         assert len(coaching) == 3  # calendly + consulting + empty desc
         assert len(newsletter) == 1
         assert len(illustrations) == 1
+
+
+class TestCustomerVatId:
+    """accounting-quarterly#113: per-customer VAT id lookup that decides
+    whether an EU sale is B2B (reverse charge) or B2C (Spanish 21% / OSS)."""
+
+    _RULES = {
+        "activity_rules": [],
+        "geographic_rules": {"defaults": {}, "geographic_overrides": {}, "email_overrides": {}},
+        "customer_vat_ids": {
+            "email_vat_ids": {"biz@example.de": "DE123456789"},
+            "name_vat_ids": {"acme gmbh": "DE999888777"},
+        },
+    }
+
+    def test_no_override_no_fallback_returns_none(self):
+        p = Payment(id="c1", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="unrelated", fee=0.0, currency="eur")
+        assert customer_vat_id(p, self._RULES) is None
+
+    def test_email_override_matches(self):
+        p = Payment(id="c2", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="Calendly coaching", fee=0.0,
+                    currency="eur", email_meta="biz@example.de")
+        assert customer_vat_id(p, self._RULES) == "DE123456789"
+
+    def test_name_override_matches_description(self):
+        p = Payment(id="c3", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="Charge for Acme GmbH", fee=0.0,
+                    currency="eur")
+        assert customer_vat_id(p, self._RULES) == "DE999888777"
+
+    def test_email_override_wins_over_name_override(self):
+        p = Payment(id="c4", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="Charge for Acme GmbH", fee=0.0,
+                    currency="eur", email_meta="biz@example.de")
+        assert customer_vat_id(p, self._RULES) == "DE123456789"
+
+    def test_raw_customer_tax_ids_fallback(self):
+        # Read-only fallback: a Stripe customer.tax_ids entry already present
+        # in the stored raw charge, used only when no override matches.
+        p = Payment(id="c5", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="unrelated", fee=0.0, currency="eur",
+                    raw_source={"customer": {"tax_ids": {"data": [{"type": "eu_vat", "value": "FR123"}]}}})
+        assert customer_vat_id(p, self._RULES) == "FR123"
+
+    def test_override_wins_over_raw_fallback(self):
+        p = Payment(id="c6", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="unrelated", fee=0.0, currency="eur",
+                    email_meta="biz@example.de",
+                    raw_source={"customer": {"tax_ids": {"data": [{"type": "eu_vat", "value": "FR123"}]}}})
+        assert customer_vat_id(p, self._RULES) == "DE123456789"
+
+    def test_classify_payment_sets_buyer_vat_id(self, sample_rules):
+        rules = dict(sample_rules)
+        rules["customer_vat_ids"] = {"email_vat_ids": {"biz@example.de": "DE123456789"}, "name_vat_ids": {}}
+        p = Payment(id="c7", created_date="2025-01-15T10:00:00", converted_amount=10.0,
+                    converted_amount_refunded=0.0, description="Calendly coaching", fee=0.0,
+                    currency="eur", email_meta="biz@example.de")
+        classified = classify_payment(p, rules)
+        assert classified.buyer_vat_id == "DE123456789"
+
+    def test_classify_payment_leaves_buyer_vat_id_none_by_default(self, sample_rules, sample_payment):
+        classified = classify_payment(sample_payment, rules=sample_rules)
+        assert classified.buyer_vat_id is None

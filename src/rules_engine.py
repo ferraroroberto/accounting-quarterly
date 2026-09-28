@@ -17,6 +17,7 @@ def _missing_rules(path: Path) -> dict[str, Any]:
     return {
         "activity_rules": [],
         "geographic_rules": {"defaults": {}, "geographic_overrides": {}, "email_overrides": {}},
+        "customer_vat_ids": {"email_vat_ids": {}, "name_vat_ids": {}},
     }
 
 

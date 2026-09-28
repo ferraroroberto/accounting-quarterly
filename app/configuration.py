@@ -206,6 +206,59 @@ Classification priority order:
                 invalidate_cache()
                 st.success("Email overrides saved")
 
+        st.markdown("---")
+        st.subheader("Customer VAT IDs (B2B)")
+        st.caption(
+            "An EU (non-Spain) sale is business-to-business (reverse charge, `IVA_EU_B2B`, "
+            "Modelo 349 key S) only when the customer's VAT id is known here — otherwise it is "
+            "treated as a consumer sale (`EU_B2C_ES21` / OSS). VIES validity is not checked."
+        )
+        vat_id_rules = rules.get("customer_vat_ids", {})
+        col_vat_email, col_vat_name = st.columns(2)
+        with col_vat_email:
+            st.markdown("**By Email**")
+            vat_email_ov = vat_id_rules.get("email_vat_ids", {})
+            vat_email_rows = [{"Email": k, "VAT ID": v} for k, v in vat_email_ov.items()]
+            edited_vat_email = st.data_editor(
+                pd.DataFrame(vat_email_rows) if vat_email_rows else pd.DataFrame(columns=["Email", "VAT ID"]),
+                num_rows="dynamic",
+                width="stretch",
+                key="vat_id_email_editor",
+            )
+            if st.button("Save email VAT IDs", key="save_vat_id_email"):
+                vat_id_rules["email_vat_ids"] = {
+                    row["Email"].lower().strip(): str(row["VAT ID"]).strip()
+                    for _, row in edited_vat_email.iterrows()
+                    if pd.notna(row["Email"]) and str(row["Email"]).strip()
+                    and pd.notna(row["VAT ID"]) and str(row["VAT ID"]).strip()
+                }
+                rules["customer_vat_ids"] = vat_id_rules
+                save_rules(rules)
+                invalidate_cache()
+                st.success("Email VAT IDs saved")
+
+        with col_vat_name:
+            st.markdown("**By Name / Description**")
+            vat_name_ov = vat_id_rules.get("name_vat_ids", {})
+            vat_name_rows = [{"Name": k, "VAT ID": v} for k, v in vat_name_ov.items()]
+            edited_vat_name = st.data_editor(
+                pd.DataFrame(vat_name_rows) if vat_name_rows else pd.DataFrame(columns=["Name", "VAT ID"]),
+                num_rows="dynamic",
+                width="stretch",
+                key="vat_id_name_editor",
+            )
+            if st.button("Save name VAT IDs", key="save_vat_id_name"):
+                vat_id_rules["name_vat_ids"] = {
+                    row["Name"].lower().strip(): str(row["VAT ID"]).strip()
+                    for _, row in edited_vat_name.iterrows()
+                    if pd.notna(row["Name"]) and str(row["Name"]).strip()
+                    and pd.notna(row["VAT ID"]) and str(row["VAT ID"]).strip()
+                }
+                rules["customer_vat_ids"] = vat_id_rules
+                save_rules(rules)
+                invalidate_cache()
+                st.success("Name VAT IDs saved")
+
     # --- Stripe API ---
     with config_tabs[2]:
         st.subheader("Stripe API Setup")
@@ -320,36 +373,37 @@ geographic classification instead of manual overrides.
         )
 
         st.markdown("##### EU VAT defaults")
+        st.caption(
+            "B2B vs. B2C is decided by the customer's VAT id (accounting-quarterly#113): a sale "
+            "to a customer with a known VAT id (Geographic Rules → Customer VAT IDs) is always "
+            "`IVA_EU_B2B` (reverse charge), for every activity. The selector below only picks "
+            "the treatment for a sale **without** a known VAT id — `EU_B2C_ES21` (Spanish 21%) "
+            "or `OSS_EU` (only applied when OSS registered is on above; otherwise coerced to "
+            "`EU_B2C_ES21`, since there is no OSS return to declare it on)."
+        )
         # IVA_EU_B2C is intentionally excluded: compute_modelo_303's aggregation
         # (src/tax_engine.py) has no devengado box or audit-record bucket for it,
         # so selecting it would silently drop the income from the quarterly VAT
         # return. Only offer treatments the engine actually accounts for.
-        EU_B2B_OPTIONS = ["IVA_EU_B2B"]
-        EU_NL_OPTIONS = ["EU_B2C_ES21", "OSS_EU", "IVA_EU_B2B"]
-        eu_coaching_val = tax.get("default_vat_treatment_eu_coaching", "IVA_EU_B2B")
-        if eu_coaching_val not in EU_B2B_OPTIONS:
-            # Stale config from before IVA_EU_B2C was removed as a selectable
-            # option (see comment above) — keep it selectable so the page
-            # doesn't crash, but it's no longer offered to new selections.
-            EU_B2B_OPTIONS = EU_B2B_OPTIONS + [eu_coaching_val]
-        col1, col2 = st.columns(2)
-        eu_coaching = col1.selectbox(
-            "EU Coaching VAT treatment",
-            EU_B2B_OPTIONS,
-            index=EU_B2B_OPTIONS.index(eu_coaching_val),
-            key="tax_eu_coaching",
-        )
-        eu_newsletter_val = tax.get("default_vat_treatment_eu_newsletter", "EU_B2C_ES21")
-        if eu_newsletter_val not in EU_NL_OPTIONS:
-            EU_NL_OPTIONS = EU_NL_OPTIONS + [eu_newsletter_val]
-        eu_newsletter = col2.selectbox(
-            "EU Newsletter VAT treatment",
-            EU_NL_OPTIONS,
-            index=EU_NL_OPTIONS.index(eu_newsletter_val),
-            key="tax_eu_newsletter",
-            help="EU_B2C_ES21: Spanish 21% (not OSS-registered). OSS_EU only applies when "
-                 "OSS registered is on — otherwise it is treated as EU_B2C_ES21.",
-        )
+        EU_B2C_OPTIONS = ["EU_B2C_ES21", "OSS_EU"]
+
+        def _eu_b2c_selectbox(col, label: str, config_key: str, key: str):
+            configured = tax.get(config_key, "EU_B2C_ES21")
+            options = EU_B2C_OPTIONS
+            if configured not in options:
+                # Stale config (e.g. a legacy IVA_EU_B2B default from before #113) —
+                # keep it selectable so the page doesn't crash, but it no longer has
+                # any effect: B2B now depends solely on the customer's VAT id.
+                options = options + [configured]
+            return col.selectbox(label, options, index=options.index(configured), key=key)
+
+        col1, col2, col3 = st.columns(3)
+        eu_coaching = _eu_b2c_selectbox(
+            col1, "EU Coaching (no VAT id)", "default_vat_treatment_eu_coaching", "tax_eu_coaching")
+        eu_newsletter = _eu_b2c_selectbox(
+            col2, "EU Newsletter (no VAT id)", "default_vat_treatment_eu_newsletter", "tax_eu_newsletter")
+        eu_illustrations = _eu_b2c_selectbox(
+            col3, "EU Illustrations (no VAT id)", "default_vat_treatment_eu_illustrations", "tax_eu_illustrations")
 
         st.divider()
         if st.button("Save Tax Settings", type="primary", key="save_tax_settings"):
@@ -360,6 +414,7 @@ geographic classification instead of manual overrides.
                 "vat_proration_percentage": int(vat_proration),
                 "default_vat_treatment_eu_coaching": eu_coaching,
                 "default_vat_treatment_eu_newsletter": eu_newsletter,
+                "default_vat_treatment_eu_illustrations": eu_illustrations,
             }
             save_config(cfg)
             st.success("Tax settings saved to config.json")

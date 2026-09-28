@@ -421,18 +421,26 @@ class TestConfigDrivenTaxSettings:
         assert result.total_base == 0.0
         assert any(a.cell == "oss_not_registered" for a in result.audit)
 
-    def test_eu_newsletter_override_routes_to_349(self, db_conn):
-        # Newsletter defaults to EU B2C, but the config override makes it EU B2B,
-        # which then surfaces on Modelo 349. Row carries no stored treatment.
+    def test_buyer_vat_id_routes_to_349_regardless_of_config(self, db_conn):
+        # accounting-quarterly#113: the customer's buyer_vat_id — not the
+        # per-activity config default — decides B2B vs. B2C. Row carries no
+        # stored treatment, so it's derived on the fly from buyer_vat_id.
         _insert_tx(db_conn, id="t1", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
                    activity_type="NEWSLETTER", vat_treatment=None,
-                   email_meta="sub@eu.com", buyer_vat_id="DE999")
-        # Default (EU B2C: EU_B2C_ES21, or OSS_EU when registered) → not on 349
+                   email_meta="sub@eu.com", buyer_vat_id=None)
+        # No VAT id on file → EU B2C (EU_B2C_ES21, or OSS_EU when registered) → not on 349
         assert len(compute_modelo_349(2025, 1, db_conn, {"tax": {}}).rows) == 0
-        # Override → treated as IVA_EU_B2B → appears on 349
+        # A legacy config default of IVA_EU_B2B no longer forces B2B without a VAT id.
         cfg = {"tax": {"default_vat_treatment_eu_newsletter": "IVA_EU_B2B"}}
-        result = compute_modelo_349(2025, 1, db_conn, cfg)
+        assert len(compute_modelo_349(2025, 1, db_conn, cfg).rows) == 0
+
+        # VAT id on file → IVA_EU_B2B → appears on 349, config irrelevant.
+        _insert_tx(db_conn, id="t2", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
+                   activity_type="NEWSLETTER", vat_treatment=None,
+                   email_meta="biz@eu.com", buyer_vat_id="DE999")
+        result = compute_modelo_349(2025, 1, db_conn, {"tax": {}})
         assert len(result.rows) == 1
+        assert result.rows[0].buyer_vat_id == "DE999"
         assert result.rows[0].total_amount == pytest.approx(300.0)
 
 

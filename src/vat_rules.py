@@ -61,6 +61,7 @@ def vat_treatment(
     activity: Optional[str],
     geo: Optional[str],
     config: Optional[dict] = None,
+    buyer_vat_id: Optional[str] = None,
 ) -> str:
     """Derive the ``vat_treatment`` from the activity × geography matrix.
 
@@ -70,19 +71,25 @@ def vat_treatment(
     - ``SPAIN`` → ``IVA_ES_21`` (or ``IVA_EXEMPT`` when the taxpayer is not
       IVA-registered, i.e. ``tax.vat_registered`` is false — franquicia/no
       domestic IVA charged).
-    - ``EU_NOT_SPAIN`` → EU treatment, per-activity. The treatment may be
-      overridden via ``tax.default_vat_treatment_eu_<activity>`` in ``config``;
-      the per-activity default is EU B2C for ``NEWSLETTER`` (digital services
-      to consumers) and ``IVA_EU_B2B`` (reverse charge) for everything else.
-      EU B2C is ``OSS_EU`` only when ``tax.oss_registered`` is true; otherwise
-      it is ``EU_B2C_ES21`` (Spanish 21%, art. 73 LIVA) — an ``OSS_EU``
-      setting without OSS registration is coerced to ``EU_B2C_ES21``, since
-      there is no OSS return to declare it on. Not IVA-registered →
-      ``IVA_EXEMPT``, mirroring Spain.
+    - ``EU_NOT_SPAIN`` → the B2B/B2C split follows the **customer's status**,
+      not the activity (accounting-quarterly#113 — art. 69/70 LIVA): a sale
+      to a customer with a known ``buyer_vat_id`` is ``IVA_EU_B2B`` (reverse
+      charge, regardless of activity or config); a sale with no known VAT id
+      is EU B2C — ``OSS_EU`` when ``tax.oss_registered`` is true, otherwise
+      ``EU_B2C_ES21`` (Spanish 21%, art. 73 LIVA). ``tax.default_vat_treatment_eu_<activity>``
+      may still pick between the two B2C sub-treatments per activity (any
+      other value, including a legacy ``IVA_EU_B2B``, is ignored since B2B
+      can no longer be forced without a VAT id); an ``OSS_EU`` choice without
+      OSS registration is coerced to ``EU_B2C_ES21``, since there is no OSS
+      return to declare it on. Not IVA-registered → ``IVA_EXEMPT`` for the
+      B2C branch, mirroring Spain (B2B/reverse-charge is unaffected).
     - anything else → ``UNKNOWN``
 
-    ``config`` is the full app config dict (with a ``tax`` section). When
-    ``None``, the documented defaults are used.
+    ``buyer_vat_id`` is the customer's EU VAT id, if known (see
+    ``src.classifier.customer_vat_id``); VIES validity is not checked — see
+    the "VAT treatment" section of the README. ``config`` is the full app
+    config dict (with a ``tax`` section). When ``None``, the documented
+    defaults are used.
     """
     geo = geo or "UNKNOWN"
     activity = activity or "UNKNOWN"
@@ -98,8 +105,13 @@ def vat_treatment(
     if geo == "EU_NOT_SPAIN":
         oss_registered = is_oss_registered(config)
         eu_b2c = "OSS_EU" if oss_registered else EU_B2C_ES21
-        default = eu_b2c if activity == "NEWSLETTER" else "IVA_EU_B2B"
-        treatment = tax_cfg.get(f"default_vat_treatment_eu_{activity.lower()}", default)
+        has_vat_id = bool((buyer_vat_id or "").strip())
+        if has_vat_id:
+            return "IVA_EU_B2B"
+        # No VAT id on file → B2C. The config default only chooses between
+        # the B2C sub-treatments; it can no longer force B2B (#113).
+        configured = tax_cfg.get(f"default_vat_treatment_eu_{activity.lower()}")
+        treatment = configured if configured in (EU_B2C_ES21, "OSS_EU") else eu_b2c
         if treatment == "OSS_EU" and not oss_registered:
             treatment = EU_B2C_ES21
         if treatment == EU_B2C_ES21 and not vat_registered:

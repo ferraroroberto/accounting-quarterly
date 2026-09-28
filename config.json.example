@@ -29,7 +29,8 @@
     "vat_registered": true,
     "oss_registered": false,
     "vat_proration_percentage": 100,
-    "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
-    "default_vat_treatment_eu_newsletter": "EU_B2C_ES21"
+    "default_vat_treatment_eu_coaching": "EU_B2C_ES21",
+    "default_vat_treatment_eu_newsletter": "EU_B2C_ES21",
+    "default_vat_treatment_eu_illustrations": "EU_B2C_ES21"
   }
 }

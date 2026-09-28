@@ -259,7 +259,7 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
             if direction == "in":
                 changes["charged_eur"] = st.number_input(
                     "EUR actually charged", value=rec.get("charged_eur"), format="%.2f",
-                    help="From the document, e.g. 'Charged 44.07 EUR using 1 USD = 0.8813 EUR'. Wins over the ECB rate.",
+                    help="From the document, e.g. 'Charged 42.50 EUR using 1 USD = 0.8500 EUR'. Wins over the ECB rate.",
                     key=f"{k}_charged_eur",
                 )
             if rec.get("fx_source"):

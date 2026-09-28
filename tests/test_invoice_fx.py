@@ -94,11 +94,11 @@ class TestResolveInvoiceAmounts:
 
     def test_charged_eur_wins_for_expense(self, db):
         _store_usd_rate(db)  # present, but must lose to the stated charge
-        data = _extracted(charged_eur=44.07, original_amount=50.0, subtotal_eur=45.0, total_eur=45.0)
+        data = _extracted(charged_eur=42.50, original_amount=50.0, subtotal_eur=45.0, total_eur=45.0)
         r = resolve_invoice_amounts("in", data, db_path=db)
         assert r.fx_source == "CHARGED_EUR"
-        assert r.total_eur == 44.07
-        assert r.fx_rate_used == pytest.approx(50.0 / 44.07, rel=1e-4)
+        assert r.total_eur == 42.50
+        assert r.fx_rate_used == pytest.approx(50.0 / 42.50, rel=1e-4)
 
     def test_missing_rate_is_flagged_not_silent(self, db):
         with patch("src.fx_rates.fetch_single_date", side_effect=Exception("no network")):
@@ -183,10 +183,10 @@ class TestIngestionStoresFxMetadata:
         assert row["fx_stale"] == 0
 
     def test_charged_eur_is_editable_and_lockable(self, db):
-        rid = _ingest("in", db, filename="vendor/streamalive.pdf", charged_eur=44.07,
+        rid = _ingest("in", db, filename="vendor/saas_card.pdf", charged_eur=42.50,
                       original_amount=50.0, subtotal_eur=45.0, total_eur=45.0)
         row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
-        assert row["charged_eur"] == 44.07
+        assert row["charged_eur"] == 42.50
         changed = update_invoice_fields(rid, {"charged_eur": 44.50}, db_path=db)
         assert changed == ["charged_eur"]
 
@@ -230,14 +230,14 @@ class TestIncomeEurReceived:
 class TestExchangeDifferences:
     def test_record_and_list(self, db):
         diff_id = record_exchange_difference(
-            conversion_date="2025-05-10", currency="USD", foreign_amount=4965.0,
-            eur_obtained=4352.97, booked_eur=4283.49, notes="Revolut USD pocket conversion",
+            conversion_date="2025-05-10", currency="USD", foreign_amount=1000.0,
+            eur_obtained=880.00, booked_eur=860.00, notes="USD balance conversion",
             db_path=db,
         )
         assert diff_id > 0
         rows = get_exchange_differences(db_path=db)
         assert len(rows) == 1
-        assert rows[0]["gain_loss_eur"] == pytest.approx(69.48)
+        assert rows[0]["gain_loss_eur"] == pytest.approx(20.00)
 
     def test_feeds_modelo130_income_in_conversion_quarter_only(self, db, conn):
         _store_usd_rate(db)

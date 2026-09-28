@@ -450,8 +450,8 @@ def resolve_invoice_amounts(
     ``total_eur`` guess, which is kept only as a cross-check.
 
     Expenses (``direction='in'``): the EUR actually charged to the card, when
-    the document states it (``charged_eur``, e.g. "Charged 44.07 EUR using 1
-    USD = 0.8813 EUR"), wins. Otherwise EUR = ``original_amount`` / the ECB
+    the document states it (``charged_eur``, e.g. "Charged 42.50 EUR using 1
+    USD = 0.8500 EUR"), wins. Otherwise EUR = ``original_amount`` / the ECB
     rate on the invoice date.
 
     Income (``direction='out'``): resolved the same way from the ECB rate.

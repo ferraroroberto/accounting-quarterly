@@ -146,8 +146,8 @@ AMOUNTS (all numbers, no strings — convert "1.234,56" → 1234.56):
   a foreign-currency document — the app converts original_amount using the
   official ECB rate itself; your EUR figures here are only used as a cross-check.
 - charged_eur: the EUR amount ACTUALLY CHARGED to the card/account, ONLY when
-  the document explicitly states it (e.g. "Charged 44.07 EUR using 1 USD =
-  0.8813 EUR", or a card-network conversion line). null when the document does
+  the document explicitly states it (e.g. "Charged 42.50 EUR using 1 USD =
+  0.8500 EUR", or a card-network conversion line). null when the document does
   not state an explicit EUR charge — do not estimate or compute this yourself.
 
 VAT TREATMENT:

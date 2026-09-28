@@ -691,7 +691,7 @@ from `src.fx_rates.resolve_invoice_amounts`, called right after extraction
 (`app/invoice_ocr_tab._extract_and_save`), in this order:
 
 1. **`charged_eur`** — when the document itself states the EUR actually charged
-   to the card (e.g. *"Charged 44.07 EUR using 1 USD = 0.8813 EUR"*), that wins.
+   to the card (e.g. *"Charged 42.50 EUR using 1 USD = 0.8500 EUR"*), that wins.
    The OCR prompt extracts it into a new `charged_eur` field, left `null` when
    the document doesn't state it.
 2. Otherwise, **the ECB rate on `invoice_date`** — `original_amount` divided by

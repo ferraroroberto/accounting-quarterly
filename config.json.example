@@ -30,6 +30,7 @@
     "oss_registered": false,
     "activity_start_date": "2025-01-01",
     "vat_proration_percentage": 100,
+    "platform_fee_vat_treatment": "NON_EU_RC",
     "default_vat_treatment_eu_coaching": "EU_B2C_ES21",
     "default_vat_treatment_eu_newsletter": "EU_B2C_ES21",
     "default_vat_treatment_eu_illustrations": "EU_B2C_ES21"

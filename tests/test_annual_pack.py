@@ -166,6 +166,22 @@ class TestModelo390RateRows:
         assert (b["603"], b["604"]) == (200.0, 15.0)
         assert "7.5" in m.notes
 
+    def test_platform_fees_in_reverse_charge_and_deductible_21_rows(self, conn):
+        # #147: Stripe application fees are a NON_EU_RC purchase — 27/28 and the 21 % deductible row,
+        # next to a 10 % domestic invoice that must stay in its own row.
+        _tx(conn, "fee_q2", "2025-05-05", 100.0)
+        _tx(conn, "fee_q3", "2025-08-05", 100.0)
+        conn.execute("UPDATE transactions SET fee_application = 6.0 WHERE id = 'fee_q2'")
+        conn.execute("UPDATE transactions SET fee_application = 4.0 WHERE id = 'fee_q3'")
+        conn.commit()
+        _inv(conn, "ten", "in", "2025-05-06", 50.0, "DOMESTIC", iva=5.0, rate=10)
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=quarters).aeat_boxes()
+        assert (b["27"], b["28"]) == (10.0, 2.1)
+        assert (b["605"], b["606"]) == (10.0, 2.1)
+        assert (b["603"], b["604"]) == (50.0, 5.0)
+        assert (b["48"], b["49"]) == (60.0, 7.1)
+
 
 class TestModelo390Compensation:
     def test_carried_in_credit_and_q4_boxes(self, conn):

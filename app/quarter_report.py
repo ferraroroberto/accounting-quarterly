@@ -15,8 +15,9 @@ from src.aggregator import (
     calculate_regional_totals,
     get_transaction_count,
 )
-from src.classifier import validate_classifications
+from src.classifier import eur_default_foreign_warning, validate_classifications
 from src.excel_exporter import create_excel_report, generate_report_filename
+from src.exceptions import StaleClassificationError
 
 
 def render() -> None:
@@ -90,6 +91,13 @@ def render() -> None:
     regional = calculate_regional_totals(payments)
     counts = get_transaction_count(payments)
     val_report = validate_classifications(payments)
+
+    foreign = [p for p in payments if eur_default_foreign_warning(p)]
+    if foreign:
+        st.warning(
+            f"⚠️ {len(foreign)} EUR charge(s) in this period fell to the `eur_default` (SPAIN) rule "
+            f"for a customer that looks foreign — review them in **Transaction Browser**."
+        )
 
     st.markdown("---")
 
@@ -211,7 +219,12 @@ def render() -> None:
         if st.button("Generate Excel Report", type="primary", key="qr_export"):
             with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
                 tmp_path = tmp.name
-            create_excel_report(payments, tmp_path, export_year, quarter, label)
+            try:
+                create_excel_report(payments, tmp_path, export_year, quarter, label)
+            except StaleClassificationError as exc:
+                os.unlink(tmp_path)
+                st.error(str(exc))
+                return
             with open(tmp_path, "rb") as f:
                 excel_bytes = f.read()
             os.unlink(tmp_path)

@@ -305,9 +305,11 @@ geographic classification instead of manual overrides.
                  "and no input IVA is deducted in Modelo 303.",
         )
         oss_registered = col2.checkbox(
-            "OSS registered", value=tax.get("oss_registered", True),
+            "OSS registered", value=tax.get("oss_registered", False),
             key="tax_oss_reg",
-            help="If off, no OSS return is generated for EU B2C digital services.",
+            help="Only if enrolled in the One Stop Shop (Modelo 035). If off (default), no OSS "
+                 "return is generated and EU B2C sales are taxed at Spanish 21% "
+                 "(EU_B2C_ES21, art. 73 LIVA — below the €10,000 EU threshold).",
         )
         vat_proration = col3.number_input(
             "VAT proration % (prorrata)", min_value=0, max_value=100,
@@ -323,7 +325,7 @@ geographic classification instead of manual overrides.
         # so selecting it would silently drop the income from the quarterly VAT
         # return. Only offer treatments the engine actually accounts for.
         EU_B2B_OPTIONS = ["IVA_EU_B2B"]
-        EU_NL_OPTIONS = ["OSS_EU", "IVA_EU_B2B"]
+        EU_NL_OPTIONS = ["EU_B2C_ES21", "OSS_EU", "IVA_EU_B2B"]
         eu_coaching_val = tax.get("default_vat_treatment_eu_coaching", "IVA_EU_B2B")
         if eu_coaching_val not in EU_B2B_OPTIONS:
             # Stale config from before IVA_EU_B2C was removed as a selectable
@@ -337,11 +339,16 @@ geographic classification instead of manual overrides.
             index=EU_B2B_OPTIONS.index(eu_coaching_val),
             key="tax_eu_coaching",
         )
+        eu_newsletter_val = tax.get("default_vat_treatment_eu_newsletter", "EU_B2C_ES21")
+        if eu_newsletter_val not in EU_NL_OPTIONS:
+            EU_NL_OPTIONS = EU_NL_OPTIONS + [eu_newsletter_val]
         eu_newsletter = col2.selectbox(
             "EU Newsletter VAT treatment",
             EU_NL_OPTIONS,
-            index=EU_NL_OPTIONS.index(tax.get("default_vat_treatment_eu_newsletter", "OSS_EU")),
+            index=EU_NL_OPTIONS.index(eu_newsletter_val),
             key="tax_eu_newsletter",
+            help="EU_B2C_ES21: Spanish 21% (not OSS-registered). OSS_EU only applies when "
+                 "OSS registered is on — otherwise it is treated as EU_B2C_ES21.",
         )
 
         st.divider()

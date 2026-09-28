@@ -249,7 +249,7 @@ class TestOSSReturn:
                    activity_type="NEWSLETTER", vat_treatment="OSS_EU",
                    vat_base_eur=200.0, vat_amount_eur=40.0,
                    oss_country="FR", card_country="FR")
-        result = compute_oss_return(2025, 1, db_conn)
+        result = compute_oss_return(2025, 1, db_conn, {"tax": {"oss_registered": True}})
         assert len(result.rows) == 2
         countries = {r.country for r in result.rows}
         assert countries == {"DE", "FR"}
@@ -422,12 +422,12 @@ class TestConfigDrivenTaxSettings:
         assert any(a.cell == "oss_not_registered" for a in result.audit)
 
     def test_eu_newsletter_override_routes_to_349(self, db_conn):
-        # Newsletter defaults to OSS_EU, but the config override makes it EU B2B,
+        # Newsletter defaults to EU B2C, but the config override makes it EU B2B,
         # which then surfaces on Modelo 349. Row carries no stored treatment.
         _insert_tx(db_conn, id="t1", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
                    activity_type="NEWSLETTER", vat_treatment=None,
                    email_meta="sub@eu.com", buyer_vat_id="DE999")
-        # Default (OSS_EU) → not on 349
+        # Default (EU B2C: EU_B2C_ES21, or OSS_EU when registered) → not on 349
         assert len(compute_modelo_349(2025, 1, db_conn, {"tax": {}}).rows) == 0
         # Override → treated as IVA_EU_B2B → appears on 349
         cfg = {"tax": {"default_vat_treatment_eu_newsletter": "IVA_EU_B2B"}}

@@ -121,6 +121,52 @@ class OSSReturnResult:
 
 
 @dataclass
+class EUB2CThresholdResult:
+    """Year-to-date EU B2C distance sales vs the art. 73 LIVA threshold.
+
+    ``ytd_base_eur`` / ``previous_year_base_eur`` are ex-VAT bases of rows whose
+    VAT treatment is EU B2C (``EU_B2C_ES21`` or ``OSS_EU``). The threshold is
+    exceeded when either the current or the previous calendar year passes
+    ``limit_eur``; from then on EU consumers must be charged destination VAT.
+    """
+    year: int
+    quarter: int
+    limit_eur: float
+    warn_ratio: float
+    ytd_base_eur: float = 0.0
+    previous_year_base_eur: float = 0.0
+    n_transactions: int = 0
+    by_country: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def ratio(self) -> float:
+        return self.ytd_base_eur / self.limit_eur if self.limit_eur else 0.0
+
+    @property
+    def status(self) -> Literal["OK", "WARNING", "EXCEEDED"]:
+        if self.ytd_base_eur > self.limit_eur or self.previous_year_base_eur > self.limit_eur:
+            return "EXCEEDED"
+        if self.ratio >= self.warn_ratio:
+            return "WARNING"
+        return "OK"
+
+    @property
+    def message(self) -> str:
+        head = (
+            f"EU B2C sales {self.year} YTD (to Q{self.quarter}): €{self.ytd_base_eur:,.2f} "
+            f"of €{self.limit_eur:,.0f} ({self.ratio:.0%})"
+        )
+        if self.status == "EXCEEDED":
+            return (
+                f"{head} — threshold exceeded (previous year €{self.previous_year_base_eur:,.2f}). "
+                f"EU consumers must now be charged destination-country VAT (OSS or local registration)."
+            )
+        if self.status == "WARNING":
+            return f"{head} — at or above {self.warn_ratio:.0%} of the art. 73 LIVA threshold."
+        return head
+
+
+@dataclass
 class Modelo347Row:
     counterparty_name: str
     counterparty_nif: str

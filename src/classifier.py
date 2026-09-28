@@ -1,6 +1,7 @@
 """Activity and geographic classification using rules from classification_rules.json."""
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from src.logger import get_logger
@@ -104,6 +105,57 @@ def classify_geography(
 
     eur_default: GeoRegion = defaults.get("eur_default", "SPAIN")  # type: ignore[assignment]
     return eur_default, "eur_default"
+
+
+# Two-letter TLDs that are marketed as generic domains (.io, .co, .me, …) and so
+# say nothing about where the customer lives.
+_GENERIC_CCTLDS: frozenset[str] = frozenset({
+    "ai", "cc", "co", "fm", "gg", "io", "ly", "me", "so", "to", "tv", "ws",
+})
+
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.([a-z]{2,})\b", re.IGNORECASE)
+
+
+def foreign_customer_hint(payment: Payment) -> Optional[str]:
+    """Return why a customer looks non-Spanish, or ``None`` when nothing says so.
+
+    Signals: a card issuing country or a Stripe billing-address country other
+    than ``ES``, or an email address (Stripe customer email, or one written in
+    the charge description) on a country-code domain other than ``.es`` —
+    generic-use ccTLDs like ``.io`` are ignored. Used to flag EUR charges that
+    fell through to the ``eur_default`` (SPAIN) rule although the customer is
+    probably abroad.
+    """
+    reasons: list[str] = []
+    card_cc = (payment.card_country or "").strip().upper()
+    if card_cc and card_cc != "ES":
+        reasons.append(f"card country {card_cc}")
+    billing = ((payment.raw_source or {}).get("billing_details") or {})
+    billing_cc = str((billing.get("address") or {}).get("country") or "").strip().upper()
+    if billing_cc and billing_cc != "ES" and billing_cc != card_cc:
+        reasons.append(f"billing country {billing_cc}")
+    text = f"{payment.email_meta or ''} {billing.get('email') or ''} {payment.description or ''}"
+    tlds = sorted({m.group(1).lower() for m in _EMAIL_RE.finditer(text)})
+    for tld in tlds:
+        if len(tld) == 2 and tld != "es" and tld not in _GENERIC_CCTLDS:
+            reasons.append(f"email domain .{tld}")
+    return "; ".join(reasons) or None
+
+
+def eur_default_foreign_warning(payment: ClassifiedPayment) -> Optional[str]:
+    """Warning text when a EUR charge got ``eur_default`` but looks foreign.
+
+    The ``eur_default`` rule puts every unmatched EUR charge in the default
+    region (SPAIN). For a customer with a foreign card or email domain that is
+    probably wrong and needs an explicit override. Returns ``None`` otherwise.
+    """
+    if payment.currency != "eur" or payment.geo_rule != "eur_default":
+        return None
+    hint = foreign_customer_hint(payment)
+    if hint is None:
+        return None
+    return f"EUR charge classified {payment.geo_region} by eur_default, but {hint}"
 
 
 def classify_payment(payment: Payment, rules: Optional[dict] = None) -> ClassifiedPayment:

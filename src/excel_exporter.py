@@ -10,6 +10,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from src.aggregator import GEO_REGIONS, build_monthly_table, calculate_grand_totals, calculate_regional_totals
+from src.exceptions import StaleClassificationError
 from src.logger import get_logger
 from src.models import ClassifiedPayment
 
@@ -179,6 +180,30 @@ def _write_import_sheet(ws, payments: list[ClassifiedPayment]):
     ws.freeze_panes = "A2"
 
 
+def assert_currency_geo_consistent(payments: list[ClassifiedPayment]) -> None:
+    """Refuse to export a non-EUR charge carrying a EUR-branch geo classification.
+
+    The classifier decides non-EUR charges on currency alone (``non_eur_currency:*``
+    geo rule), so a non-EUR row with any other geo rule was classified while its
+    currency was still recorded as EUR (e.g. before a re-fetch corrected it) and
+    never reclassified. Exporting it would label a USD/AUD sale as EUR / EU or
+    Spain — raise instead, pointing at ``reclassify``.
+    """
+    stale = [
+        p for p in payments
+        if p.currency != "eur" and not (p.geo_rule or "").startswith("non_eur_currency")
+    ]
+    if stale:
+        detail = ", ".join(
+            f"{p.id} ({p.currency.upper()} {p.geo_region} via {p.geo_rule or 'no rule'})"
+            for p in stale[:10]
+        )
+        raise StaleClassificationError(
+            f"{len(stale)} non-EUR transaction(s) carry a stale EUR-rule classification: "
+            f"{detail}. Run `scripts/close_quarter.py reclassify --from <date>` first."
+        )
+
+
 def create_excel_report(
     payments: list[ClassifiedPayment],
     output_path: str | Path,
@@ -186,7 +211,12 @@ def create_excel_report(
     quarter: Optional[int] = None,
     label: str = "",
 ) -> Path:
-    """Generate the full Excel workbook and save to output_path."""
+    """Generate the full Excel workbook and save to output_path.
+
+    Raises :class:`StaleClassificationError` when a non-EUR row carries a
+    stale EUR-branch classification (see :func:`assert_currency_geo_consistent`).
+    """
+    assert_currency_geo_consistent(payments)
     wb = Workbook()
 
     ws_calc = wb.active

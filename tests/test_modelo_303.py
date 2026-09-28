@@ -317,6 +317,20 @@ def test_unregistered_capital_invoice_uses_the_invoice(conn):
     assert "not in the fixed-asset register" in r.notes
 
 
+def test_registered_non_capital_good_invoice_uses_28_29(conn):
+    # #134: flagged DOMESTIC_CAPITAL, but the linked asset is registered below the
+    # art. 108 LIVA threshold (€3,005.06) so it is not a VAT capital good — the
+    # invoice must be deducted like DOMESTIC in 28/29, not fall back to 30/31.
+    _inv(conn, "small_cap", "in", "2025-06-09", 1000.0, "DOMESTIC_CAPITAL", iva=210.0, rate=21, pct=50)
+    _capital_asset(conn, "small_cap", "2025-06-09", 1000.0, 210.0, 50.0)
+    r = compute_modelo_303(2025, 2, conn)
+    # 1000 × 50% = 500 ; 210 × 50% = 105
+    assert (r.c28_base, r.c29_cuota) == (pytest.approx(500.0), pytest.approx(105.0))
+    assert (r.c30_base, r.c31_cuota) == (0.0, 0.0)
+    assert "not in the fixed-asset register" not in r.notes
+    assert "not a VAT capital good" in r.notes
+
+
 def test_manual_entry_needs_a_rate(db, conn):
     add_tax_entry(2025, 1, "IVA_SOPORTADO", 21.0, "with rate", db_path=db, vat_rate=21)
     add_tax_entry(2025, 1, "IVA_SOPORTADO", 5.0, "legacy, no rate", db_path=db)

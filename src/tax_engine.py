@@ -500,9 +500,12 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
     from src.fixed_assets import capital_goods_vat_for_period, load_fixed_assets
 
     capital_by_invoice: dict[str, list] = defaultdict(list)
+    registered_by_invoice: dict[str, list] = defaultdict(list)
     for asset in load_fixed_assets(conn):
-        if asset.vat_capital_good and asset.invoice_id:
-            capital_by_invoice[asset.invoice_id].append(asset)
+        if asset.invoice_id:
+            registered_by_invoice[asset.invoice_id].append(asset)
+            if asset.vat_capital_good:
+                capital_by_invoice[asset.invoice_id].append(asset)
 
     for inv in _load_expense_invoices_for_quarter(year, quarter, conn):
         tt = _invoice_tax_treatment("in", inv)
@@ -524,6 +527,19 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
                 base_rest = max(0.0, base - sum(a.base_eur for a in linked))
                 iva_rest = max(0.0, iva - sum(a.vat_eur for a in linked))
                 rec["capital_goods_in_30_31"] = [a.id for a in linked]
+            elif tt == "DOMESTIC_CAPITAL" and registered_by_invoice.get(inv.get("id")):
+                # Registered but no linked asset is a VAT capital good (e.g. below
+                # the art. 108 LIVA threshold): deduct like DOMESTIC in 28/29; the
+                # asset stays registered for IRPF depreciation only.
+                base_rest, iva_rest = base, iva
+                rec["registered_non_capital_assets"] = [
+                    a.id for a in registered_by_invoice[inv.get("id")]
+                ]
+                col.notes.append(
+                    f"Capital-good invoice {inv.get('id')} is linked to a registered asset "
+                    "that is not a VAT capital good — boxes 28/29 use the invoice; the asset "
+                    "stays registered for IRPF depreciation only."
+                )
             elif tt == "DOMESTIC_CAPITAL":
                 # Flagged as a capital good but not in the fixed-asset register:
                 # deduct it in 30/31 straight from the invoice.

@@ -90,7 +90,7 @@ Lists duplicate groups (same file, same invoice number, invoice + receipt, email
 ### Review 1: invoices
 
 Before going on, in the app:
-- **Invoice Ledger** (expenses, then income, filtered to the quarter): check each row's `tax_treatment`, VAT and IRPF business-use %, capital-asset flag, and for foreign-currency income `eur_received` / `payment_date` when the money was converted on receipt. Register assets above the €300 threshold as fixed assets (**Register as fixed asset**).
+- **Invoice Ledger** (expenses, then income, filtered to the quarter): check each row's `tax_treatment`, VAT and IRPF business-use %, capital-asset flag, and for foreign-currency income `eur_received` / `payment_date` when the money was converted on receipt. Register VAT capital goods (unit base above €3,005.06) as fixed assets (**Register as fixed asset**): they need boxes 30/31 and the 5-year regularisation. Below that, registering is optional: a registered asset above €300 is depreciated (the strict IRPF rule); an unregistered one is expensed in full in its quarter, which is simpler and only moves the expense forward in time (see `docs/tax-conventions.md` §5.2).
 - Fix extraction errors in the ledger (edited fields are locked against re-OCR).
 - Confirm the proposed exclusions, then:
 

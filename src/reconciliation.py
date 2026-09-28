@@ -49,7 +49,6 @@ from src.legacy_aeat_boxes import (
     legacy_audit_cells,
     legacy_boxes,
     legacy_notes,
-    legacy_operators,
 )
 from src.logger import get_logger
 from src.tax_engine import (
@@ -534,10 +533,8 @@ def result_boxes(model: str, result: Any) -> dict[str, float]:
 
 
 def result_operators(result: Any) -> list[dict]:
-    """The 349 operator rows of one engine result: ``operators()`` when present, else the legacy map."""
-    if callable(getattr(result, "operators", None)):
-        return list(result.operators())
-    return legacy_operators(result)
+    """The 349 operator rows of one engine result (``operators()``; empty when absent)."""
+    return list(result.operators()) if callable(getattr(result, "operators", None)) else []
 
 
 def app_boxes(

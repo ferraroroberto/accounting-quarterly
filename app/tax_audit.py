@@ -28,8 +28,10 @@ _MODEL_DESCRIPTIONS = {
         "explicitly so you can audit the cap."
     ),
     "349": (
-        "Intra-EU sales summary (B2B, reverse-charge). One row per buyer VAT ID. "
-        "Negative totals are excluded — those require amending the original period."
+        "Intra-EU operations: key I (services acquired from EU businesses) and key S (services "
+        "supplied to EU businesses). One row per VAT id and key, listing the records summed. "
+        "Zero/negative totals and lines without a VAT id are not declared (shown as excluded / "
+        "unidentified) — rectifications must amend the original period."
     ),
     "OSS": (
         "One Stop Shop — B2C digital services to EU consumers outside Spain. "

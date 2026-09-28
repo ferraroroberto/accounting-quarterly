@@ -16,6 +16,7 @@ from typing import Optional
 
 import yaml
 
+from src.database import normalize_vat_id
 from src.filed_returns import load_filings as load_db_filings
 from src.legacy_aeat_boxes import legacy_390_boxes
 from src.tax_engine import (
@@ -247,18 +248,17 @@ def validate_modelo_349(
         ValidationLine("02", "Importe total operaciones intracomunitarias",
                         v.get("02_total_amount"), computed.total),
     ]
-    for i, op in enumerate(filing.get("operators", []), 1):
-        lines.append(ValidationLine(
-            f"op_{i}",
-            f"Filed: {op['name']} ({op['country']} {op['vat_id']}) clave={op['clave']}",
-            op["amount"], None,
-        ))
-    for row in computed.rows:
-        lines.append(ValidationLine(
-            "op_db",
-            f"DB: {row.buyer_name or row.buyer_vat_id}",
-            None, row.total_amount,
-        ))
+    # Operators one by one, matched on (full VAT id, key); unmatched sides show 0.
+    app_ops = {(r.vat_id, r.key): r for r in computed.rows}
+    for op in filing.get("operators", []):
+        country, vat = str(op.get("country") or "").upper(), str(op.get("vat_id") or "")
+        full = normalize_vat_id(vat if vat.upper().startswith(country) else country + vat) or ""
+        mine = app_ops.pop((full, str(op.get("clave") or "").upper()), None)
+        lines.append(ValidationLine(f"{full}:{op['clave']}", f"{op['name']} (clave {op['clave']})",
+                                    op["amount"], mine.base if mine else 0.0))
+    for r in app_ops.values():
+        lines.append(ValidationLine(f"{r.vat_id}:{r.key}", f"{r.name} (clave {r.key}) — not filed",
+                                    0.0, r.base))
     result.lines = lines
     return result
 

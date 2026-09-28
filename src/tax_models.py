@@ -211,19 +211,42 @@ class Modelo130Result:
 
 @dataclass
 class Modelo349Row:
-    buyer_name: str
-    buyer_vat_id: str
-    total_amount: float
+    """One 349 operator line: an EU VAT id and operation key with its summed base (EUR)."""
+    key: str             # clave de operación: "I" acquisitions of services, "S" services supplied
+    country: str         # VAT id country prefix ("IE", "SE", "EL", …)
+    vat_id: str          # full normalised VAT id, country prefix included ("" when unknown)
+    name: str
+    base: float
+    n_records: int = 0   # invoices / Stripe charges summed into this line
 
 
 @dataclass
 class Modelo349Result:
+    """Modelo 349 (intra-EU operations, quarterly) — keys I and S, no rectifications.
+
+    ``rows`` are the declarable operator lines; ``excluded`` holds operators whose
+    quarter total is zero or negative and ``unidentified`` the lines without a VAT
+    id — neither can be declared, both are listed so they can be fixed.
+    """
     year: int
     quarter: int
     rows: list[Modelo349Row] = field(default_factory=list)
-    total: float = 0.0
+    total: float = 0.0                    # box 02
+    excluded: list[Modelo349Row] = field(default_factory=list)
+    unidentified: list[Modelo349Row] = field(default_factory=list)
     notes: str = ""
     audit: list = field(default_factory=list)  # list[AuditEntry]
+
+    def aeat_boxes(self) -> dict[str, float]:
+        """Summary boxes of the form: 01/02 operators and amount, 03/04 rectifications
+        (always 0 — rectification lines are out of scope)."""
+        return {"01": float(len(self.rows)), "02": round(float(self.total), 2), "03": 0.0, "04": 0.0}
+
+    def operators(self) -> list[dict]:
+        """Declarable operator lines as the form lists them: ``vat_id`` is the number
+        without the ``country`` prefix (same shape as the filed 349 operators)."""
+        return [{"country": r.country, "vat_id": r.vat_id[len(r.country):], "name": r.name,
+                 "key": r.key, "base": r.base} for r in self.rows]
 
 
 @dataclass

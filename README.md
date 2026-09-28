@@ -146,6 +146,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_aggregator.py
 │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
 │   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
+│   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
@@ -437,7 +438,7 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 |-------|------|-----------|-----------------|
 | **Modelo 303** | Declaración IVA Trimestral | Quarterly | Every AEAT box: accrued (01–13, 27), deductible (28–46, incl. reverse charge, capital goods and pro-rata), informational (59/60/120) and the result with the credit chain (64–73, 110/78/87) — see [Modelo 303 box model](#modelo-303-box-model) |
 | **Modelo 130** | Pago Fraccionado IRPF | Quarterly | 20% advance on YTD net profit, minus retenciones and prior payments |
-| **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Intra-EU B2B operations grouped by buyer VAT ID |
+| **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Key `I` (services acquired from EU businesses) and key `S` (services supplied to EU businesses), one line per VAT id and key — see [Modelo 349 operators](#modelo-349-operators) |
 | **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country — only when `oss_registered` is true |
 | **EU B2C threshold** | Art. 73 LIVA | Live | Year-to-date EU B2C sales (ex-VAT) vs €10,000; warns at 80%, flags the previous year too |
 | **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**) |
@@ -536,6 +537,17 @@ Manual `IVA_SOPORTADO` entries (Tax Obligations → Manual Entries) now carry th
 
 Old snapshots with the pre-#97 field names (`box_01_base`, `box_29_cuota_soportado`, `export_base`, …) still decode: the codec maps them to the new fields and fills in the totals.
 
+### Modelo 349 operators
+
+`compute_modelo_349` returns a `Modelo349Result`: `result.operators()` lists the declarable lines as the form does (`country`, `vat_id` without the country prefix, `name`, `key`, `base`) and `result.aeat_boxes()` the summary boxes — 01 number of operators, 02 total amount, 03/04 rectifications (always 0: rectification lines are out of scope).
+
+| Key | Source | Grouped by | Name |
+|-----|--------|-----------|------|
+| `I` | Expense invoices with `tax_treatment` `INTRA_EU_RC` | Vendor VAT id: the invoice's `vendor_vat_id_norm` / `vendor_nif`, else the matched vendor-registry `vat_id` | Registry `legal_entity`, else the invoice vendor name |
+| `S` | Stripe charges treated `IVA_EU_B2B` (customer `buyer_vat_id`) + income invoices with `tax_treatment` `EU_B2B` (`client_nif`) | Normalised VAT id (`normalize_vat_id`) | Stripe customer e-mail / invoice client name |
+
+Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the stored EUR values (ECB rate resolved at OCR time; `eur_received` for income invoices), so — lines not declared aside — key `I` adds up to 303 box 10 and key `S` to box 59. Lines that cannot be declared are listed apart with a warning: an operator whose quarter total is **zero or negative** (`result.excluded` — rectify the original period instead) and records **without a VAT id** (`result.unidentified` — add the id to the invoice or the vendor registry). A VAT id without an EU country prefix is declared but flagged. The **Modelo 349** tab of Tax Obligations shows the boxes and the operator table; the Tax Audit trail has one cell per line (`op_<KEY>_<VATID>`, with the records summed) plus `c01_operadores` / `c02_importe`. Snapshots stored before #99 (EU B2B sales only) decode as key `S` lines.
+
 ### Invoice data in tax calculations
 
 OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax models alongside Stripe transactions:
@@ -550,7 +562,8 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 | **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
 | **Modelo 130** box_07 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
 | **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. |
-| **Modelo 349** | Income invoices | EU B2B invoice income alongside Stripe |
+| **Modelo 349** | Expense invoices (`direction='in'`) | `INTRA_EU_RC` → key `I`, per vendor VAT id |
+| **Modelo 349** | Income invoices | `EU_B2B` → key `S` alongside the Stripe B2B charges |
 
 Geographic classification is auto-derived from the vendor NIF (expenses) or client NIF (income) at OCR extraction time. Existing rows are backfilled automatically on database init.
 
@@ -614,7 +627,7 @@ A differing box that matches an entry for its model, period and box shows 🟡 w
 
 ### Legacy engine → AEAT box mapping (temporary)
 
-The Modelo 303 result has its own `aeat_boxes()` (#97) and is used as is. Until #98 (130) and #99 (349) give those results `aeat_boxes()` / `operators()`, `src/legacy_aeat_boxes.py` maps their legacy fields; delete that part once they ship.
+The Modelo 303 (#97) and 349 (#99, with `operators()`) results have their own `aeat_boxes()` and are used as is. Until #98 gives the 130 result `aeat_boxes()`, `src/legacy_aeat_boxes.py` maps its legacy fields; delete that part once it ships.
 
 | Model | AEAT box | Legacy source | Where the meaning differs |
 |-------|----------|---------------|---------------------------|
@@ -626,7 +639,6 @@ The Modelo 303 result has its own `aeat_boxes()` (#97) and is used as is. Until 
 | 130 | 06 | `box_07_retenciones` | Legacy numbering differs |
 | 130 | 07 | `box_05_base − box_14_pagos_anteriores − box_07_retenciones` | Derived; negative allowed |
 | 130 | 19 | `box_16_resultado` | Clamped at 0; no 12–18 (no 13 reduction, no 15 negative carry) |
-| 349 | 01 / 02 | operator count / `total` | Only EU B2B sales, reported under key `S`; acquisitions (key `I`) arrive with #99 |
 | 390 | 05–108 | sum of the four quarterly 303s (07/09, 28/29, 59, 120 as 104, OSS) | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base); reverse charge, capital goods and pro-rata not aggregated yet |
 
 The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.
@@ -678,7 +690,7 @@ Each time **Calculate Tax** runs, the engine writes one `AuditEntry` per cell to
 |-------|--------------|
 | **Modelo 303** | one entry per AEAT box (`c01_base` … `c73_a_devolver`, with the contributing records on the base boxes), plus `oss_base` and `exempt_base` |
 | **Modelo 130** | box_01_ingresos, box_02_gastos, amortizaciones (per-asset breakdown), capital_assets_excluded, box_03_rendimiento, gastos_dificil_justificacion (with cap flag), rendimiento_neto, box_05_base, box_07_retenciones, box_14_pagos_anteriores, box_16_resultado |
-| **Modelo 349** | one entry per operator (VAT ID) + total |
+| **Modelo 349** | one entry per operator line (`op_<KEY>_<VATID>`, with the invoices / charges summed; `excluded_…` / `unidentified_…` for lines not declared) + `c01_operadores`, `c02_importe` |
 | **OSS** | base + cuota per country + totals |
 | **Modelo 347** | one entry per counterparty above threshold + summary |
 

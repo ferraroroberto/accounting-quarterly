@@ -424,6 +424,32 @@ def test_gestor_pack_draft_then_freeze(ctx):
     _assert_noop(cp.step_gestor_pack(ctx, freeze=True))  # already declared: never re-frozen
 
 
+def test_freeze_sent_report_file(ctx, tmp_path):
+    import openpyxl
+
+    from src.exceptions import ReportAlreadyFrozenError
+
+    cp.step_stripe(ctx, fetch=_stripe_fetch(ctx, PAYMENTS))
+    sent = tmp_path / "Stripe_Report_Q1_2025.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "import"
+    ws.append(["id", "Created Date", "Converted Amount", "Converted Amount Refunded", "Fee", "Currency"])
+    ws.append(["ch_1", "2025-01-15 10:00:00", 99.0, 0.0, 0.0, "EUR"])     # live: 100.0
+    ws.append(["ch_old", "2025-03-01 10:00:00", 20.0, 0.0, 0.0, "EUR"])   # not in the live table
+    wb.save(sent)
+
+    res = cp.freeze_sent_stripe_report(ctx, sent)
+    assert any("declared report v1: 2 transactions, net 119.00 EUR" in c for c in res.changes)
+    assert any("not in the live transactions table" in w and "ch_old" in w for w in res.warnings)
+    assert any("not in the file" in w and "ch_2" in w for w in res.warnings)
+    assert any(i.startswith("1 live row(s) had a different EUR amount") for i in res.info)
+    with pytest.raises(ReportAlreadyFrozenError):
+        cp.freeze_sent_stripe_report(ctx, sent)
+    assert cp.freeze_sent_stripe_report(ctx, sent, supersede=True).changes[0].startswith(
+        "froze Stripe_Report_Q1_2025.xlsx as declared report v2")
+
+
 # ---------------------------------------------------------------------------
 # all
 # ---------------------------------------------------------------------------

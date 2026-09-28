@@ -50,6 +50,9 @@ Other subcommands:
     report        Reclassify the quarter's stored rows and regenerate its Excel
                   report. --freeze stores it as the quarter's immutable
                   declared report (--supersede for a corrected re-send).
+    freeze-sent   Freeze a Stripe report file sent before freezing existed
+                  (--file): its `import` sheet's EUR amounts become the
+                  quarter's declared basis (--supersede if already declared).
     fx-backfill   Backfill ECB FX rates up to today.
     fx-recompute  Re-resolve every stored non-EUR invoice at the ECB rate.
 
@@ -88,10 +91,11 @@ from src.close_pipeline import (  # noqa: E402
     step_stripe,
     step_sweep,
     step_vendors,
+    freeze_sent_stripe_report,
     write_stripe_report,
 )
 from src.database import init_db  # noqa: E402
-from src.exceptions import ReportAlreadyFrozenError  # noqa: E402
+from src.exceptions import InvalidSentReportError, ReportAlreadyFrozenError  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
 
@@ -323,6 +327,14 @@ def cmd_report(args: argparse.Namespace) -> int:
     return _emit(result)
 
 
+def cmd_freeze_sent(args: argparse.Namespace) -> int:
+    try:
+        result = freeze_sent_stripe_report(_context(args), Path(args.file), supersede=args.supersede)
+    except (InvalidSentReportError, ReportAlreadyFrozenError) as exc:
+        raise SystemExit(str(exc)) from exc
+    return _emit(result)
+
+
 def cmd_fx_backfill(args: argparse.Namespace) -> int:
     """Fetch and store ECB rates from the last stored date up to today (#93).
 
@@ -442,6 +454,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Store this report as the quarter's immutable declared report")
     p_report.add_argument("--supersede", action="store_true",
                           help="With --freeze: add a new declared version for a corrected re-send")
+
+    p_freeze_sent = add_step("freeze-sent", cmd_freeze_sent,
+                             "Freeze a previously sent Stripe report file as the declared report")
+    p_freeze_sent.add_argument("--file", required=True, help="The sent Stripe_Report_Q<Q>_<Y>.xlsx")
+    p_freeze_sent.add_argument("--supersede", action="store_true",
+                               help="Add a new declared version when the quarter is already declared")
 
     p_fx = sub.add_parser("fx-backfill", help="Backfill ECB FX rates up to today")
     p_fx.set_defaults(func=cmd_fx_backfill)

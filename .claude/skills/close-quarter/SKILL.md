@@ -160,7 +160,11 @@ the quarter's immutable declared report (the tax engine then uses its EUR
 amounts). Once frozen, `gestor-pack` never regenerates it and warns if live
 rows drift from it. `report [--freeze [--supersede]]` regenerates the report
 on its own; `--supersede` is for a corrected re-send only — never pass it
-without the user asking for exactly that. `fx-backfill` and
+without the user asking for exactly that. For a quarter whose report was
+sent before freezing existed, `freeze-sent --file <sent xlsx>` freezes that
+file's EUR amounts instead (same `--supersede` rule); it aborts, storing
+nothing, on a row dated outside the quarter or a duplicate id, and lists file
+ids missing from the live table. `fx-backfill` and
 `fx-recompute [--dry-run] [--since D]` remain as the stand-alone FX commands.
 
 ### 12. Summarize

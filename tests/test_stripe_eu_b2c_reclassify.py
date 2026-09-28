@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime
 
 import openpyxl
@@ -15,12 +16,20 @@ import pytest
 from src.classifier import classify_payment, eur_default_foreign_warning, foreign_customer_hint
 from src.database import init_db, load_classified_payments, upsert_payments
 from src.declared_reports import (
+    DeclaredLine,
     declared_vs_live_drift,
+    file_sha256,
     freeze_report,
+    freeze_sent_report,
     get_declared_report,
+    read_sent_report_lines,
 )
 from src.excel_exporter import assert_currency_geo_consistent, create_excel_report
-from src.exceptions import ReportAlreadyFrozenError, StaleClassificationError
+from src.exceptions import (
+    InvalidSentReportError,
+    ReportAlreadyFrozenError,
+    StaleClassificationError,
+)
 from src.models import Payment
 from src.reclassify import reclassify_stored
 from src.tax_engine import (
@@ -366,6 +375,170 @@ class TestDeclaredReport:
                sample_rules)
         assert get_declared_report(conn, 2026, 1) is None
         assert compute_modelo_303(2026, 1, conn, {"tax": {}}).box_01_base == pytest.approx(100.0)
+
+
+# ---------------------------------------------------------------------------
+# Freezing a previously sent report file (#138)
+# ---------------------------------------------------------------------------
+
+# The header row of the exporter's `import` sheet (src.excel_exporter._write_import_sheet).
+_SENT_HEADERS = [
+    "id", "Created Date", "Description", "Converted Amount", "Converted Amount Refunded",
+    "Fee", "Currency", "Net Amount",
+    "IND_COACHING", "IND_NEWSLETTER", "IND_ILLUSTRATIONS",
+    "IND_SPAIN", "IND_OUT_SPAIN", "IND_EXEU", "IND_EU",
+    "Activity Type", "Geo Region", "Quarter", "Month", "Year",
+    "Classification Rule", "Geo Rule",
+]
+
+
+def _sent_row(pid: str, when, amount: float, currency: str = "EUR", refunded: float = 0.0,
+              activity: str = "COACHING", geo: str = "SPAIN") -> dict:
+    return {
+        "id": pid, "Created Date": when, "Description": "Synthetic charge",
+        "Converted Amount": amount, "Converted Amount Refunded": refunded, "Fee": 1.0,
+        "Currency": currency, "Net Amount": round(amount - refunded, 2),
+        "Activity Type": activity, "Geo Region": geo,
+    }
+
+
+def _sent_report(path, rows: list[dict], headers: list[str] = _SENT_HEADERS, sheet: str = "import"):
+    """Write a synthetic sent-report workbook (a summary sheet + the `import` sheet)."""
+    wb = openpyxl.Workbook()
+    wb.active.title = "calculations"
+    ws = wb.create_sheet(sheet)
+    ws.append(headers)
+    for row in rows:
+        ws.append([row.get(h) for h in headers])
+    wb.save(path)
+    return path
+
+
+class TestFreezeSentReport:
+    Q1_FILE = "Stripe_Report_Q1_2026.xlsx"
+
+    def _three_charges(self, db_path, sample_rules) -> None:
+        """Live rows: the USD charge has since been re-converted to 61.37 EUR."""
+        _store(db_path, [
+            _payment("ch_es_a", "2026-01-10T10:00:00", 121.0, desc="Calendly coaching"),
+            _payment("ch_es_b", "2026-02-10T10:00:00", 242.0, desc="Calendly coaching"),
+            _payment("ch_usd", "2026-03-10T10:00:00", 61.37, desc="Calendly coaching",
+                     currency="usd", amount_original=70.0, fx_rate=1.1406),
+        ], sample_rules)
+
+    def _sent_q1(self, tmp_path, name: str = Q1_FILE, usd_eur: float = 60.0):
+        return _sent_report(tmp_path / name, [
+            _sent_row("ch_es_a", "2026-01-10 10:00:00", 121.0),
+            _sent_row("ch_es_b", "2026-02-10 10:00:00", 242.0),
+            _sent_row("ch_usd", "2026-03-10 10:00:00", usd_eur, currency="USD", geo="OUTSIDE_EU"),
+        ])
+
+    def test_freezes_the_files_eur_amounts_and_the_engine_uses_them(
+            self, db_path, conn, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(61.37)
+
+        path = self._sent_q1(tmp_path)
+        frozen = freeze_sent_report(conn, 2026, 1, path)
+
+        report = frozen.report
+        assert (report.version, report.n_transactions) == (1, 3)
+        assert report.file_name == self.Q1_FILE
+        assert report.sha256 == file_sha256(path)
+        assert report.total_net_eur == pytest.approx(121.0 + 242.0 + 60.0)
+        assert frozen.missing_from_live == ()
+        line = conn.execute(
+            """SELECT currency, amount_original, converted_amount, net_amount_eur, created_date
+               FROM declared_report_lines WHERE transaction_id = 'ch_usd'""").fetchone()
+        assert tuple(line) == ("usd", None, 60.0, 60.0, "2026-03-10T10:00:00")
+
+        # The engine now uses the file's EUR amount, not the live re-conversion.
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(60.0)
+        assert compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos == \
+            pytest.approx(100.0 + 200.0 + 60.0)
+
+    def test_row_outside_the_quarter_aborts_and_stores_nothing(
+            self, db_path, conn, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        path = _sent_report(tmp_path / self.Q1_FILE, [
+            _sent_row("ch_es_a", "2026-01-10 10:00:00", 121.0),
+            _sent_row("ch_late", "2026-04-01 09:00:00", 50.0),
+        ])
+        with pytest.raises(InvalidSentReportError, match=r"ch_late dated 2026-04-01 is outside Q1 2026"):
+            freeze_sent_report(conn, 2026, 1, path)
+        assert get_declared_report(conn, 2026, 1) is None
+
+    def test_duplicate_ids_abort_and_store_nothing(self, db_path, conn, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        path = _sent_report(tmp_path / self.Q1_FILE, [
+            _sent_row("ch_es_a", "2026-01-10 10:00:00", 121.0),
+            _sent_row("ch_es_a", "2026-01-10 10:00:00", 121.0),
+        ])
+        with pytest.raises(InvalidSentReportError, match=r"row 3: duplicate id ch_es_a \(first on row 2\)"):
+            freeze_sent_report(conn, 2026, 1, path)
+        assert get_declared_report(conn, 2026, 1) is None
+
+    def test_already_declared_needs_supersede(self, db_path, conn, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        freeze_sent_report(conn, 2026, 1, self._sent_q1(tmp_path))
+        with pytest.raises(ReportAlreadyFrozenError):
+            freeze_sent_report(conn, 2026, 1, self._sent_q1(tmp_path))
+
+        resent = self._sent_q1(tmp_path, name="Stripe_Report_Q1_2026_v2.xlsx", usd_eur=59.5)
+        v2 = freeze_sent_report(conn, 2026, 1, resent, supersede=True).report
+        assert (v2.version, v2.file_name) == (2, "Stripe_Report_Q1_2026_v2.xlsx")
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(59.5)
+
+    def test_ids_missing_from_live_are_listed_not_fatal(self, db_path, conn, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        path = _sent_report(tmp_path / self.Q1_FILE, [
+            _sent_row("ch_es_a", "2026-01-10 10:00:00", 121.0),
+            _sent_row("ch_gone", "2026-02-02 10:00:00", 30.0),
+        ])
+        frozen = freeze_sent_report(conn, 2026, 1, path)
+        assert frozen.missing_from_live == ("ch_gone",)
+        assert frozen.report.n_transactions == 2
+
+    def test_columns_match_by_header_name_not_position(self, tmp_path):
+        headers = ["Currency", "Fee", "Converted Amount Refunded", "Converted Amount",
+                   "created date", "ID"]  # reordered, case differs, optional columns absent
+        path = _sent_report(tmp_path / "old.xlsx", [
+            {"ID": "ch_1", "created date": datetime(2026, 2, 3, 4, 5, 6), "Converted Amount": 20,
+             "Converted Amount Refunded": 5, "Fee": 0.5, "Currency": "GBP"},
+        ], headers=headers)
+        [line] = read_sent_report_lines(path)
+        assert line == DeclaredLine(
+            transaction_id="ch_1", created_date=datetime(2026, 2, 3, 4, 5, 6), currency="gbp",
+            amount_original=None, converted_amount=20.0, converted_amount_refunded=5.0, fee=0.5,
+            net_amount_eur=15.0, activity_type=None, geo_region=None,
+        )
+
+    def test_reads_back_what_the_exporter_writes(self, db_path, sample_rules, tmp_path):
+        self._three_charges(db_path, sample_rules)
+        payments = load_classified_payments(datetime(2026, 1, 1), datetime(2026, 3, 31, 23, 59, 59),
+                                            db_path=db_path)
+        path = create_excel_report(payments, tmp_path / self.Q1_FILE, 2026, 1)
+        # The sheet carries no original-currency amount.
+        expected = [replace(DeclaredLine.from_payment(p), amount_original=None) for p in payments]
+        assert read_sent_report_lines(path) == expected
+
+    @pytest.mark.parametrize("headers, row, sheet, message", [
+        ([h for h in _SENT_HEADERS if h != "Fee"], {}, "import", r"lacks column\(s\) Fee"),
+        (_SENT_HEADERS, {"Net Amount": 99.0}, "import", r"Net Amount 99.00 is not"),
+        (_SENT_HEADERS, {"Converted Amount": "abc"}, "import", r"Converted Amount is not a number"),
+        (_SENT_HEADERS, {"Created Date": "someday"}, "import", r"Created Date is not a date"),
+        (_SENT_HEADERS, {}, "Sheet1", r"has no 'import' sheet"),
+    ])
+    def test_malformed_files_are_rejected(self, tmp_path, headers, row, sheet, message):
+        path = _sent_report(tmp_path / "bad.xlsx",
+                            [{**_sent_row("ch_1", "2026-01-10 10:00:00", 10.0), **row}],
+                            headers=headers, sheet=sheet)
+        with pytest.raises(InvalidSentReportError, match=message):
+            read_sent_report_lines(path)
+
+    def test_missing_file_is_a_clear_error(self, conn, tmp_path):
+        with pytest.raises(InvalidSentReportError, match="does not exist"):
+            freeze_sent_report(conn, 2026, 1, tmp_path / "nope.xlsx")
 
 
 # ---------------------------------------------------------------------------

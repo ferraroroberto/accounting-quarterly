@@ -70,13 +70,13 @@ def apply_fx_conversion(payments: list[Payment]) -> list[Payment]:
         if p.currency != "eur" and p.fx_rate is None:
             tx_date = p.created_date.date()
             amount_eur, rate = convert_to_eur(p.converted_amount, p.currency, tx_date)
-            fee_eur, _ = convert_to_eur(p.fee, p.currency, tx_date)
             refund_eur, _ = convert_to_eur(p.converted_amount_refunded, p.currency, tx_date)
+            # ``fee`` comes from the balance transaction, already in the balance
+            # currency (EUR): converting it again would divide it by the rate (#144).
             p = p.model_copy(update={
                 "amount_original": p.converted_amount,
                 "converted_amount": amount_eur,
                 "converted_amount_refunded": refund_eur,
-                "fee": fee_eur,
                 "fx_rate": rate,
             })
         elif p.currency == "eur" and p.fx_rate is None:

@@ -204,21 +204,21 @@ def validate_modelo_303(
     )
     result.lines = [
         ValidationLine("07/08", "Base imponible régimen general @ 21%",
-                        v.get("07_base_21pct"), computed.box_01_base),
+                        v.get("07_base_21pct"), computed.c07_base),
         ValidationLine("09", "Cuota devengada @ 21%",
-                        v.get("09_cuota_21pct"), computed.box_03_cuota),
+                        v.get("09_cuota_21pct"), computed.c09_cuota),
         ValidationLine("27", "Total cuota IVA devengada",
-                        v.get("27_total_cuota_devengada"), computed.box_03_cuota),
+                        v.get("27_total_cuota_devengada"), computed.c09_cuota),
         ValidationLine("28", "Base IVA soportado interior corrientes",
-                        v.get("28_base_soportado"), computed.box_28_base_soportado),
+                        v.get("28_base_soportado"), computed.c28_base),
         ValidationLine("29", "Cuota IVA soportado interior corrientes",
-                        v.get("29_cuota_soportado"), computed.box_29_cuota_soportado),
+                        v.get("29_cuota_soportado"), computed.c29_cuota),
         ValidationLine("46", "Resultado régimen general (devengado - deducible)",
-                        v.get("46_resultado"), computed.box_46_diferencia),
+                        v.get("46_resultado"), computed.c46_resultado_regimen_general),
         ValidationLine("59", "Entregas intracomunitarias de bienes y servicios",
-                        v.get("59_entregas_intracom"), computed.box_59_intracom_entregas),
+                        v.get("59_entregas_intracom"), computed.c59_entregas_intracom),
         ValidationLine("60", "Exportaciones y operaciones exentas (informativo)",
-                        v.get("60_exportaciones"), computed.export_base),
+                        v.get("60_exportaciones"), computed.c120_no_sujetas_localizacion),
     ]
     return result
 

@@ -1,17 +1,17 @@
 """Legacy engine field -> AEAT box mapping, used by the reconciliation adapter.
 
-TEMPORARY. Today's Modelo 303 / 130 / 349 results (``src/tax_models.py``) use
+TEMPORARY. The Modelo 130 / 349 results (``src/tax_models.py``) still use
 internal field names that do not follow the AEAT form numbering (e.g.
-``Modelo303Result.box_01_base`` is the 21 % base, which the form prints in box
-07). The box-model rework (#97 303, #98 130, #99 349) gives each engine result
-an ``aeat_boxes() -> dict[str, float]`` method keyed by the printed box number
-(and the 349 an ``operators()`` method). ``src/reconciliation.app_boxes`` calls
-those when present and falls back to this module otherwise.
+``Modelo130Result.box_05_base`` is printed in box 04). The box-model rework
+(#98 130, #99 349) gives each engine result an ``aeat_boxes() -> dict[str,
+float]`` method keyed by the printed box number (and the 349 an
+``operators()`` method), as the Modelo 303 already has (#97).
+``src/reconciliation.app_boxes`` calls those when present and falls back to
+this module otherwise.
 
-Delete this module (and its import in ``src/reconciliation.py``) once #97, #98
-and #99 have shipped — nothing else should import it except the Modelo 390
-aggregation, which ``src/tax_validator.py`` also uses until the annual pack
-(#87 step 16) replaces it.
+Delete the 130/349 part (and its import in ``src/reconciliation.py``) once
+#98 and #99 have shipped. The Modelo 390 aggregation below stays until the
+annual pack (#87 step 16) replaces it; ``src/tax_validator.py`` uses it too.
 
 Each mapping row sums signed legacy fields into one AEAT box and carries a
 ``note`` wherever the legacy field does not have the AEAT box's exact meaning;
@@ -43,36 +43,6 @@ def _one(box: str, field: str, note: str = "") -> LegacyBox:
     return LegacyBox(box, ((field, 1),), note)
 
 
-_303_RESULT_NOTE = (
-    "Legacy `box_48_resultado` equals 46 (no other regimes, 100 % attributable), so 64 = 66 = 46. "
-    "The legacy engine has no credit carry-forward (110/78/87), so 69/71 are not mapped."
-)
-_303_DEDUCTIBLE_NOTE = (
-    "Legacy 28/29 still include capital goods (AEAT 30/31) and intra-EU acquisitions "
-    "(AEAT 36/37); manual IVA entries get a base estimated at 21 %."
-)
-
-LEGACY_303: tuple[LegacyBox, ...] = (
-    _one("07", "box_01_base",
-         "Legacy `box_01_base` is the 21 % general-regime base: AEAT box 07 (box 01 is the 4 % row)."),
-    _one("09", "box_03_cuota",
-         "Legacy `box_03_cuota` is the 21 % output VAT: AEAT box 09."),
-    _one("27", "box_03_cuota",
-         "AEAT 27 totals all accrued VAT (09 + 11 + 13 + …); the legacy engine has only the 21 % "
-         "rows, so reverse-charge accruals (10–13) are missing."),
-    _one("28", "box_28_base_soportado", _303_DEDUCTIBLE_NOTE),
-    _one("29", "box_29_cuota_soportado", _303_DEDUCTIBLE_NOTE),
-    _one("45", "box_29_cuota_soportado",
-         "AEAT 45 totals every deductible box (29 + 31 + … + 44); the legacy engine only has 29."),
-    _one("46", "box_46_diferencia"),
-    _one("59", "box_59_intracom_entregas"),
-    _one("60", "export_base",
-         "Legacy `export_base` is the IVA_EXPORT (non-EU services) base; the 303 rework (#97) moves "
-         "those services to box 120 (not subject by location rules)."),
-    _one("64", "box_48_resultado", _303_RESULT_NOTE),
-    _one("66", "box_48_resultado", _303_RESULT_NOTE),
-)
-
 LEGACY_130: tuple[LegacyBox, ...] = (
     _one("01", "box_01_ingresos"),
     LegacyBox("02", (("box_02_gastos", 1), ("gastos_dificil_justificacion", 1)),
@@ -98,7 +68,7 @@ LEGACY_349_NOTE = (
     "(key I) arrive with #99."
 )
 
-LEGACY_BOXES: dict[str, tuple[LegacyBox, ...]] = {"303": LEGACY_303, "130": LEGACY_130}
+LEGACY_BOXES: dict[str, tuple[LegacyBox, ...]] = {"130": LEGACY_130}
 
 # Extra audit cells worth showing behind a box (on top of the mapped fields).
 _EXTRA_AUDIT_CELLS: dict[tuple[str, str], tuple[str, ...]] = {
@@ -108,7 +78,7 @@ _EXTRA_AUDIT_CELLS: dict[tuple[str, str], tuple[str, ...]] = {
 
 
 def legacy_boxes(model: str, result: Any) -> dict[str, float]:
-    """Map a legacy 303/130/349 engine result to AEAT-numbered boxes."""
+    """Map a legacy 130/349 engine result to AEAT-numbered boxes ({} for other models)."""
     if model == "349":
         return {"01": float(len(result.rows)), "02": round(result.total, 2)}
     return {
@@ -150,32 +120,34 @@ def legacy_audit_cells(model: str, box: str) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Modelo 390 (annual) — aggregated from the four legacy 303 results
+# Modelo 390 (annual) — aggregated from the four quarterly 303 results
 # ---------------------------------------------------------------------------
 
 LEGACY_390_NOTE = (
-    "Annual figures are the sum of the four legacy 303 quarters; box 33 adds the intra-EU "
-    "deliveries (59) to the 21 % base, and 108 adds the OSS base."
+    "Annual figures are the sum of the four 303 quarters (21 % row, 28/29, 59, 120, OSS only — "
+    "reverse charge, capital goods and pro-rata are not aggregated yet); box 33 adds the "
+    "intra-EU deliveries (59) to the 21 % base, and 108 adds the OSS base."
 )
 
 
 def legacy_390_boxes(year: int, conn: sqlite3.Connection, config: Optional[dict] = None) -> dict[str, float]:
-    """Modelo 390 boxes aggregated from the four quarterly legacy 303 results.
+    """Modelo 390 boxes aggregated from the four quarterly 303 results.
 
     Same arithmetic the Tax Validation 390 lines always used; returned keyed
-    by the 390 box number.
+    by the 390 box number. "export" is the 303's box 120 (non-EU services not
+    subject by location), which is what the 390's 104 has held so far.
     """
     agg = dict(base_21=0.0, cuota_21=0.0, intracom=0.0, export=0.0,
                oss=0.0, soportado_base=0.0, soportado_cuota=0.0)
     for q in range(1, 5):
         m = compute_modelo_303(year, q, conn, config)
-        agg["base_21"] += m.box_01_base
-        agg["cuota_21"] += m.box_03_cuota
-        agg["intracom"] += m.box_59_intracom_entregas
-        agg["export"] += m.export_base
+        agg["base_21"] += m.c07_base
+        agg["cuota_21"] += m.c09_cuota
+        agg["intracom"] += m.c59_entregas_intracom
+        agg["export"] += m.c120_no_sujetas_localizacion
         agg["oss"] += m.oss_base
-        agg["soportado_base"] += m.box_28_base_soportado
-        agg["soportado_cuota"] += m.box_29_cuota_soportado
+        agg["soportado_base"] += m.c28_base
+        agg["soportado_cuota"] += m.c29_cuota
     agg = {k: round(v, 2) for k, v in agg.items()}
     resultado = round(agg["cuota_21"] - agg["soportado_cuota"], 2)
     return {

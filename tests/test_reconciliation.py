@@ -1,5 +1,6 @@
 """Tests for src/reconciliation.py — filed-vs-app matching, catalogue, 349
-operators, markdown export and the legacy → AEAT box adapter.
+operators, markdown export and the engine → AEAT box adapter (303 native,
+130/349 via the legacy mapping).
 
 All data is synthetic (fake VAT ids, round amounts)."""
 from __future__ import annotations
@@ -7,6 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,6 +38,7 @@ from src.reconciliation import (
     save_catalogue,
     to_markdown,
 )
+from src.legacy_aeat_boxes import legacy_boxes
 from src.tax_engine import compute_modelo_130, compute_modelo_303
 from src.tax_models import AuditEntry
 
@@ -323,15 +326,28 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
 
 
 class TestAppBoxesAdapter:
-    def test_legacy_303_fields_map_to_aeat_numbers(self, db_conn):
-        legacy = compute_modelo_303(2025, 1, db_conn, CFG)
+    def test_legacy_fields_map_to_aeat_numbers(self):
+        # A synthetic legacy-shaped 130 result: internal names differ from the form's boxes.
+        legacy = SimpleNamespace(box_01_ingresos=1000.0, box_02_gastos=400.0,
+                                 gastos_dificil_justificacion=30.0, rendimiento_neto=570.0,
+                                 box_05_base=114.0, box_14_pagos_anteriores=20.0,
+                                 box_07_retenciones=15.0, box_16_resultado=79.0)
+        boxes = legacy_boxes("130", legacy)
+        assert boxes["02"] == 430.0                   # 5 % allowance added back into 02
+        assert boxes["04"] == 114.0                   # legacy box_05_base is AEAT 04
+        assert boxes["06"] == 15.0                    # legacy box_07_retenciones is AEAT 06
+        assert boxes["07"] == 79.0                    # 04 − 05 − 06
+        assert boxes["19"] == 79.0
+        # The 303 has its own aeat_boxes() (#97): no legacy mapping is left for it.
+        assert legacy_boxes("303", legacy) == {}
+
+    def test_303_uses_the_engines_aeat_boxes(self, db_conn):
+        result = compute_modelo_303(2025, 1, db_conn, CFG)
         boxes = app_boxes("303", 2025, 1, db_conn, CFG)
-        assert boxes["07"] == legacy.box_01_base and boxes["07"] > 0
-        assert boxes["09"] == boxes["27"] == legacy.box_03_cuota
-        assert boxes["29"] == boxes["45"] == legacy.box_29_cuota_soportado
-        assert boxes["46"] == boxes["64"] == boxes["66"] == legacy.box_46_diferencia
-        assert boxes["60"] == legacy.export_base
-        assert "01" not in boxes and "03" not in boxes   # legacy box_01/box_03 are AEAT 07/09
+        assert boxes == result.aeat_boxes()
+        # 121 gross Spanish sale → 21 % row: base 100 in 07, 21 in 09 (01/03 is the 4 % row).
+        assert (boxes["07"], boxes["09"], boxes["27"]) == (100.0, 21.0, 21.0)
+        assert boxes["01"] == boxes["03"] == 0.0
 
     def test_legacy_130_puts_the_allowance_inside_box_02(self, db_conn):
         legacy = compute_modelo_130(2025, 1, db_conn, CFG)
@@ -373,13 +389,14 @@ class TestAppBoxesAdapter:
 class TestReconcile:
     def test_no_filed_return_shows_app_side_only(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)
-        assert rec.filed_found is False and rec.engine == "legacy"
+        assert rec.filed_found is False and rec.engine == "aeat"
         assert rec.lines and all(ln.status == STATUS_MISSING for ln in rec.lines)
+        assert {"07", "27", "110", "71"} <= {ln.box for ln in rec.lines}
 
     def test_filed_303_exact_catalogued_uncatalogued_and_missing(self, db_conn):
         app = app_boxes("303", 2025, 1, db_conn, CFG)
         _file(db_conn, "303", {"07": app["07"], "09": app["09"], "27": app["27"],
-                               "46": round(app["46"] - 3.21, 2), "110": 50.0})
+                               "46": round(app["46"] - 3.21, 2), "110": 50.0, "33": 5.0})
         cat = [Divergence(model="303", year=2025, quarter=1, box="46", expected_delta=3.21,
                           category="gestor_error", explanation="synthetic")]
         rec = reconcile("303", 2025, 1, db_conn, CFG, catalogue=cat)
@@ -387,9 +404,10 @@ class TestReconcile:
         assert rec.filed_found and rec.filed_source == "db"
         assert by_box["07"].status == STATUS_EXACT
         assert by_box["46"].status == STATUS_CATALOGUED
-        assert by_box["110"].status == STATUS_MISSING          # legacy engine has no 110
+        assert by_box["110"].status == STATUS_UNCATALOGUED     # app chain has no earlier credit
         assert by_box["64"].status == STATUS_UNCATALOGUED      # blank on the return = 0
-        assert by_box["07"].note                               # legacy caveat carried
+        assert by_box["33"].status == STATUS_MISSING           # imports: not computed by the app
+        assert not by_box["07"].note                           # AEAT engine: no legacy caveats
 
     def test_filed_349_compared_operator_by_operator(self, db_conn):
         _file(db_conn, "349", {"01": 1.0, "02": 100.0},
@@ -410,15 +428,15 @@ class TestReconcile:
 
 class TestAuditDrillDown:
     ENTRIES = [
-        {"cell": "box_01_base", "value": 100.0}, {"cell": "box_03_cuota", "value": 21.0},
+        {"cell": "box_05_base", "value": 100.0}, {"cell": "box_03_cuota", "value": 21.0},
         {"cell": "c07_base", "value": 1.0}, {"cell": "c070_x", "value": 2.0},
         {"cell": "operator_IE1234567X", "value": 5.0}, {"cell": "total", "value": 5.0},
     ]
 
     def test_legacy_box_uses_the_field_map(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "09", "legacy")]
-        assert cells == ["box_03_cuota"]
-        assert audit_entries_for_box(self.ENTRIES, "303", "03", "legacy") == []
+        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "130", "04", "legacy")]
+        assert cells == ["box_05_base"]
+        assert audit_entries_for_box(self.ENTRIES, "130", "05", "legacy") == []
 
     def test_aeat_box_matches_cells_named_after_it(self):
         cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "07", "aeat")]
@@ -440,5 +458,5 @@ class TestAuditDrillDown:
     def test_live_audit_is_carried_on_the_reconciliation(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)
         hits = audit_entries_for_box(rec.live_audit, "303", "07", rec.engine)
-        assert [h["cell"] for h in hits] == ["box_01_base"]
+        assert [h["cell"] for h in hits] == ["c07_base"]
         assert hits[0]["computed_at"] == "live"

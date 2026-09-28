@@ -32,13 +32,13 @@ flowchart TB
 
   subgraph taxcore["src/ — Spanish tax engine"]
     VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
-    TAXENGINE["tax_engine.py\nModelo 303/130/349/347, OSS,\nEU B2C threshold, calendar"]
+    TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130/349/347, OSS, EU B2C threshold, calendar"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
     TAXVALIDATOR["tax_validator.py\ngestor-filed vs DB-computed"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
-    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY legacy field -> AEAT box map\n(delete after #97/#98/#99)"]
+    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY 130/349 legacy field -> AEAT box map\n(delete after #98/#99) + 390 aggregation"]
   end
 
   subgraph localfiles["git-ignored local config"]
@@ -59,7 +59,7 @@ flowchart TB
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]
@@ -93,6 +93,7 @@ flowchart TB
   TAXVALIDATOR --> FILEDRETURNS
   FILEDRETURNS --> DB
   TAXENGINE --> FIXEDASSETS
+  TAXENGINE -->|303 box 110 from filed 87 + 72| FILEDRETURNS
   FIXEDASSETS --> DBFILE
   RECONCILIATION --> TAXENGINE
   RECONCILIATION --> TAXVALIDATOR

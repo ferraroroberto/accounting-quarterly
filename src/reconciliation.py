@@ -27,7 +27,8 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 
 **App side** — ``app_boxes(model, year, quarter, conn, config)`` calls the
 engine result's ``aeat_boxes()`` when it has one (#97/#98/#99) and otherwise
-maps today's field names through ``src/legacy_aeat_boxes.py``.
+maps the 130/349 field names through ``src/legacy_aeat_boxes.py`` (the 303
+has ``aeat_boxes()`` since #97).
 
 No Streamlit here: the UI lives in ``app/tax_validation.py``.
 """

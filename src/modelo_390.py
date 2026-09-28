@@ -25,7 +25,8 @@ rows were added) and the form's printed formulas (Anexo I, modelo 390):
 - 63 regularización bienes de inversión; 522 regularización por prorrata definitiva.
 - 64 = 49 + 513 + 51 + 521 + 53 + 55 + 57 + 59 + 598 + 61 + 661 + 62 + 652 + 63 + 522;
   65 = 47 − 64; 84 = 65 + 83 + 658; 86 = 84 + 659 − 85.
-- 85 compensación de cuotas del ejercicio anterior (credit of earlier years applied via 303 box 78);
+- 85 compensación de cuotas del ejercicio anterior (credit of earlier years applied via 303 box 78,
+  from a FIFO walk of the quarters — credit generated inside the year never counts here);
   95 total a ingresar in the year's returns; 97 a compensar / 98 a devolver of the last return;
   662 credit generated in an earlier period of the year and not applied by year end.
 - Volumen de operaciones: 99 régimen general; 103 entregas intracomunitarias de bienes y
@@ -246,6 +247,65 @@ class _RateSplit:
         return _round_to_total(self.base, tb), _round_to_total(self.cuota, tc), tb, tc
 
 
+@dataclass
+class _CreditWalk:
+    """The year's 303 compensation chain split into credit of earlier years and of this year."""
+    carried_in: float                  # Q1 box 110: credit pending from earlier years
+    carried_in_source: str             # Q1 c110_source: filed | app_chain | none
+    sum_box_78: float
+    applied_earlier_years: float       # 390 box 85
+    pending_earlier_years: float       # credit of earlier years still pending after Q4
+    steps: list[dict] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _walk_credit(qs: list[Modelo303Result]) -> _CreditWalk:
+    """FIFO walk of the credit to compensate over the year's quarters (#136).
+
+    The credit carried in from earlier years (Q1 box 110) is consumed first by
+    each quarter's box 78; credit generated inside the year (a quarter's box 72)
+    only feeds the later 110s and never counts in box 85. The earlier-years part
+    is capped at each quarter's own 110, so when a later 110 shrinks (it chains
+    from a filed return that diverges from the app's quarter) intra-year credit
+    applied afterwards is not mistaken for credit of earlier years. Such chain
+    breaks, and a carried-in credit taken from the app's own chain instead of a
+    filed return, are flagged.
+    """
+    first = qs[0]
+    carried_in = round(first.c110_pendiente_anteriores, 2)
+    walk = _CreditWalk(carried_in=carried_in, carried_in_source=first.c110_source,
+                       sum_box_78=round(sum(r.c78_aplicadas_periodo for r in qs), 2),
+                       applied_earlier_years=0.0, pending_earlier_years=0.0)
+    if carried_in and first.c110_source == "app_chain":
+        walk.flags.append("carried_in_from_app_chain")
+        walk.notes.append(
+            f"Box 85: the credit carried in from {first.year - 1} (Q1 box 110 = {carried_in:.2f}) comes from "
+            f"the app's own chain, not a filed return — import the {first.year - 1} 4T 303 receipt to confirm it.")
+    earlier, applied, prev = carried_in, 0.0, None
+    for r in qs:
+        box_110 = round(r.c110_pendiente_anteriores, 2)
+        if prev is not None and abs(box_110 - prev.credit_carry_forward) >= 0.005:
+            walk.flags.append(f"chain_break_Q{r.quarter}")
+            walk.notes.append(
+                f"Box 85/662: Q{r.quarter} box 110 ({box_110:.2f}) differs from Q{prev.quarter} 87 + 72 "
+                f"({prev.credit_carry_forward:.2f}) — a filed return diverges from the app; the credit of "
+                "earlier years is capped at each quarter's 110. Check against the filed 303s.")
+        earlier = round(max(0.0, min(earlier, box_110)), 2)
+        from_earlier = round(min(earlier, max(0.0, r.c78_aplicadas_periodo)), 2)
+        walk.steps.append({
+            "quarter": f"Q{r.quarter}", "box_110": box_110, "earlier_years_in_110": earlier,
+            "box_78": round(r.c78_aplicadas_periodo, 2), "from_earlier_years": from_earlier,
+            "from_this_year": round(r.c78_aplicadas_periodo - from_earlier, 2),
+            "box_72": round(r.c72_a_compensar, 2)})
+        earlier = round(earlier - from_earlier, 2)
+        applied += from_earlier
+        prev = r
+    walk.applied_earlier_years = round(applied, 2)
+    walk.pending_earlier_years = earlier
+    return walk
+
+
 def _round_to_total(parts: dict[float, float], total: float) -> dict[float, float]:
     out = {r: round(parts.get(r, 0.0), 2) for r in RATES}
     residual = round(total - sum(out.values()), 2)
@@ -337,12 +397,15 @@ def compute_modelo_390(
     b["65"] = round(b["47"] - b["64"], 2)
 
     # --- Resultado de la liquidación -----------------------------------------
-    # 85: credit of earlier years applied this year. The year's 303 box 78s
-    # consume the oldest credit first, so it is capped at Q1's box 110.
-    applied_78 = round(sum(r.c78_aplicadas_periodo for r in qs), 2)
-    carried_in = round(qs[0].c110_pendiente_anteriores, 2)
+    # 85: credit of earlier years applied this year; 662: credit generated in the year still
+    # pending after Q4 (FIFO walk over the quarters, see _walk_credit).
+    walk = _walk_credit(qs)
+    notes.extend(walk.notes)
+    if walk.flags:
+        log.warning("⚠️ Modelo 390 %s: credit chain flags %s — check boxes 85/662 against the filed 303s",
+                    year, ", ".join(walk.flags))
     b["84"] = b["65"]
-    b["85"] = round(min(carried_in, applied_78), 2)
+    b["85"] = walk.applied_earlier_years
     b["86"] = round(b["84"] - b["85"], 2)
     b["95"] = round(sum(max(0.0, r.c71_resultado_liquidacion) for r in qs), 2)
     q4 = qs[3]
@@ -350,7 +413,7 @@ def compute_modelo_390(
     b["98"] = round(q4.c73_a_devolver, 2)
     # 662: credit generated in an earlier period of the year and still pending after the last
     # period — Q4's 87 minus what is left of the credit carried in from earlier years.
-    b["662"] = round(max(0.0, q4.c87_pendiente_posteriores - (carried_in - b["85"])), 2)
+    b["662"] = round(max(0.0, q4.c87_pendiente_posteriores - walk.pending_earlier_years), 2)
 
     # --- Volumen de operaciones ---------------------------------------------
     b["99"] = round(b["01"] + b["03"] + b["05"], 2)
@@ -387,8 +450,7 @@ def compute_modelo_390(
     order = {box: i for i, box in enumerate(MODELO390_LABELS)}
     result.boxes = {k: b[k] for k in sorted(b, key=lambda k: order.get(k, len(order)))}
     result.notes = " ".join(notes)
-    result.audit = _audit(result, per_q, {k: s for k, (s, _) in sections.items()},
-                          applied_78=applied_78, carried_in=carried_in)
+    result.audit = _audit(result, per_q, {k: s for k, (s, _) in sections.items()}, walk)
     log.info("ℹ️ Modelo 390 %s: 33=%.2f 34=%.2f 64=%.2f 65=%.2f 86=%.2f 108=%.2f prorrata=%s",
              year, b["33"], b["34"], b["64"], b["65"], b["86"], b["108"],
              result.prorrata_definitive_pct if result.prorrata_applies else "n/a")
@@ -403,9 +465,10 @@ _FORMULAS: dict[str, str] = {
     "597": "Σ quarterly 303 box 36 base before pro-rata (base_100)", "598": "Σ quarterly 303 box 37",
     "63": "Σ quarterly 303 box 43", "522": "Σ quarterly 303 box 44 (Q4 pro-rata regularisation)",
     "64": "49 + 51 + 598 + 63 + 522", "65": "47 − 64", "84": "65 (+ 83 + 658, not applicable)",
-    "85": "min(Q1 303 box 110, Σ 303 box 78) — credit of earlier years applied this year",
+    "85": "FIFO walk Q1..Q4: each 303 box 78 consumes first the credit of earlier years (Q1 box 110, "
+          "capped at each quarter's box 110); Σ of that part",
     "86": "84 − 85", "95": "Σ max(0, 303 box 71)", "97": "Q4 303 box 72", "98": "Q4 303 box 73",
-    "662": "max(0, Q4 303 box 87 − (Q1 box 110 − 85))",
+    "662": "max(0, Q4 303 box 87 − credit of earlier years still pending after Q4 (FIFO walk))",
     "99": "01 + 03 + 05 (taxed sales bases)", "103": "Σ 303 box 59", "104": "Σ 303 box 60",
     "105": "Σ EXEMPT_TEACHING sales (art. 20.1.9º LIVA)", "110": "Σ 303 box 120",
     "126": "Σ OSS base", "108": "99 + 103 + 104 + 105 + 110 + 126",
@@ -415,7 +478,7 @@ _FORMULAS: dict[str, str] = {
 
 
 def _audit(r: Modelo390Result, per_q: dict[str, list[float]], splits: dict[str, _RateSplit],
-           *, applied_78: float, carried_in: float) -> list[AuditEntry]:
+           walk: _CreditWalk) -> list[AuditEntry]:
     """One audit entry per box (cell ``cNN``, so the reconciliation drill-down finds it)."""
     out = []
     for box, value in r.boxes.items():
@@ -431,7 +494,10 @@ def _audit(r: Modelo390Result, per_q: dict[str, list[float]], splits: dict[str, 
         else:
             formula = _FORMULAS.get(box, "")
         if box in ("85", "662"):
-            inputs.update(q1_box_110=carried_in, sum_box_78=applied_78)
+            inputs.update(q1_box_110=walk.carried_in, carried_in_source=walk.carried_in_source,
+                          sum_box_78=walk.sum_box_78,
+                          earlier_years_pending_after_q4=walk.pending_earlier_years,
+                          walk=walk.steps, flags=walk.flags)
         if box in ("97", "98", "662"):
             inputs["q4_box_87"] = r.quarters[3].c87_pendiente_posteriores
         out.append(AuditEntry.of("390", r.year, 0, f"c{box}", f"{box} {MODELO390_LABELS.get(box, '')}".strip(),

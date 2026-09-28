@@ -4,6 +4,7 @@ purchases threshold and the P&L per IAE activity tied to the Q4 Modelo 130.
 All figures, names and NIFs are synthetic."""
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -16,6 +17,7 @@ from src.modelo_347 import EXCLUDED_349, EXCLUDED_WITHHOLDING, THRESHOLD_EUR, co
 from src.modelo_390 import compute_modelo_390
 from src.pl_by_activity import compute_pl_by_activity
 from src.tax_engine import compute_modelo_130, compute_modelo_303
+from src.tax_models import Modelo303Result
 from src.vendor_registry import Vendor, VendorRegistry
 
 CFG: dict = {"tax": {}}
@@ -148,6 +150,66 @@ class TestModelo390Compensation:
         assert b["97"] == 0.0 and b["98"] == 0.0       # Q4 result 0: its 110 is still pending (87)
         assert b["662"] == 210.0                       # Q3's credit, never applied in 2025
         assert "115" not in b                          # no exempt operations → no pro-rata section
+
+
+def _q303(quarter: int, c110: float, c78: float, c72: float = 0.0, source: str = "none") -> Modelo303Result:
+    """A synthetic 303 quarter carrying only the credit-chain boxes the 390 reads (#136)."""
+    return Modelo303Result(year=YEAR, quarter=quarter, c110_pendiente_anteriores=c110,
+                           c78_aplicadas_periodo=c78, c87_pendiente_posteriores=round(c110 - c78, 2),
+                           c72_a_compensar=c72, c110_source=source)
+
+
+def _audit_of(m, cell: str) -> dict:
+    return json.loads(next(e for e in m.audit if e.cell == cell).inputs_json)
+
+
+class TestModelo390CreditWalk:
+    """Box 85 holds only credit of earlier years; credit generated in the year goes to 662 (#136)."""
+
+    def test_intra_year_credit_applied_later_is_not_in_85(self, conn):
+        qs = [_q303(1, 0.0, 0.0), _q303(2, 0.0, 0.0, c72=80.0), _q303(3, 80.0, 80.0), _q303(4, 0.0, 0.0)]
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=qs).aeat_boxes()
+        assert b["85"] == 0.0 and b["662"] == 0.0
+
+    def test_carried_in_credit_used_up_before_intra_year_credit(self, conn):
+        qs = [_q303(1, 100.0, 60.0, source="filed"), _q303(2, 40.0, 40.0),
+              _q303(3, 0.0, 0.0, c72=70.0), _q303(4, 70.0, 70.0)]
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=qs).aeat_boxes()
+        assert b["85"] == 100.0 and b["662"] == 0.0
+
+    def test_662_is_the_intra_year_credit_still_pending(self, conn):
+        # 100 carried in: Q1 uses 60; Q2 generates 50; Q3 uses 30 (all from 2024's credit, FIFO).
+        qs = [_q303(1, 100.0, 60.0, source="filed"), _q303(2, 40.0, 0.0, c72=50.0),
+              _q303(3, 90.0, 30.0), _q303(4, 60.0, 0.0)]
+        m = compute_modelo_390(YEAR, conn, CFG, quarters=qs)
+        b = m.aeat_boxes()
+        assert b["85"] == 90.0                         # 10 of 2024's credit is still pending
+        assert b["662"] == 50.0                        # Q2's credit, none of it applied
+        walk = _audit_of(m, "c85")["walk"]
+        assert [s["from_earlier_years"] for s in walk] == [60.0, 0.0, 30.0, 0.0]
+        assert _audit_of(m, "c85")["flags"] == []
+
+    def test_credit_shrunk_mid_year_is_not_refilled_by_intra_year_credit(self, conn):
+        # Q2's 110 (from a filed Q1 that diverges from the app) leaves only 30 of 2024's
+        # credit; Q3 then generates 50, which Q4 applies — that 50 is not 2024 credit.
+        qs = [_q303(1, 100.0, 0.0, source="filed"), _q303(2, 30.0, 30.0),
+              _q303(3, 0.0, 0.0, c72=50.0), _q303(4, 50.0, 50.0)]
+        m = compute_modelo_390(YEAR, conn, CFG, quarters=qs)
+        b = m.aeat_boxes()
+        assert b["85"] == 30.0
+        assert b["86"] == round(b["84"] - 30.0, 2)
+        assert _audit_of(m, "c85")["flags"] == ["chain_break_Q2"]
+        assert "Q2" in m.notes
+
+    def test_flags_carried_in_credit_from_the_app_chain(self, conn):
+        qs = [_q303(1, 100.0, 100.0, source="app_chain"), _q303(2, 0.0, 0.0),
+              _q303(3, 0.0, 0.0), _q303(4, 0.0, 0.0)]
+        m = compute_modelo_390(YEAR, conn, CFG, quarters=qs)
+        inputs = _audit_of(m, "c85")
+        assert inputs["carried_in_source"] == "app_chain"
+        assert inputs["flags"] == ["carried_in_from_app_chain"]
+        assert _audit_of(m, "c662")["flags"] == ["carried_in_from_app_chain"]
+        assert "app's own chain" in m.notes
 
 
 # ---------------------------------------------------------------------------

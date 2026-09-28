@@ -650,11 +650,11 @@ Items that cannot be derived from Stripe or invoices (additional overrides, one-
 |---------|-------|
 | IVA devengado | 01–06 (régimen ordinario 4/10/21 %), 545–552 (intra-EU acquisitions of services by rate), 27/28 (other reverse charge), 33/34 totals, 47 |
 | IVA deducible | 190/191, 603/604, 605/606 → 48/49 (current domestic, incl. non-EU reverse charge); 196/197, 611–614 → 50/51 (capital goods); 587/588, 635–638 → 597/598 (intra-EU services); 63 (capital-goods regularisation); 522 (pro-rata regularisation, the Q4 303 box 44); 64, 65 = 47 − 64 |
-| Result | 84, 85 (credit of earlier years applied: min(Q1 box 110, Σ box 78)), 86 = 84 − 85, 95 (Σ positive 71), 97/98 (Q4 72/73), 662 (credit generated this year still pending) |
+| Result | 84, 85 (credit of earlier years applied: FIFO walk of the quarters, each box 78 consuming Q1's box 110 first, capped at each quarter's 110), 86 = 84 − 85, 95 (Σ positive 71), 97/98 (Q4 72/73), 662 (credit generated this year still pending: Q4 87 minus what is left of earlier years' credit) |
 | Volume | 99 (taxed sales), 103 (intra-EU B2B), 104 (exports), 105 (exempt teaching), 110 (non-EU services not subject — the 303's box 120), 126 (OSS), 108 total |
 | Pro-rata | 115/116/118 (general pro-rata, box 117 = G) — only when exempt operations exist |
 
-Deductible bases are "sin prorratear" (the 303's `base_100`), cuotas after the pro-rata. The per-rate split follows the rate of each 303 audit record and is rounded so the rates add up to the section total. `INTRA_EU_RC` purchases are services (349 key I). The external accountant reported non-EU services in 104; the app follows the instructions (110). `230`/`232` (exempt / non-deductible purchases) are not modelled.
+Deductible bases are "sin prorratear" (the 303's `base_100`), cuotas after the pro-rata. The per-rate split follows the rate of each 303 audit record and is rounded so the rates add up to the section total. `INTRA_EU_RC` purchases are services (349 key I). The external accountant reported non-EU services in 104; the app follows the instructions (110). `230`/`232` (exempt / non-deductible purchases) are not modelled. The audit of boxes 85 and 662 records the per-quarter credit walk and its `flags`: `carried_in_from_app_chain` when Q1's box 110 comes from the app's own chain rather than the filed 4T return of the previous year, and `chain_break_QN` when a quarter's 110 differs from the previous quarter's 87 + 72; both also appear in the 390 notes.
 
 ### Modelo 347 (`src/modelo_347.py` purchases + `compute_modelo_347` sales)
 

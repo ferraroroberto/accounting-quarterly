@@ -39,6 +39,23 @@ cp .env.example .env  # add your Stripe API key (and optional Accounting API set
 
 A `launch_app.bat` shortcut is provided for Windows.
 
+### Restart matrix
+
+| You changed | Restart |
+|-------------|---------|
+| Code under `src/` or `app/` | The Streamlit app (stop it, then relaunch with the command above or `launch_app.bat`) |
+| `config.json`, `classification_rules.json` or `vendors.json` **by hand** | The Streamlit app — they are cached in the app process. Edits made in the app's own Configuration / Vendors tabs apply at once |
+| `divergences.json`, `gestor_notes.md`, `data/accounting.db` | Nothing — read on use (click **↺ Refresh** where a tab caches for 5 minutes, see [Performance & Caching](#performance--caching)) |
+| Anything, for the CLI | Nothing — each `close_quarter.py` run is a new process that re-reads code and config |
+
+---
+
+## Documentation
+
+- [`docs/tax-conventions.md`](docs/tax-conventions.md) — every tax rule the engine applies, with its legal basis (LIVA / LIRPF / RIRPF articles, AEAT orders), the config key that controls it, and where an external accountant may do it differently.
+- [`docs/quarter-close-runbook.md`](docs/quarter-close-runbook.md) — the quarterly close step by step: pre-flight checklist, the `close_quarter.py` pipeline, filing the 303 / 130 / 349 on the AEAT Sede, payment, **Mark filed**, receipt import, archive, and the annual calendar.
+- [`docs/architecture.mmd`](docs/architecture.mmd) — the repo's internal structure (Mermaid).
+
 ---
 
 ## Data Flow
@@ -325,7 +342,7 @@ The dashboard includes a connection tester and permission checker under **Config
 
 ## Closing a Quarter
 
-`scripts/close_quarter.py` is the deterministic backbone for the recurring quarterly-close chore — a thin CLI over `src/close_pipeline.py`, invoked interactively via the `/close-quarter` Claude Code skill (`.claude/skills/close-quarter/`), which guides you through it step by step and pauses for review after extraction (`ocr`/`vendors`/`dedupe`) and after `compute`. It can also be run by hand.
+`scripts/close_quarter.py` is the deterministic backbone for the recurring quarterly-close chore — a thin CLI over `src/close_pipeline.py`, invoked interactively via the `/close-quarter` Claude Code skill (`.claude/skills/close-quarter/`), which guides you through it step by step and pauses for review after extraction (`ocr`/`vendors`/`dedupe`) and after `compute`. It can also be run by hand. The full procedure, including filing and paying on the AEAT Sede and archiving, is [`docs/quarter-close-runbook.md`](docs/quarter-close-runbook.md).
 
 ### Pipeline
 
@@ -436,7 +453,7 @@ The tab shows per-year totals and, when a year is selected, a quarterly breakdow
 
 ## Tax Obligations (Spanish Autónomo)
 
-The **Tax Obligations** tab turns the classified transaction data into pre-filled Spanish tax filings. It covers the standard obligations for an autónomo in *régimen de estimación directa simplificada*.
+The **Tax Obligations** tab turns the classified transaction data into pre-filled Spanish tax filings. It covers the standard obligations for an autónomo in *régimen de estimación directa simplificada*. The legal basis of each rule, and where an external accountant may differ, is in [`docs/tax-conventions.md`](docs/tax-conventions.md).
 
 ### Stored calculations
 

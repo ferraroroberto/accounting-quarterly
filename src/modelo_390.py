@@ -167,6 +167,22 @@ def _rate_of(amount_vat: Any, amount_base: Any) -> float:
     return _nearest_rate(abs(vat / base) * 100.0) if base else DEFAULT_RATE
 
 
+def _rate_of_record(rec: dict) -> tuple[float, bool, Optional[float]]:
+    """(modelled rate, used the VAT ÷ base ratio as a fallback, raw invoice rate %).
+
+    Prefers the invoice's own stored ``iva_rate`` (#137) over inferring the rate
+    from VAT ÷ base — a blended-rate bill or OCR/rounding mismatch between
+    ``iva_amount`` and ``subtotal_eur`` can point the ratio at the wrong row.
+    The ratio is only a fallback for records without a stored rate (older rows,
+    non-invoice entries), and that fallback is counted by the caller.
+    """
+    raw = rec.get("iva_rate")
+    if raw is not None:
+        pct = _f(raw)
+        return _nearest_rate(pct), False, pct
+    return _rate_of(rec.get("iva_amount"), rec.get("subtotal_eur")), True, None
+
+
 def _audit_inputs(result: Modelo303Result, cell: str) -> dict[str, Any]:
     for entry in result.audit or []:
         if entry.cell == cell:
@@ -184,24 +200,27 @@ def _f(v: Any) -> float:
         return 0.0
 
 
-# (rate, base weight, cuota weight) of one audit record, per section.
-def _weights_interiores(rec: dict) -> tuple[float, float, float]:
+# (rate, base weight, cuota weight, ratio fallback used?, raw rate % if any) of
+# one audit record, per section. The last two elements are read by add_quarter
+# to count fallbacks and off-rate (non 4/10/21 %) records for the audit (#137);
+# sections whose rate is always explicit (rate_pct/manual) omit them.
+def _weights_interiores(rec: dict) -> tuple:
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
     if rec.get("source") == "manual_entry":
         return _nearest_rate(rec.get("vat_rate")), _f(rec.get("base")), _f(rec.get("cuota"))
     if "rate_pct" in rec:   # NON_EU_RC self-assessed, deducted with the current domestic operations
         return _nearest_rate(_f(rec["rate_pct"])), _f(rec.get("subtotal_eur")) * pct, _f(rec.get("deductible_cuota"))
-    return (_rate_of(rec.get("iva_amount"), rec.get("subtotal_eur")),
-            _f(rec.get("subtotal_eur")) * pct, _f(rec.get("c29_cuota")))
+    rate, fallback, raw = _rate_of_record(rec)
+    return rate, _f(rec.get("subtotal_eur")) * pct, _f(rec.get("c29_cuota")), fallback, raw
 
 
-def _weights_inversion(rec: dict) -> tuple[float, float, float]:
+def _weights_inversion(rec: dict) -> tuple:
     if rec.get("source") == "fixed_asset":
         return (_rate_of(rec.get("vat_eur"), rec.get("base_eur")),
                 _f(rec.get("box_30_base")), _f(rec.get("box_31_cuota")))
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
-    return (_rate_of(rec.get("iva_amount"), rec.get("subtotal_eur")),
-            _f(rec.get("subtotal_eur")) * pct, _f(rec.get("c31_cuota")))
+    rate, fallback, raw = _rate_of_record(rec)
+    return rate, _f(rec.get("subtotal_eur")) * pct, _f(rec.get("c31_cuota")), fallback, raw
 
 
 def _weights_aic_devengado(rec: dict) -> tuple[float, float, float]:
@@ -222,13 +241,20 @@ class _RateSplit:
     total_base: float = 0.0
     total_cuota: float = 0.0
     fallback_quarters: list[int] = field(default_factory=list)
+    rate_fallback_count: int = 0                             # records with no stored iva_rate (#137)
+    off_rate_values: set[float] = field(default_factory=set)  # stored rates not in RATES, reported not forced
 
-    def add_quarter(self, quarter: int, weights: Iterable[tuple[float, float, float]],
+    def add_quarter(self, quarter: int, weights: Iterable[tuple],
                     total_base: float, total_cuota: float) -> None:
         """Spread one quarter's totals over the rates in proportion to its records."""
         weights = list(weights)
         self.total_base += total_base
         self.total_cuota += total_cuota
+        for w in weights:
+            if len(w) > 3 and w[3]:
+                self.rate_fallback_count += 1
+            if len(w) > 4 and w[4] is not None and w[4] not in RATES:
+                self.off_rate_values.add(w[4])
         for idx, total, bucket in ((1, total_base, self.base), (2, total_cuota, self.cuota)):
             if not total:
                 continue
@@ -380,6 +406,13 @@ def compute_modelo_390(
         if split.fallback_quarters:
             notes.append(f"{_SECTIONS[key][0]}: no per-rate records in "
                          f"Q{', Q'.join(map(str, split.fallback_quarters))} — amounts put in the 21 % row.")
+        if split.rate_fallback_count:
+            notes.append(f"{_SECTIONS[key][0]}: {split.rate_fallback_count} record(s) had no stored VAT "
+                         "rate — the rate was inferred from VAT ÷ base instead.")
+        if split.off_rate_values:
+            rates_str = ", ".join(f"{r:g} %" for r in sorted(split.off_rate_values))
+            notes.append(f"{_SECTIONS[key][0]}: record(s) at {rates_str} (not 4/10/21 %) were placed "
+                         "in the nearest modelled row.")
 
     b["27"] = _qsum("27", lambda r: r.c12_base)
     b["28"] = _qsum("28", lambda r: r.c13_cuota)
@@ -491,6 +524,12 @@ def _audit(r: Modelo390Result, per_q: dict[str, list[float]], splits: dict[str, 
             formula = (f"{rate:g} % share of the section total, split by the rate of each 303 audit record "
                        "and rounded so the rates add up to the total")
             inputs["section"] = section
+            split = splits.get(section)
+            if split is not None:
+                if split.rate_fallback_count:
+                    inputs["rate_fallbacks"] = split.rate_fallback_count
+                if split.off_rate_values:
+                    inputs["off_rates_pct"] = sorted(split.off_rate_values)
         else:
             formula = _FORMULAS.get(box, "")
         if box in ("85", "662"):

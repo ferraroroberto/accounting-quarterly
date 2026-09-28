@@ -133,6 +133,40 @@ class TestModelo390FourQuarters:
         assert [e.cell for e in m.audit] == [f"c{box}" for box in m.aeat_boxes()]
 
 
+class TestModelo390RateRows:
+    """#137: the 390 prefers the invoice's own iva_rate over inferring VAT ÷ base."""
+
+    def test_prefers_stored_rate_over_misleading_ratio(self, conn):
+        # The invoice's own rate is 10 %, but an iva_amount/subtotal_eur mismatch
+        # (e.g. a blended-rate bill or OCR rounding) makes the raw ratio look
+        # like 4.5 % — nearest 4 % — which would misroute the record.
+        _inv(conn, "mixed", "in", "2025-03-03", 1000.0, "DOMESTIC", iva=45.0, rate=10)
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=quarters).aeat_boxes()
+        assert (b["603"], b["604"]) == (1000.0, 45.0)
+        assert (b["190"], b["191"]) == (0.0, 0.0)
+
+    def test_missing_rate_falls_back_to_ratio_and_is_counted(self, conn):
+        # No stored iva_rate: still falls back to VAT ÷ base (21 %), and the
+        # fallback is counted in the audit note.
+        _inv(conn, "norate", "in", "2025-03-04", 100.0, "DOMESTIC", iva=21.0, rate=None)
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        m = compute_modelo_390(YEAR, conn, CFG, quarters=quarters)
+        b = m.aeat_boxes()
+        assert (b["605"], b["606"]) == (100.0, 21.0)
+        assert "no stored VAT rate" in m.notes
+
+    def test_off_rate_invoice_reported_not_forced(self, conn):
+        # 7.5 % is not one of the modelled 4/10/21 rows: the nearest (10 %) is
+        # used, but the off-rate is reported, not silently absorbed.
+        _inv(conn, "seventyfive", "in", "2025-03-05", 200.0, "DOMESTIC", iva=15.0, rate=7.5)
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        m = compute_modelo_390(YEAR, conn, CFG, quarters=quarters)
+        b = m.aeat_boxes()
+        assert (b["603"], b["604"]) == (200.0, 15.0)
+        assert "7.5" in m.notes
+
+
 class TestModelo390Compensation:
     def test_carried_in_credit_and_q4_boxes(self, conn):
         store_filed_return(conn, FiledReturn(

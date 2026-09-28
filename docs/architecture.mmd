@@ -23,6 +23,7 @@ flowchart TB
     OCR["invoice_ocr.py\nhub (default) or direct Gemini/Vertex fallback"]
     ACCCLIENT["accounting_api_client.py"]
     SOCSEC["social_security.py\nbank-export cuota import"]
+    DEDUPE["invoice_dedupe.py\nduplicate/receipt/out-of-period detectors + apply"]
     DB["database.py\nSQLite read/write"]
     SHARED["models.py · config.py · _json_store.py\nshared types + cached JSON config"]
     AGGEXPORT["aggregator.py + excel_exporter.py\nmonthly aggregation, regional totals + Excel report"]
@@ -43,13 +44,13 @@ flowchart TB
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
     LOADER["data_loader.py"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
-    INVTABS["invoice_upload · invoice_ocr_tab ·\ninvoice_ledger · invoice_explorer"]
+    INVTABS["invoice_upload · invoice_ocr_tab ·\ninvoice_ledger · invoice_dedupe_tab · invoice_explorer"]
     SSTAB["social_security_tab"]
     TAXTABS["tax_obligations · tax_validation · tax_audit"]
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab ·\ntest_stripe_eu_b2c_reclassify · test_filed_returns"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]
@@ -66,6 +67,7 @@ flowchart TB
   OCR --> DB
   SOCSEC --> DB
   ACCCLIENT -.-> DB
+  DEDUPE --> DB
   DB --> DBFILE
   SHARED -.-> STRIPECLIENT
   SHARED -.-> CLASSIFIER
@@ -87,6 +89,7 @@ flowchart TB
   REPORTTABS --> AGGEXPORT
   INVTABS --> OCR
   INVTABS --> ACCCLIENT
+  INVTABS --> DEDUPE
   SSTAB --> SOCSEC
   TAXTABS --> TAXENGINE
   TAXTABS --> TAXVALIDATOR

@@ -1290,6 +1290,45 @@ def unlock_invoice_fields(
         conn.close()
 
 
+def set_invoice_exclusion(
+    invoice_id: str,
+    excluded: bool,
+    reason: Optional[str],
+    db_path: Optional[str | Path] = None,
+) -> bool:
+    """Set ``excluded``/``excluded_reason`` directly, without locking (issue #92).
+
+    Unlike ``update_invoice_fields``, this never adds to ``locked_fields`` or
+    stamps ``reviewed_at`` — an automated dedupe proposal stays overridable by a
+    plain re-extract or a later manual edit, per #90's rule that only a user
+    edit locks a field. Refuses (returns ``False``, no write) when the row
+    already has ``excluded`` in its ``locked_fields`` — a user decision on that
+    row's exclusion always wins over an automated one.
+
+    Raises ``KeyError`` for an unknown invoice and ``ValueError`` for an
+    invalid ``reason``.
+    """
+    if reason is not None and reason not in EXCLUDED_REASONS:
+        raise ValueError(f"excluded_reason {reason!r} is not one of {', '.join(EXCLUDED_REASONS)}")
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT locked_fields FROM invoices WHERE id = ?", (invoice_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"No invoice with id {invoice_id!r}")
+        if "excluded" in parse_locked_fields(row["locked_fields"]):
+            return False
+        conn.execute(
+            "UPDATE invoices SET excluded = ?, excluded_reason = ? WHERE id = ?",
+            (1 if excluded else 0, reason, invoice_id),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def get_invoices(direction: Optional[str] = None,
                  db_path: Optional[str | Path] = None) -> list[dict]:
     """Return all invoice records, optionally filtered by direction."""

@@ -308,6 +308,18 @@ class TestModelo347:
         assert result.rows[0].total_operations == pytest.approx(3500.0)
         assert sum(result.rows[0].quarter_breakdown.values()) == pytest.approx(3500.0)
 
+    def test_threshold_must_be_exceeded(self, db_conn):
+        # RD 1065/2007 art. 33.1: declare only counterparties whose yearly total
+        # has *exceeded* €3,005.06 — exactly the threshold is not declared.
+        _insert_invoice(db_conn, id="inv_eq", invoice_date="2025-03-01",
+                        client_name="At Threshold SL", client_nif="00000000T",
+                        subtotal_eur=3005.06)
+        _insert_invoice(db_conn, id="inv_gt", invoice_date="2025-03-01",
+                        client_name="Above Threshold SL", client_nif="11111111H",
+                        subtotal_eur=3005.07)
+        result = compute_modelo_347(2025, db_conn)
+        assert [r.counterparty_nif for r in result.rows] == ["11111111H"]
+
     def test_no_shared_nif_keeps_counterparties_separate(self, db_conn):
         # No NIF on either side — a Stripe payer (keyed by email) and an
         # invoice-only client (keyed by name) must NOT be merged just because

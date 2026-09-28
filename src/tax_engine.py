@@ -1669,7 +1669,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
     below_threshold = 0
     for key, info in by_counterparty.items():
         total = round(info["total"], 2)
-        if total >= result.threshold:
+        if total > result.threshold:  # art. 33.1 RD 1065/2007: "hayan superado"
             result.rows.append(Modelo347Row(
                 counterparty_name=info["name"] or key,
                 counterparty_nif=info.get("nif", ""),
@@ -1692,7 +1692,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
             f"SUM(importe IVA incluido) WHERE geo_region='SPAIN' AND "
             f"counterparty(nif||email/name)='{identity}' — basis: transactions "
             f"(converted_amount − converted_amount_refunded) + invoices "
-            f"(subtotal_eur + iva_amount) — threshold ≥ €{result.threshold:,.2f}",
+            f"(subtotal_eur + iva_amount) — threshold > €{result.threshold:,.2f}",
             r.total_operations,
             counterparty=r.counterparty_name,
             counterparty_nif=r.counterparty_nif,
@@ -1701,7 +1701,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
     audit.append(_a(
         "summary",
         "Resumen Modelo 347",
-        f"Counterparties >= €{result.threshold:,.2f} threshold",
+        f"Counterparties > €{result.threshold:,.2f} threshold",
         float(len(result.rows)),
         total_counterparties_spain=total_counterparties,
         above_threshold=len(result.rows),

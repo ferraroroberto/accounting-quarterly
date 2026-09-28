@@ -22,6 +22,7 @@ from src.database import (
     update_invoice_fields,
 )
 from src.logger import get_logger
+from src.vendor_registry import load_registry
 
 log = get_logger(__name__)
 
@@ -37,9 +38,10 @@ _BULK_COLUMNS = [
     "eur_received", "payment_date", "vat_treatment", "locked", "reviewed_at",
 ]
 _BULK_READONLY = [
-    "filename", "counterparty", "invoice_number", "subtotal_eur", "iva_amount",
+    "filename", "counterparty", "vendor", "invoice_number", "subtotal_eur", "iva_amount",
     "total_eur", "currency", "vat_treatment", "locked", "reviewed_at",
 ]
+UNKNOWN_VENDOR = "⚠ unknown"
 
 
 def _treatments(direction: str) -> tuple[str, ...]:
@@ -90,7 +92,21 @@ def _build_frame(records: list[dict], direction: str) -> pd.DataFrame:
     for col in ("excluded", "is_capital_asset"):
         df[col] = df[col].fillna(0).astype(bool)
     df["quarter"] = df["invoice_date"].map(_quarter_label)
+    if direction == "in":
+        registry = load_registry()
+        df["vendor"] = [
+            m.vendor.key if (m := registry.match_invoice(rec)) else UNKNOWN_VENDOR for rec in records
+        ]
     return df.set_index("id")
+
+
+def _bulk_columns(direction: str) -> list[str]:
+    """Bulk-grid columns; expenses also show the vendor-registry match (⚠ when unknown)."""
+    if direction != "in":
+        return _BULK_COLUMNS
+    cols = list(_BULK_COLUMNS)
+    cols.insert(cols.index("counterparty") + 1, "vendor")
+    return cols
 
 
 def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> None:
@@ -101,7 +117,7 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
     )
     editor_key = f"ledger_editor_{direction}_{filter_sig}_{_editor_version()}"
     st.data_editor(
-        view[_BULK_COLUMNS],
+        view[_bulk_columns(direction)],
         key=editor_key,
         width="stretch",
         hide_index=True,
@@ -132,6 +148,9 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
             "iva_amount": st.column_config.NumberColumn(format="%.2f"),
             "total_eur": st.column_config.NumberColumn(format="%.2f"),
             "vat_treatment": st.column_config.TextColumn("legacy vat_treatment"),
+            "vendor": st.column_config.TextColumn(
+                "vendor", help="Vendor-registry match; ⚠ unknown → add it in the Vendors tab",
+            ),
         },
     )
     edited_rows: dict = st.session_state.get(editor_key, {}).get("edited_rows", {})
@@ -316,11 +335,13 @@ def render() -> None:
     if only_unreviewed:
         view = view[view["reviewed_at"].isna()]
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Invoices", len(view))
     m2.metric("Excluded", int(view["excluded"].sum()))
     m3.metric("No tax treatment", int(view["tax_treatment"].isna().sum()))
     m4.metric("Unreviewed", int(view["reviewed_at"].isna().sum()))
+    n_unknown = int((view["vendor"] == UNKNOWN_VENDOR).sum()) if "vendor" in view else 0
+    m5.metric("⚠ Unknown vendor", n_unknown if direction == "in" else "—")
 
     if view.empty:
         st.warning("No invoices match the current filters.")

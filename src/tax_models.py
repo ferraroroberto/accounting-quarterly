@@ -41,26 +41,151 @@ def _tax_deadline_date(model: str, year: int, quarter: int) -> date:
     return date(year, 12, 31)
 
 
+Q4NegativeResult = Literal["compensate", "refund"]
+
+# AEAT Modelo 303 box number -> Modelo303Result field, in the order the boxes
+# are printed on the form (page 1 liquidación, page 3 información adicional +
+# resultado, then the compensación / devolución boxes). Source: the AEAT form
+# as reproduced in the "Manual práctico IVA 2025", cap. 9 (Modelo 303 anexo).
+# Rows 01/02/03 = 4%, 04/05/06 = 10%, 07/08/09 = 21% (the 0%, 2% and 5% rows
+# 150/165/153 are not used by this taxpayer and are not modelled).
+MODELO303_BOX_FIELDS: dict[str, str] = {
+    "01": "c01_base", "03": "c03_cuota",
+    "04": "c04_base", "06": "c06_cuota",
+    "07": "c07_base", "09": "c09_cuota",
+    "10": "c10_base", "11": "c11_cuota",
+    "12": "c12_base", "13": "c13_cuota",
+    "27": "c27_total_devengado",
+    "28": "c28_base", "29": "c29_cuota",
+    "30": "c30_base", "31": "c31_cuota",
+    "36": "c36_base", "37": "c37_cuota",
+    "43": "c43_regularizacion_bienes_inversion",
+    "44": "c44_regularizacion_prorrata",
+    "45": "c45_total_deducir",
+    "46": "c46_resultado_regimen_general",
+    "59": "c59_entregas_intracom",
+    "60": "c60_exportaciones",
+    "120": "c120_no_sujetas_localizacion",
+    "123": "oss_base",
+    "64": "c64_suma_resultados",
+    "65": "c65_pct_atribuible_estado",
+    "66": "c66_atribuible_estado",
+    "110": "c110_pendiente_anteriores",
+    "78": "c78_aplicadas_periodo",
+    "87": "c87_pendiente_posteriores",
+    "69": "c69_resultado_autoliquidacion",
+    "71": "c71_resultado_liquidacion",
+    "72": "c72_a_compensar",
+    "73": "c73_a_devolver",
+}
+
+
 @dataclass
 class Modelo303Result:
+    """Modelo 303 (quarterly VAT return) with fields named after the AEAT boxes.
+
+    ``cNN_*`` fields hold the value to type into box NN; ``aeat_boxes()`` returns
+    them keyed by the box number exactly as printed on the form. The remaining
+    fields are context for the reconciliation / filing sheet, not boxes.
+    """
     year: int
     quarter: int
-    # Devengado
-    box_01_base: float = 0.0          # Base imponible al 21% (IVA_ES_21)
-    box_03_cuota: float = 0.0         # 21% × Box 01
-    box_59_intracom_entregas: float = 0.0  # Casilla 59: Entregas intracomunitarias exentas (EU B2B sales)
-    # Deducible (AEAT casillas: 28 = base, 29 = cuota — names match the form)
-    box_28_base_soportado: float = 0.0   # Casilla 28: Base imponible IVA soportado interior corriente
-    box_29_cuota_soportado: float = 0.0  # Casilla 29: Cuota IVA soportado deducible (invoices + quarterly_tax_entries)
-    # Resultado
-    box_46_diferencia: float = 0.0    # Box 03 - Box 29
-    box_48_resultado: float = 0.0     # Net to pay (positive) or refund (negative)
-    # Informative
-    oss_base: float = 0.0
+    # --- IVA devengado (régimen general) ---
+    c01_base: float = 0.0                 # 4% row
+    c03_cuota: float = 0.0
+    c04_base: float = 0.0                 # 10% row
+    c06_cuota: float = 0.0
+    c07_base: float = 0.0                 # 21% row (ES_21, EU_B2C_ES21, Stripe Spain/EU B2C)
+    c09_cuota: float = 0.0
+    c10_base: float = 0.0                 # adquisiciones intracomunitarias (INTRA_EU_RC)
+    c11_cuota: float = 0.0
+    c12_base: float = 0.0                 # otras operaciones con ISP (NON_EU_RC, D8)
+    c13_cuota: float = 0.0
+    c27_total_devengado: float = 0.0      # 03 + 06 + 09 + 11 + 13
+    # --- IVA deducible ---
+    c28_base: float = 0.0                 # operaciones interiores corrientes (+ NON_EU_RC)
+    c29_cuota: float = 0.0
+    c30_base: float = 0.0                 # operaciones interiores con bienes de inversión
+    c31_cuota: float = 0.0
+    c36_base: float = 0.0                 # adquisiciones intracomunitarias corrientes
+    c37_cuota: float = 0.0
+    c43_regularizacion_bienes_inversion: float = 0.0  # arts. 107-109 LIVA, Q4 only
+    c44_regularizacion_prorrata: float = 0.0          # art. 105 LIVA, Q4 only
+    c45_total_deducir: float = 0.0        # 29 + 31 + 37 + 43 + 44
+    c46_resultado_regimen_general: float = 0.0  # 27 − 45
+    # --- Información adicional ---
+    c59_entregas_intracom: float = 0.0    # EU B2B sales
+    c60_exportaciones: float = 0.0        # exports of goods (none today, see notes)
+    c120_no_sujetas_localizacion: float = 0.0  # non-EU sales not subject (D11)
+    # --- Resultado ---
+    c64_suma_resultados: float = 0.0      # 46 + 58 + 76 (58/76 not applicable) = 46
+    c65_pct_atribuible_estado: float = 100.0
+    c66_atribuible_estado: float = 0.0    # 64 × 65 %
+    c110_pendiente_anteriores: float = 0.0
+    c78_aplicadas_periodo: float = 0.0
+    c87_pendiente_posteriores: float = 0.0  # 110 − 78
+    c69_resultado_autoliquidacion: float = 0.0  # 66 + 77 − 78 + 68 + 108 (77/68/108 = 0)
+    c71_resultado_liquidacion: float = 0.0      # 69 − 70 + 109 (70/109 = 0)
+    c72_a_compensar: float = 0.0          # −71 when 71 < 0 and not refunded
+    c73_a_devolver: float = 0.0           # −71 when 71 < 0, Q4 refund option
+    # --- Context (not boxes) ---
+    oss_base: float = 0.0                 # also box 123 (informational) when OSS-registered
     oss_vat: float = 0.0
-    export_base: float = 0.0          # IVA_EXPORT transactions base
+    exempt_base: float = 0.0              # EXEMPT_TEACHING sales (art. 20.1.9º) — pro-rata denominator
+    prorrata_enabled: bool = True
+    prorrata_provisional_pct: float = 100.0
+    prorrata_provisional_source: str = ""
+    prorrata_definitive_pct: Optional[float] = None   # Q4 only
+    c46_sin_prorrata: float = 0.0         # "gestor mode": 46 with 100% deduction, no box 44
+    c110_source: str = ""                 # filed | app_chain | none
+    q4_negative_result: str = "compensate"
     notes: str = ""
     audit: list = field(default_factory=list)  # list[AuditEntry]
+
+    def aeat_boxes(self) -> dict[str, float]:
+        """Every modelled box keyed by its AEAT number ("01", "110", …), in form order.
+
+        Interface consumed by the reconciliation view (#100) and the filing
+        sheet (#101). Box 123 is the OSS base; it is 0 unless OSS-registered.
+        """
+        return {box: float(getattr(self, name)) for box, name in MODELO303_BOX_FIELDS.items()}
+
+    @property
+    def credit_carry_forward(self) -> float:
+        """Credit pending for the next period: 87 + 72 (what next period's 110 will be)."""
+        return round(self.c87_pendiente_posteriores + self.c72_a_compensar, 2)
+
+    # Read-only aliases for the pre-#97 field names, still read by
+    # src/tax_validator.py (owned by #100, which switches to aeat_boxes()).
+    # Remove once no caller uses them. The old "box_01" was the 21% row (07/09)
+    # and the old "export_base" held the non-EU sales now reported in box 120.
+    @property
+    def box_01_base(self) -> float:
+        return self.c07_base
+
+    @property
+    def box_03_cuota(self) -> float:
+        return self.c09_cuota
+
+    @property
+    def box_59_intracom_entregas(self) -> float:
+        return self.c59_entregas_intracom
+
+    @property
+    def box_28_base_soportado(self) -> float:
+        return self.c28_base
+
+    @property
+    def box_29_cuota_soportado(self) -> float:
+        return self.c29_cuota
+
+    @property
+    def box_46_diferencia(self) -> float:
+        return self.c46_resultado_regimen_general
+
+    @property
+    def export_base(self) -> float:
+        return self.c120_no_sujetas_localizacion
 
 
 @dataclass

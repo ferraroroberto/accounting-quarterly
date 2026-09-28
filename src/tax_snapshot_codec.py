@@ -19,12 +19,25 @@ from src.tax_models import (
 
 log = get_logger(__name__)
 
-# Pre-e08a3ff9 (#42) Modelo303Result field names -> current AEAT-casilla-matching
-# names. Snapshots persisted before that rename still carry these legacy keys in
+# Legacy Modelo303Result field names -> current AEAT-box field names. Two
+# generations are mapped straight to the current name:
+# - pre-e08a3ff9 (#42): box_28_iva_soportado / box_29_base_soportado (swapped);
+# - pre-#97: box_NN_* names, where "box_01" was really the 21% row (07/09),
+#   "export_base" held non-EU sales (now box 120, not-subject by location) and
+#   "box_48_resultado" was 46 with no carry-forward (= 66 at 100% attribution).
+# Snapshots persisted before a rename still carry these keys in
 # ``payload_json`` and would otherwise raise a TypeError on decode.
 _MODELO303_LEGACY_RENAMES: dict[str, str] = {
-    "box_28_iva_soportado": "box_29_cuota_soportado",
-    "box_29_base_soportado": "box_28_base_soportado",
+    "box_28_iva_soportado": "c29_cuota",
+    "box_29_base_soportado": "c28_base",
+    "box_01_base": "c07_base",
+    "box_03_cuota": "c09_cuota",
+    "box_59_intracom_entregas": "c59_entregas_intracom",
+    "box_28_base_soportado": "c28_base",
+    "box_29_cuota_soportado": "c29_cuota",
+    "box_46_diferencia": "c46_resultado_regimen_general",
+    "box_48_resultado": "c66_atribuible_estado",
+    "export_base": "c120_no_sujetas_localizacion",
 }
 
 
@@ -71,6 +84,24 @@ def _tolerant_construct(
     return cls(**data)
 
 
+def _derive_legacy_303_totals(result: Modelo303Result) -> None:
+    """Fill the total boxes a pre-#97 snapshot never stored, from the boxes it did.
+
+    Legacy payloads only carried 01/03 (→ 07/09), 28/29 and 46, so 27, 45 and the
+    result boxes would otherwise decode as 0 next to non-zero components. No
+    carry-forward existed then, so 64 = 66 = 69 = 71 = 46.
+    """
+    result.c27_total_devengado = round(
+        result.c03_cuota + result.c06_cuota + result.c09_cuota
+        + result.c11_cuota + result.c13_cuota, 2)
+    result.c45_total_deducir = round(result.c29_cuota + result.c31_cuota + result.c37_cuota, 2)
+    result.c64_suma_resultados = result.c46_resultado_regimen_general
+    result.c66_atribuible_estado = result.c46_resultado_regimen_general
+    result.c69_resultado_autoliquidacion = result.c46_resultado_regimen_general
+    result.c71_resultado_liquidacion = result.c46_resultado_regimen_general
+    result.c46_sin_prorrata = result.c46_resultado_regimen_general
+
+
 def _decode_oss_row(r: dict[str, Any]) -> OSSCountryRow:
     return OSSCountryRow(**r)
 
@@ -110,7 +141,10 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
     """Restore a computation result object from stored JSON."""
     data = json.loads(payload_json)
     if model == "303":
-        return _tolerant_construct(Modelo303Result, data, _MODELO303_LEGACY_RENAMES)
+        result = _tolerant_construct(Modelo303Result, data, _MODELO303_LEGACY_RENAMES)
+        if any(k in data for k in _MODELO303_LEGACY_RENAMES):
+            _derive_legacy_303_totals(result)
+        return result
     if model == "130":
         return _tolerant_construct(Modelo130Result, data)
     if model == "OSS":

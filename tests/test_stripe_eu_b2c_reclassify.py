@@ -128,7 +128,7 @@ class TestEuB2CSpanish21:
         assert r303.box_01_base == pytest.approx(100.0)
         assert r303.box_03_cuota == pytest.approx(21.0)
         assert r303.oss_base == 0.0
-        audit_01 = next(a for a in r303.audit if a.cell == "box_01_base")
+        audit_01 = next(a for a in r303.audit if a.cell == "c07_base")
         recs = json.loads(audit_01.inputs_json)["records"]
         assert any(r.get("vat_treatment") == "EU_B2C_ES21" for r in recs)
 

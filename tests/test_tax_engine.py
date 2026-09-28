@@ -111,22 +111,22 @@ def db_conn(tmp_path):
 # ---------------------------------------------------------------------------
 
 class TestModelo303:
-    def test_all_outside_eu_box_48_zero(self, db_conn):
+    def test_all_outside_eu_result_zero(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=500.0, geo_region="OUTSIDE_EU",
                    vat_treatment="IVA_EXPORT", vat_base_eur=500.0, vat_amount_eur=0.0)
         result = compute_modelo_303(2025, 1, db_conn)
-        assert result.box_48_resultado == 0.0
-        assert result.export_base == 500.0
+        assert result.c71_resultado_liquidacion == 0.0
+        assert result.c120_no_sujetas_localizacion == 500.0
 
-    def test_spain_only_box_03_is_21pct(self, db_conn):
+    def test_spain_only_box_09_is_21pct(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=1000.0, geo_region="SPAIN",
                    vat_treatment="IVA_ES_21", vat_base_eur=1000.0, vat_amount_eur=210.0)
         result = compute_modelo_303(2025, 1, db_conn)
-        assert result.box_01_base == pytest.approx(1000.0)
-        assert result.box_03_cuota == pytest.approx(210.0)
-        assert result.box_48_resultado == pytest.approx(210.0)
+        assert result.c07_base == pytest.approx(1000.0)
+        assert result.c09_cuota == pytest.approx(210.0)
+        assert result.c71_resultado_liquidacion == pytest.approx(210.0)
 
     def test_mixed_income_correct_allocation(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
@@ -139,10 +139,10 @@ class TestModelo303:
                    converted_amount=200.0, geo_region="OUTSIDE_EU", activity_type="COACHING",
                    vat_treatment="IVA_EXPORT", vat_base_eur=200.0, vat_amount_eur=0.0)
         result = compute_modelo_303(2025, 1, db_conn)
-        assert result.box_01_base == pytest.approx(500.0)
-        assert result.box_03_cuota == pytest.approx(105.0)
-        assert result.box_59_intracom_entregas == pytest.approx(300.0)
-        assert result.export_base == pytest.approx(200.0)
+        assert result.c07_base == pytest.approx(500.0)
+        assert result.c09_cuota == pytest.approx(105.0)
+        assert result.c59_entregas_intracom == pytest.approx(300.0)
+        assert result.c120_no_sujetas_localizacion == pytest.approx(200.0)
 
     def test_iva_soportado_greater_than_devengado_gives_refund(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
@@ -154,8 +154,8 @@ class TestModelo303:
         )
         db_conn.commit()
         result = compute_modelo_303(2025, 1, db_conn)
-        assert result.box_46_diferencia == pytest.approx(21.0 - 500.0)
-        assert result.box_48_resultado < 0  # refund scenario
+        assert result.c46_resultado_regimen_general == pytest.approx(21.0 - 500.0)
+        assert result.c72_a_compensar == pytest.approx(479.0)  # carried forward
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +393,7 @@ class TestConfigDrivenTaxSettings:
         cfg = {"tax": {"vat_proration_percentage": 50}}
         result = compute_modelo_303(2025, 1, db_conn, cfg)
         # 500 soportado × 50% prorrata = 250 deducible
-        assert result.box_29_cuota_soportado == pytest.approx(250.0)
+        assert result.c29_cuota == pytest.approx(250.0)
 
     def test_not_vat_registered_exempts_spanish_sales(self, db_conn):
         # No stored vat_treatment → derivation runs and honours the config flag
@@ -406,10 +406,10 @@ class TestConfigDrivenTaxSettings:
         db_conn.commit()
         cfg = {"tax": {"vat_registered": False}}
         result = compute_modelo_303(2025, 1, db_conn, cfg)
-        assert result.box_01_base == 0.0        # no devengado
-        assert result.box_03_cuota == 0.0
-        assert result.box_29_cuota_soportado == 0.0  # no deducible input IVA
-        assert result.box_28_base_soportado == 0.0
+        assert result.c07_base == 0.0        # no devengado
+        assert result.c09_cuota == 0.0
+        assert result.c29_cuota == 0.0  # no deducible input IVA
+        assert result.c28_base == 0.0
 
     def test_not_oss_registered_produces_no_oss_return(self, db_conn):
         _insert_tx(db_conn, id="t1", converted_amount=100.0, geo_region="EU_NOT_SPAIN",
@@ -455,6 +455,6 @@ class TestTaxSnapshotPersistence:
         assert by_model["347"]["quarter"] == TAX_SNAPSHOT_QUARTER_ANNUAL
         m303 = decode_snapshot("303", by_model["303"]["payload_json"])
         # €100 gross IVA_ES_21 → ex-VAT base 100 / 1.21 = 82.64
-        assert m303.box_01_base == pytest.approx(82.64)
+        assert m303.c07_base == pytest.approx(82.64)
         m347 = decode_snapshot("347", by_model["347"]["payload_json"])
         assert m347.year == 2025

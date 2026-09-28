@@ -128,6 +128,35 @@ def _render_tax_calendar(year: int) -> None:
 # Sub-section B: Modelo 303
 # ---------------------------------------------------------------------------
 
+_M303_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("IVA devengado", (
+        ("01", "Base 4%"), ("03", "Cuota 4%"), ("04", "Base 10%"), ("06", "Cuota 10%"),
+        ("07", "Base 21%"), ("09", "Cuota 21%"),
+        ("10", "Adq. intracomunitarias — base"), ("11", "Adq. intracomunitarias — cuota"),
+        ("12", "Otras operaciones con ISP — base"), ("13", "Otras operaciones con ISP — cuota"),
+        ("27", "Total cuota devengada"),
+    )),
+    ("IVA deducible", (
+        ("28", "Interiores corrientes — base"), ("29", "Interiores corrientes — cuota"),
+        ("30", "Bienes de inversión — base"), ("31", "Bienes de inversión — cuota"),
+        ("36", "Adq. intracom. corrientes — base"), ("37", "Adq. intracom. corrientes — cuota"),
+        ("43", "Regularización bienes de inversión"), ("44", "Regularización prorrata definitiva"),
+        ("45", "Total a deducir"), ("46", "Resultado régimen general (27 − 45)"),
+    )),
+    ("Información adicional", (
+        ("59", "Entregas intracomunitarias"), ("60", "Exportaciones"),
+        ("120", "No sujetas por reglas de localización"), ("123", "No sujetas — OSS"),
+    )),
+    ("Resultado", (
+        ("64", "Suma de resultados"), ("65", "% atribuible al Estado"), ("66", "Atribuible al Estado"),
+        ("110", "Cuotas a compensar pendientes (periodos anteriores)"),
+        ("78", "Cuotas a compensar aplicadas"), ("87", "Pendientes para periodos posteriores"),
+        ("69", "Resultado de la autoliquidación"), ("71", "Resultado"),
+        ("72", "A compensar"), ("73", "A devolver"),
+    )),
+)
+
+
 def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("B. Modelo 303 — IVA Trimestral")
     pair = bundle.get("303")
@@ -139,53 +168,54 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 
     st.caption(f"Stored calculation: {computed_at}")
     st.markdown(f"**Period:** {_quarter_label(quarter)} {year}")
-    st.divider()
 
-    st.markdown("##### DEVENGADO (IVA collected)")
-    col1, col2 = st.columns(2)
-    col1.metric("Box 01 — Base imponible al 21%", _fmt_eur(result.box_01_base))
-    col2.metric("Box 03 — Cuota (21% × Box 01)", _fmt_eur(result.box_03_cuota))
-    st.metric("Box 59 — Entregas intracom. exentas (EU B2B sales, informative)",
-              _fmt_eur(result.box_59_intracom_entregas))
+    result_val = result.c71_resultado_liquidacion
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Box 71 — Resultado", _fmt_eur(result_val),
+                delta="Refund / carry" if result_val < 0 else "To pay",
+                delta_color="inverse" if result_val < 0 else "normal")
+    col2.metric("Credit carried to next period (87 + 72)", _fmt_eur(result.credit_carry_forward))
+    col3.metric("Box 46 without pro-rata (gestor mode)", _fmt_eur(result.c46_sin_prorrata))
 
-    st.caption(
-        "Box 01/03 include EU consumer (B2C) sales taxed at Spanish 21% (`EU_B2C_ES21`, "
-        "art. 73 LIVA) when not OSS-registered — see the **EU B2C / OSS** tab for the threshold."
-    )
+    # AEAT boxes in form order; zero boxes are hidden except the totals.
+    boxes = result.aeat_boxes()
+    always = {"27", "45", "46", "64", "66", "71"}
+    for title, rows in _M303_SECTIONS:
+        shown = [(b, label, boxes[b]) for b, label in rows if boxes.get(b) or b in always]
+        if not shown:
+            continue
+        st.markdown(f"##### {title}")
+        st.dataframe(
+            [{"Casilla": b, "Concepto": label,
+              "Importe": f"{v:,.2f} %" if b == "65" else _fmt_eur(v)} for b, label, v in shown],
+            width="stretch", hide_index=True,
+        )
+
+    prorrata = (f"Pro-rata: provisional {result.prorrata_provisional_pct:.0f}% "
+                f"({result.prorrata_provisional_source})")
+    if result.prorrata_definitive_pct is not None:
+        prorrata += f" · definitive {result.prorrata_definitive_pct:.0f}%"
+    if not result.prorrata_enabled:
+        prorrata = "Pro-rata disabled."
+    st.caption(f"{prorrata} · Box 110 source: {result.c110_source or '—'}")
     if result.oss_base > 0:
         st.info(
             f"OSS income (not in Modelo 303): base {_fmt_eur(result.oss_base)}, "
             f"VAT {_fmt_eur(result.oss_vat)} — declare separately via OSS portal."
         )
+    if result.notes:
+        st.warning(result.notes)
 
     st.divider()
-    st.markdown("##### DEDUCIBLE (IVA paid on expenses)")
-    col1, col2 = st.columns(2)
-    col1.metric("Box 28 — Base IVA soportado", _fmt_eur(result.box_28_base_soportado))
-    col2.metric("Box 29 — Cuota IVA soportado", _fmt_eur(result.box_29_cuota_soportado))
-
-    st.divider()
-    st.markdown("##### RESULTADO")
-    col1, col2 = st.columns(2)
-    col1.metric("Box 46 — Diferencia (03 − 29)", _fmt_eur(result.box_46_diferencia))
-    result_val = result.box_48_resultado
-    delta_color = "inverse" if result_val < 0 else "normal"
-    col2.metric(
-        "Box 48 — Resultado a ingresar / devolver",
-        _fmt_eur(result_val),
-        delta="Refund" if result_val < 0 else "To pay",
-        delta_color=delta_color,
-    )
-
-    st.divider()
-    _save_filing_button("303", year, quarter, result.box_48_resultado)
+    _save_filing_button("303", year, quarter, result_val)
 
     with st.expander("⚠️ Caveats"):
         st.markdown(
             "- `IVA_EU_B2B` transactions require a valid NIF-IVA verified in VIES — "
             "the system cannot verify this automatically.\n"
-            "- OSS income is shown for reference only; file it separately through the AEAT OSS portal.\n"
-            "- Manual override: enter corrected IVA soportado via **Manual Entries** below."
+            "- Box 110 chains from the **filed** previous return when it was imported "
+            "(`python -m src.filed_returns import …`); otherwise from the app's own previous quarter.\n"
+            "- Manual override: enter corrected IVA soportado via **Manual Entries** below, with its VAT rate."
         )
 
 
@@ -246,8 +276,9 @@ def _render_manual_entries(year: int, quarter: int) -> None:
 
     if entries:
         import pandas as pd
-        df = pd.DataFrame(entries)[["id", "entry_type", "amount_eur", "description", "notes", "created_at"]]
-        df.columns = ["ID", "Type", "Amount (€)", "Description", "Notes", "Created"]
+        df = pd.DataFrame(entries).reindex(
+            columns=["id", "entry_type", "amount_eur", "vat_rate", "description", "notes", "created_at"])
+        df.columns = ["ID", "Type", "Amount (€)", "VAT rate %", "Description", "Notes", "Created"]
         st.dataframe(df, width="stretch", hide_index=True)
 
         delete_id = st.number_input("Delete entry by ID", min_value=0, step=1, value=0,
@@ -276,11 +307,16 @@ def _render_manual_entries(year: int, quarter: int) -> None:
             "Amount (€)", min_value=0.0, step=0.01, format="%.2f",
             key=f"add_entry_amount_{year}_{quarter}",
         )
+        vat_rate = col1.selectbox(
+            "VAT rate (IVA_SOPORTADO only)", [21.0, 10.0, 4.0],
+            format_func=lambda r: f"{r:.0f}%", key=f"add_entry_rate_{year}_{quarter}",
+        )
         description = st.text_input("Description", key=f"add_entry_desc_{year}_{quarter}")
         notes = st.text_area("Notes", height=70, key=f"add_entry_notes_{year}_{quarter}")
         if st.form_submit_button("Add Entry", key=f"add_entry_submit_{year}_{quarter}"):
             if amount > 0:
-                add_tax_entry(year, quarter, entry_type, amount, description, notes)
+                add_tax_entry(year, quarter, entry_type, amount, description, notes,
+                              vat_rate=vat_rate if entry_type == "IVA_SOPORTADO" else None)
                 st.success("Entry added.")
                 st.rerun()
             else:

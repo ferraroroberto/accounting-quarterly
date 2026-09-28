@@ -485,6 +485,18 @@ def backfill_tax_snapshot_legacy_keys(conn: sqlite3.Connection) -> int:
     return updated
 
 
+def _ensure_tax_entries_schema(conn: sqlite3.Connection) -> None:
+    """Add ``quarterly_tax_entries.vat_rate`` (percent) on DBs that predate it (#97).
+
+    Manual ``IVA_SOPORTADO`` entries carry the VAT cuota; the rate lets the
+    engine derive the matching base for Modelo 303 box 28 instead of assuming
+    21%. NULL on older rows — the engine counts their cuota and flags them.
+    """
+    if "vat_rate" not in _get_table_columns(conn, "quarterly_tax_entries"):
+        conn.execute("ALTER TABLE quarterly_tax_entries ADD COLUMN vat_rate REAL")
+        log.info("ℹ️ Migrated DB: added quarterly_tax_entries.vat_rate")
+
+
 def _ensure_audit_schema(conn: sqlite3.Connection) -> None:
     """Create the tax_audit_log table on existing DBs that predate it."""
     conn.execute("""
@@ -661,6 +673,7 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         _create_fx_rates_table(conn)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)
+        _ensure_tax_entries_schema(conn)
         _ensure_audit_schema(conn)
         conn.commit()
         backfill_invoice_classifications(conn)
@@ -1525,15 +1538,20 @@ def get_tax_entries(year: int, quarter: int,
 
 def add_tax_entry(year: int, quarter: int, entry_type: str, amount_eur: float,
                   description: str = "", notes: str = "",
-                  db_path: Optional[str | Path] = None) -> int:
-    """Insert a manual tax entry. Returns the new row id."""
+                  db_path: Optional[str | Path] = None,
+                  vat_rate: Optional[float] = None) -> int:
+    """Insert a manual tax entry. Returns the new row id.
+
+    ``vat_rate`` (percent, e.g. 21) is required for ``IVA_SOPORTADO`` entries
+    to derive their Modelo 303 base; ``None`` for other entry types.
+    """
     conn = get_connection(db_path)
     try:
         cursor = conn.execute(
             """INSERT INTO quarterly_tax_entries
-               (year, quarter, entry_type, amount_eur, description, notes)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (year, quarter, entry_type, amount_eur, description, notes),
+               (year, quarter, entry_type, amount_eur, description, notes, vat_rate)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (year, quarter, entry_type, amount_eur, description, notes, vat_rate),
         )
         conn.commit()
         return cursor.lastrowid

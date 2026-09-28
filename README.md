@@ -142,6 +142,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_rules_engine.py
 │   ├── test_aggregator.py
 │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
@@ -397,7 +398,7 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 
 | Model | Name | Frequency | What it computes |
 |-------|------|-----------|-----------------|
-| **Modelo 303** | Declaración IVA Trimestral | Quarterly | IVA collected (devengado) vs. IVA paid (soportado); net to pay or refund |
+| **Modelo 303** | Declaración IVA Trimestral | Quarterly | Every AEAT box: accrued (01–13, 27), deductible (28–46, incl. reverse charge, capital goods and pro-rata), informational (59/60/120) and the result with the credit chain (64–73, 110/78/87) — see [Modelo 303 box model](#modelo-303-box-model) |
 | **Modelo 130** | Pago Fraccionado IRPF | Quarterly | 20% advance on YTD net profit, minus retenciones and prior payments |
 | **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Intra-EU B2B operations grouped by buyer VAT ID |
 | **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country — only when `oss_registered` is true |
@@ -413,7 +414,7 @@ VAT treatment is derived on-the-fly by the tax engine using each transaction's a
 | Any | OUTSIDE_EU | — | `IVA_EXPORT` | 0% |
 | Any | SPAIN | — | `IVA_ES_21` | 21% |
 | Any | EU_NOT_SPAIN | Known | `IVA_EU_B2B` | 0% (reverse charge) |
-| Any | EU_NOT_SPAIN | Unknown | `EU_B2C_ES21` (default, not OSS-registered) | 21% Spanish IVA, Modelo 303 box 01/03 |
+| Any | EU_NOT_SPAIN | Unknown | `EU_B2C_ES21` (default, not OSS-registered) | 21% Spanish IVA, Modelo 303 boxes 07/09 |
 | Any | EU_NOT_SPAIN | Unknown | `OSS_EU` (only when `oss_registered: true`) | Buyer country rate, OSS return |
 
 **B2B vs. B2C follows the customer's status, not the activity** (accounting-quarterly#113 — art. 69/70 LIVA). A sale to an EU business with a valid VAT id is reverse-charged (`IVA_EU_B2B`, Modelo 349 key S); a sale to an EU consumer is taxed in Spain below the €10,000 threshold. The VAT id comes from **Configuration → Geographic Rules → Customer VAT IDs** (an email or name/description override, mirroring the geographic overrides — see "Customer VAT ID overrides" below) or, as a read-only fallback, a Stripe `customer.tax_ids` entry already present in the stored raw charge (not currently requested by the Stripe fetch, so this fallback is a no-op on today's data). **VIES validation of the id is out of scope** — the app trusts whatever VAT id is on file; verify it yourself before relying on the reverse charge.
@@ -452,6 +453,8 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
     "regime": "estimacion_directa_simplificada",
     "vat_registered": true,
     "oss_registered": false,
+    "prorrata": {"enabled": true, "definitive_pct_by_year": {"2025": 100}},
+    "modelo303_q4_negative_result": "compensate",
     "vat_proration_percentage": 100,
     "default_vat_treatment_eu_coaching": "EU_B2C_ES21",
     "default_vat_treatment_eu_newsletter": "EU_B2C_ES21",
@@ -467,8 +470,34 @@ Every key above drives a computation:
 | `regime` | Gates the 5% *gastos de difícil justificación* in Modelo 130 — only `estimacion_directa_simplificada` is eligible (Art. 30.2.4ª LIRPF). |
 | `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
 | `oss_registered` | Default `false` (OSS is opt-in, Modelo 035). Unless `true`, no OSS return is generated (an audit note records why) and EU B2C sales are `EU_B2C_ES21`. |
-| `vat_proration_percentage` | Prorrata general applied to deducible IVA (Modelo 303 casilla 28/29). `100` = fully deductible. |
+| `prorrata.enabled` | VAT pro-rata (arts. 102–106 LIVA), default `true`. See [Modelo 303 box model](#modelo-303-box-model). |
+| `prorrata.definitive_pct_by_year` | The definitive pro-rata % of each year once filed (Q4 303 / 390); it is the next year's provisional %. Years not listed fall back to the % the app computes from that year's data, then 100. |
+| `modelo303_q4_negative_result` | `compensate` (default, box 72) or `refund` (box 73) for a negative Q4 result. Q1–Q3 always carry forward. |
+| `vat_proration_percentage` | Legacy flat pro-rata %. Only used, as the provisional %, when it is not `100` and the previous year has no `prorrata.definitive_pct_by_year` entry. |
 | `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` / `default_vat_treatment_eu_illustrations` | Pick the EU B2C sub-treatment (`EU_B2C_ES21` or `OSS_EU`) per activity for a sale **without** a known customer VAT id. Default `EU_B2C_ES21` for every activity. No longer selects B2B: since #113, `IVA_EU_B2B` only applies when the customer has a VAT id on file (see "VAT treatment classification" above) — a legacy `IVA_EU_B2B` value here is accepted but ignored. |
+
+### Modelo 303 box model
+
+`compute_modelo_303` returns a `Modelo303Result` whose fields are named after the AEAT boxes (`c07_base`, `c09_cuota`, …, `c110_pendiente_anteriores`); `result.aeat_boxes()` gives them keyed by the box number as printed on the form (`"07"`, `"110"`), in form order. The layout and formulas follow the AEAT form (Manual práctico IVA 2025, cap. 9): rows 01/03 = 4%, 04/06 = 10%, 07/09 = 21%; 27 = sum of the accrued cuotas; 45 = 29 + 31 + 37 + 43 + 44; 46 = 27 − 45; 64 = 46; 66 = 64 × 65 %; 69 = 66 − 78; 71 = 69.
+
+| Box | Source |
+|-----|--------|
+| 01–09 | Stripe Spain + EU consumers at Spanish 21% (`EU_B2C_ES21`, no OSS) and income invoices `ES_21` (by rate) / `EU_B2C_ES21` |
+| 10/11 · 36/37 | `INTRA_EU_RC` purchases: base × 21% self-assessed (accrued), and deducted × `deductible_pct_vat` |
+| 12/13 | `NON_EU_RC` purchases (non-EU services, reverse charge — VAT-neutral), deducted in 28/29 |
+| 28/29 | `DOMESTIC` invoices × `deductible_pct_vat` (minus any capital-good share), `NON_EU_RC`, manual `IVA_SOPORTADO` entries (cuota ÷ their rate for the base) |
+| 30/31 | Capital goods (unit base > €3,005.06) from the fixed-asset register at their VAT business-use %; `DOMESTIC_CAPITAL` invoices not in the register use the invoice |
+| 43 · 44 | Q4 only: capital-goods regularisation (arts. 107–109 LIVA) and the pro-rata regularisation |
+| 59 · 60 · 120 | EU B2B sales · exports of goods (none today) · non-EU sales not subject by location rules (Stripe non-EU customers + `NON_EU_NOT_SUBJECT` invoices). Earlier filings by the external accountant put non-EU service invoices in 60 instead of 120 — informational only, no money effect |
+| 110 | The previous quarter's **filed** 87 + 72 (imported receipt, see [Importing filed AEAT receipts](#importing-filed-aeat-receipts)); when not imported, the app's own previous-quarter result, chained back to the first period with data |
+| 78 / 87 | 78 = min(110, max(0, 66)); 87 = 110 − 78. Q4 with `refund`: 78 = 110 |
+| 72 / 73 | A negative 71 is carried forward in 72; in Q4 it can be refunded (73) instead |
+
+**Pro-rata** (arts. 102–106 LIVA, `tax.prorrata.enabled`, default on). During a year every deductible box is multiplied by the *provisional* %, which is the previous year's *definitive* %. In Q4 the engine computes the year's definitive % (art. 104: operations with the right to deduct — taxed sales plus EU B2B, non-EU and OSS sales that would carry the right if made in Spain — over those plus exempt ones such as `EXEMPT_TEACHING`, rounded **up** to the unit) and puts (definitive − provisional) × the year's deductible VAT into box 44. Record the definitive % under `tax.prorrata.definitive_pct_by_year` once filed. `c46_sin_prorrata` shows box 46 with 100% deduction, for comparing with filings that ignore the pro-rata.
+
+Manual `IVA_SOPORTADO` entries (Tax Obligations → Manual Entries) now carry their VAT rate, from which the box 28 base is derived; the old fixed 21% assumption is gone.
+
+Old snapshots with the pre-#97 field names (`box_01_base`, `box_29_cuota_soportado`, `export_base`, …) still decode: the codec maps them to the new fields and fills in the totals.
 
 ### Invoice data in tax calculations
 
@@ -476,8 +505,8 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 
 | Model | Source | Contribution |
 |-------|--------|-------------|
-| **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota), weighted by `deductible_pct_vat` |
-| **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
+| **Modelo 303** | Expense invoices (`direction='in'`) | By `tax_treatment`: `DOMESTIC` → 28/29, `DOMESTIC_CAPITAL` / registered capital goods → 30/31, `INTRA_EU_RC` → 10/11 + 36/37, `NON_EU_RC` → 12/13 + 28/29, each weighted by `deductible_pct_vat` |
+| **Modelo 303** | Income invoices (`direction='out'`) | `ES_21` → 01/03, 04/06 or 07/09 by rate, `EU_B2C_ES21` → 07/09, `EU_B2B` → 59, `NON_EU_NOT_SUBJECT` → 120, `EXEMPT_TEACHING` → pro-rata denominator only |
 | **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD — `eur_received` when set, otherwise the stored (ECB-resolved) `subtotal_eur`, plus `fx_exchange_differences.gain_loss_eur` recorded in the period |
 | **Modelo 130** box_02 | Expense invoices (`direction='in'`, not `is_capital_asset`) | Subtotal gastos (weighted by `deductible_pct_irpf`) YTD |
 | **Modelo 130** box_02 | `fixed_assets` table | Depreciation YTD (see [Fixed Assets](#fixed-assets)) |
@@ -618,7 +647,7 @@ Each time **Calculate Tax** runs, the engine writes one `AuditEntry` per cell to
 
 | Model | Cells audited |
 |-------|--------------|
-| **Modelo 303** | box_01_base, box_03_cuota, box_59_intracom, box_28, box_29, box_46, box_48, oss_base, oss_vat, export_base |
+| **Modelo 303** | one entry per AEAT box (`c01_base` … `c73_a_devolver`, with the contributing records on the base boxes), plus `oss_base` and `exempt_base` |
 | **Modelo 130** | box_01_ingresos, box_02_gastos, amortizaciones (per-asset breakdown), capital_assets_excluded, box_03_rendimiento, gastos_dificil_justificacion (with cap flag), rendimiento_neto, box_05_base, box_07_retenciones, box_14_pagos_anteriores, box_16_resultado |
 | **Modelo 349** | one entry per operator (VAT ID) + total |
 | **OSS** | base + cuota per country + totals |
@@ -638,8 +667,7 @@ The UI shows a summary table plus an expandable drill-down per cell. Each expand
 
 | Cell | Approximation | Impact |
 |------|--------------|--------|
-| `box_28_base_soportado` (M303) | `box_29_cuota_soportado / 0.21` assumes all deductible expenses at 21% | Display only — does not affect `box_46` or `box_48` |
-| `box_48_resultado` (M303) | Prorrata from `tax.vat_proration_percentage` (default 100%) applied to casilla 29 | Set the prorrata in Tax Settings; manual IVA entries should still reflect only genuinely deductible cuota |
+| `c28_base` (M303) | Manual `IVA_SOPORTADO` entries without a VAT rate (entered before #97) add their cuota to 29 but nothing to 28 | Flagged in the 303 notes — re-enter them with the rate |
 | `box_01_ingresos` (M130) | Ex-VAT base extracted from VAT-inclusive Stripe amounts | Correct for estimación directa — IVA is a pass-through, not income |
 
 ---
@@ -786,7 +814,7 @@ income kept in a foreign-currency account (never converted) is booked at the
 ECB rate on the invoice date. If the money **was** actually converted on
 receipt, set `eur_received` in the Invoice Ledger tab once it's known; it then
 wins over the stored ECB figure in every tax computation that reads invoice
-income (Modelo 130 box 01, Modelo 303's export base). See
+income (Modelo 130 box 01, Modelo 303 box 120). See
 [Exchange rate differences](#exchange-rate-differences) for what happens when
 a foreign-currency balance booked at the ECB rate is converted later.
 
@@ -876,7 +904,7 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 | out | `IVA_EXEMPT` + `SPAIN` | `EXEMPT_TEACHING` |
 | out | `IVA_EXEMPT` + other / unknown region | left empty — review it in the Ledger tab |
 
-The tax engine currently uses `excluded`, `invoice_date` and the split business-use percentages; the per-treatment Modelo 303 box model (reverse charge, capital goods, pro-rata) is a later step.
+The tax engine uses `excluded`, `invoice_date`, the split business-use percentages and, for the Modelo 303, `tax_treatment` (see [Modelo 303 box model](#modelo-303-box-model)). Rows with no `tax_treatment` are derived from the legacy `vat_treatment` on the fly.
 
 ### Exchange rate differences
 
@@ -997,7 +1025,7 @@ Durable purchases are depreciated instead of expensed (`src/fixed_assets.py`, **
 - `assets.posting_mode`: `annual_q4` (default) books the full year's depreciation in Q4 (Q1–Q3 YTD carry none); `quarterly` books each quarter's days.
 - The Modelo 130 adds `depreciation_for_period(year, quarter, conn, ytd=True, config=...)` to box 02; the Tax Audit tab shows it as `amortizaciones` with a per-asset breakdown, plus `capital_assets_excluded` (flagged invoices removed from expenses; any flagged invoice without a registered asset is listed there and logged as a warning).
 
-**VAT capital goods.** An asset whose unit base is above €3,005.06 is a *bien de inversión* (art. 108 LIVA; auto-detected, overridable). `capital_goods_vat_for_period` gives its Modelo 303 boxes **30/31** in the quarter of acquisition: base × VAT business-use %, and VAT × VAT business-use % (or the `vat_deducted_eur` override). The **regularisation register** covers the year of acquisition + 4: record the VAT business-use % actually applied each year, and a year whose % differs from the acquisition year's by more than 10 points gets an adjustment of VAT borne ÷ 5 × (% of the year − initial %) (arts. 107–109 LIVA), for 303 box 44 at Q4. These figures are computed and shown in the tab; wiring them into the 303 box model is a later step (the 303 still counts the invoice's VAT in 28/29, at the invoice's `deductible_pct_vat`). The one-off disposal adjustment of art. 110 LIVA is not computed.
+**VAT capital goods.** An asset whose unit base is above €3,005.06 is a *bien de inversión* (art. 108 LIVA; auto-detected, overridable). `capital_goods_vat_for_period` gives its Modelo 303 boxes **30/31** in the quarter of acquisition: base × VAT business-use %, and VAT × VAT business-use % (or the `vat_deducted_eur` override). The **regularisation register** covers the year of acquisition + 4: record the VAT business-use % actually applied each year, and a year whose % differs from the acquisition year's by more than 10 points gets an adjustment of VAT borne ÷ 5 × (% of the year − initial %) (arts. 107–109 LIVA), for 303 box 43 (*regularización bienes de inversión*) at Q4. The 303 takes boxes 30/31 from this register and leaves the capital-good share of the linked invoice out of 28/29. The one-off disposal adjustment of art. 110 LIVA is not computed.
 
 Configuration (`config.json`):
 

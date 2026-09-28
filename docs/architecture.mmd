@@ -38,7 +38,7 @@ flowchart TB
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
-    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY legacy field -> AEAT box map\n(delete after #97/#98/#99)"]
+    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY 130/349 legacy field -> AEAT box map\n(delete after #98/#99) + 390 aggregation"]
   end
 
   subgraph localfiles["git-ignored local config"]

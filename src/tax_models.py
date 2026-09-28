@@ -155,9 +155,10 @@ class Modelo303Result:
         """Credit pending for the next period: 87 + 72 (what next period's 110 will be)."""
         return round(self.c87_pendiente_posteriores + self.c72_a_compensar, 2)
 
-    # Read-only aliases for the pre-#97 field names, still read by
-    # src/tax_validator.py (owned by #100, which switches to aeat_boxes()).
-    # Remove once no caller uses them. The old "box_01" was the 21% row (07/09)
+    # Read-only aliases for the pre-#97 field names. No production code reads
+    # them any more; only older test modules do (test_invoice_ledger,
+    # test_invoice_dedupe, test_invoice_fx, test_stripe_eu_b2c_reclassify,
+    # test_database). Remove once those assert the cNN_* fields. The old "box_01" was the 21% row (07/09)
     # and the old "export_base" held the non-EU sales now reported in box 120.
     @property
     def box_01_base(self) -> float:

@@ -106,7 +106,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
-│   ├── legacy_aeat_boxes.py       # TEMPORARY legacy engine field → AEAT box map (delete after #97/#98/#99)
+│   ├── legacy_aeat_boxes.py       # TEMPORARY 130/349 legacy field → AEAT box map (delete after #98/#99) + 390 aggregation
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
@@ -577,18 +577,10 @@ A differing box that matches an entry for its model, period and box shows 🟡 w
 
 ### Legacy engine → AEAT box mapping (temporary)
 
-Until #97 (303), #98 (130) and #99 (349) give each engine result `aeat_boxes()` / `operators()`, `src/legacy_aeat_boxes.py` maps the legacy fields. Delete that module once they ship.
+The Modelo 303 result has its own `aeat_boxes()` (#97) and is used as is. Until #98 (130) and #99 (349) give those results `aeat_boxes()` / `operators()`, `src/legacy_aeat_boxes.py` maps their legacy fields; delete that part once they ship.
 
 | Model | AEAT box | Legacy source | Where the meaning differs |
 |-------|----------|---------------|---------------------------|
-| 303 | 07 / 09 | `box_01_base` / `box_03_cuota` | Legacy "01/03" are the 21 % rows, which the form prints in 07/09 |
-| 303 | 27 | `box_03_cuota` | 27 should total all accrued VAT; reverse-charge accruals (10–13) are missing |
-| 303 | 28 / 29 | `box_28_base_soportado` / `box_29_cuota_soportado` | Still include capital goods (30/31) and intra-EU acquisitions (36/37); manual IVA entries get a base estimated at 21 % |
-| 303 | 45 | `box_29_cuota_soportado` | 45 should total every deductible box; legacy only has 29 |
-| 303 | 46 | `box_46_diferencia` | — |
-| 303 | 59 | `box_59_intracom_entregas` | — |
-| 303 | 60 | `export_base` | Non-EU services; the 303 rework (#97) reports them in 120 (not subject by location rules) |
-| 303 | 64 / 66 | `box_48_resultado` | Equal to 46 (single regime, 100 % attributable); no carry-forward, so 69/71/110/78/87 are not mapped |
 | 130 | 01 | `box_01_ingresos` | — |
 | 130 | 02 | `box_02_gastos` + `gastos_dificil_justificacion` | Legacy keeps the 5 % allowance outside box 02; the adapter adds it back, as on the form |
 | 130 | 03 | `rendimiento_neto` | Legacy `box_03_rendimiento` is before the 5 % allowance |
@@ -598,7 +590,7 @@ Until #97 (303), #98 (130) and #99 (349) give each engine result `aeat_boxes()` 
 | 130 | 07 | `box_05_base − box_14_pagos_anteriores − box_07_retenciones` | Derived; negative allowed |
 | 130 | 19 | `box_16_resultado` | Clamped at 0; no 12–18 (no 13 reduction, no 15 negative carry) |
 | 349 | 01 / 02 | operator count / `total` | Only EU B2B sales, reported under key `S`; acquisitions (key `I`) arrive with #99 |
-| 390 | 05–108 | sum of the four quarterly legacy 303s | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base) |
+| 390 | 05–108 | sum of the four quarterly 303s (07/09, 28/29, 59, 120 as 104, OSS) | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base); reverse charge, capital goods and pro-rata not aggregated yet |
 
 The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.
 

@@ -655,6 +655,9 @@ A differing box that matches an entry for its model, period and box shows 🟡 w
 ### Modelo 390 aggregation (temporary)
 
 The Modelo 303 (#97), 130 (#98) and 349 (#99, with `operators()`) results have their own `aeat_boxes()` and are used as is; no legacy field mapping is left. `src/legacy_aeat_boxes.py` only aggregates the Modelo 390 from the four quarterly 303s, until the annual pack (#103) gives it its own engine.
+
+| Model | AEAT box | Legacy source | Where the meaning differs |
+|-------|----------|---------------|---------------------------|
 | 390 | 05–108 | sum of the four quarterly 303s (07/09, 28/29, 59, 120 as 104, OSS) | Same arithmetic as the old validator (33 adds 59; 108 adds the OSS base); reverse charge, capital goods and pro-rata not aggregated yet |
 
 The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.

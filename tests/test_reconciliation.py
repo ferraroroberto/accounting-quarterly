@@ -326,13 +326,11 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
 
 
 class TestAppBoxesAdapter:
-    def test_legacy_mapping_is_349_only(self):
-        # The 303 (#97) and the 130 (#98) have their own aeat_boxes(): no legacy mapping left.
-        legacy = SimpleNamespace(rows=[SimpleNamespace(buyer_vat_id="IE1", buyer_name="X", total_amount=9.5)],
-                                 total=9.5)
-        assert legacy_boxes("349", legacy) == {"01": 1.0, "02": 9.5}
-        assert legacy_boxes("303", legacy) == {}
-        assert legacy_boxes("130", legacy) == {}
+    def test_no_legacy_mapping_is_left(self):
+        # The 303 (#97), 130 (#98) and 349 (#99) have their own aeat_boxes(): no legacy mapping left.
+        legacy = SimpleNamespace(rows=[], total=9.5)
+        for model in ("303", "130", "349"):
+            assert legacy_boxes(model, legacy) == {}
 
     def test_303_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_303(2025, 1, db_conn, CFG)
@@ -425,9 +423,8 @@ class TestAuditDrillDown:
         {"cell": "operator_IE1234567X", "value": 5.0}, {"cell": "total", "value": 5.0},
     ]
 
-    def test_legacy_box_uses_the_field_map(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "349", "02", "legacy")]
-        assert cells == ["total"]
+    def test_legacy_engine_has_no_field_map_left(self):
+        assert audit_entries_for_box(self.ENTRIES, "349", "02", "legacy") == []
         assert audit_entries_for_box(self.ENTRIES, "130", "04", "legacy") == []
 
     def test_aeat_box_matches_cells_named_after_it(self):

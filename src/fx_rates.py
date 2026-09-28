@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,27 @@ FRANKFURTER_BASES = [
     # Legacy/alternative endpoint kept as a fallback.
     "https://api.frankfurter.dev",
 ]
-SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF"]
+SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF", "AUD"]
+
+# A fallback rate older than this many days than the date it was requested for
+# is flagged `is_stale` (issue #93) — the exact date is missing (weekend/holiday
+# gaps are normal and stay unflagged), but a week-plus-old rate usually means
+# nobody has loaded fresh data and the figure should be reviewed.
+STALE_TOLERANCE_DAYS = 5
+
+# The default start date used when backfilling a currency that has no stored
+# rates yet (mirrors the Currency tab's own default range start).
+_BACKFILL_DEFAULT_START = date(2023, 7, 1)
+
+
+@dataclass
+class FxRateInfo:
+    """Result of an FX rate lookup, with the staleness/provenance issue #93 needs."""
+
+    rate: Optional[float]          # 1 EUR = `rate` units of the currency; None if unavailable
+    rate_date: Optional[date]      # the date the rate actually comes from (may differ from requested)
+    is_stale: bool                 # True when `rate_date` is more than STALE_TOLERANCE_DAYS before the request
+    source: str                    # "exact" | "fallback" | "fetched" | "none"
 
 
 def _ensure_fx_schema(conn: sqlite3.Connection) -> None:
@@ -176,6 +197,59 @@ def get_rate(
         conn.close()
 
 
+def get_rate_with_fallback_info(
+    rate_date: date,
+    currency: str,
+    db_path: Optional[str | Path] = None,
+    tolerance_days: int = STALE_TOLERANCE_DAYS,
+) -> FxRateInfo:
+    """Get the FX rate for a date, with full provenance (issue #93).
+
+    First tries the exact date, then searches backwards for the closest
+    available, then tries a live fetch for the exact date. Unlike the legacy
+    `get_rate_with_fallback` (kept as a thin wrapper below, returning just the
+    rate), this makes a stale fallback **visible**: `is_stale` is True whenever
+    the rate actually used is dated more than `tolerance_days` before the
+    requested date, so callers can flag it instead of silently trusting it.
+    """
+    exact = get_rate(rate_date, currency, db_path)
+    if exact is not None:
+        return FxRateInfo(rate=exact, rate_date=rate_date, is_stale=False, source="exact")
+
+    conn = get_connection(db_path)
+    try:
+        _ensure_fx_schema(conn)
+        row = conn.execute(
+            "SELECT rate, rate_date FROM fx_rates WHERE currency = ? AND rate_date <= ? "
+            "ORDER BY rate_date DESC LIMIT 1",
+            (currency.upper(), rate_date.isoformat()),
+        ).fetchone()
+        if row:
+            found_date = date.fromisoformat(row["rate_date"])
+            stale = (rate_date - found_date).days > tolerance_days
+            if stale:
+                log.warning(
+                    "⚠️ FX fallback for %s on %s is stale — using %s (%d days old)",
+                    currency, rate_date, found_date, (rate_date - found_date).days,
+                )
+            else:
+                log.debug("ℹ️ FX fallback: using previous rate for %s on %s", currency, rate_date)
+            return FxRateInfo(rate=row["rate"], rate_date=found_date, is_stale=stale, source="fallback")
+    finally:
+        conn.close()
+
+    # Nothing stored at or before the requested date — try a live fetch for the exact date.
+    try:
+        rates = fetch_single_date(rate_date, [currency])
+        if currency.upper() in rates:
+            store_rates({rate_date.isoformat(): rates}, db_path)
+            return FxRateInfo(rate=rates[currency.upper()], rate_date=rate_date, is_stale=False, source="fetched")
+    except Exception as exc:
+        log.warning("⚠️ Could not fetch FX rate for %s on %s: %s", currency, rate_date, exc)
+
+    return FxRateInfo(rate=None, rate_date=None, is_stale=True, source="none")
+
+
 def get_rate_with_fallback(
     rate_date: date,
     currency: str,
@@ -183,37 +257,11 @@ def get_rate_with_fallback(
 ) -> Optional[float]:
     """Get the FX rate for a date, falling back to the most recent available rate.
 
-    First tries the exact date, then searches backwards for the closest available.
-    If nothing in DB, tries to fetch from the API for that date.
+    Thin backward-compatible wrapper around `get_rate_with_fallback_info` —
+    kept for existing callers that only need the number. New code that must
+    surface staleness (invoice FX, issue #93) should call the `_info` variant.
     """
-    rate = get_rate(rate_date, currency, db_path)
-    if rate is not None:
-        return rate
-
-    conn = get_connection(db_path)
-    try:
-        _ensure_fx_schema(conn)
-        row = conn.execute(
-            "SELECT rate FROM fx_rates WHERE currency = ? AND rate_date <= ? "
-            "ORDER BY rate_date DESC LIMIT 1",
-            (currency.upper(), rate_date.isoformat()),
-        ).fetchone()
-        if row:
-            log.debug("ℹ️ FX fallback: using previous rate for %s on %s", currency, rate_date)
-            return row["rate"]
-    finally:
-        conn.close()
-
-    # Try fetching from API
-    try:
-        rates = fetch_single_date(rate_date, [currency])
-        if currency.upper() in rates:
-            store_rates({rate_date.isoformat(): rates}, db_path)
-            return rates[currency.upper()]
-    except Exception as exc:
-        log.warning("⚠️ Could not fetch FX rate for %s on %s: %s", currency, rate_date, exc)
-
-    return None
+    return get_rate_with_fallback_info(rate_date, currency, db_path).rate
 
 
 def convert_to_eur(
@@ -299,5 +347,280 @@ def get_latest_fx_sync_at(db_path: Optional[str | Path] = None) -> Optional[date
         if row and row["max_updated_at"]:
             return datetime.fromisoformat(row["max_updated_at"])
         return None
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Backfill (issue #93): keep rates current for every currency actually in use,
+# not just the hard-coded SUPPORTED_CURRENCIES list.
+# ---------------------------------------------------------------------------
+
+def get_currencies_in_use(db_path: Optional[str | Path] = None) -> list[str]:
+    """Non-EUR currencies seen in stored invoices or transactions, plus SUPPORTED_CURRENCIES.
+
+    Drives the backfill so a new currency (AUD today, something else tomorrow)
+    is picked up automatically the moment it appears in ingested data, rather
+    than needing a code change.
+    """
+    conn = get_connection(db_path)
+    try:
+        found: set[str] = set(SUPPORTED_CURRENCIES)
+        for table, col in (("invoices", "original_currency"), ("transactions", "currency")):
+            try:
+                rows = conn.execute(
+                    f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                continue  # table not created yet (fresh DB before init_db())
+            for row in rows:
+                val = (row[0] or "").strip().upper()
+                if val and val != "EUR":
+                    found.add(val)
+        return sorted(found)
+    finally:
+        conn.close()
+
+
+def backfill_to_today(
+    db_path: Optional[str | Path] = None,
+    currencies: Optional[list[str]] = None,
+) -> int:
+    """Fetch and store ECB rates from the last stored date up to today.
+
+    Cheap and idempotent (`store_rates` upserts) — meant to be called once at
+    app start and again at quarter close, so the table never goes stale the
+    way it did before #93 (data only up to 2026-03-30 despite the app running
+    daily). Currencies default to `get_currencies_in_use`, so a new currency
+    in ingested data is backfilled without a code change. Network failures are
+    caught and logged, never raised, so this can't break app startup.
+    """
+    try:
+        init_fx_table(db_path)
+        currencies = currencies or get_currencies_in_use(db_path)
+        if not currencies:
+            return 0
+        _, max_date = get_stored_date_range(db_path)
+        start = (max_date + timedelta(days=1)) if max_date else _BACKFILL_DEFAULT_START
+        end = date.today()
+        if start > end:
+            return 0
+        stored = load_and_store_range(start, end, currencies, db_path)
+        log.info("ℹ️ FX backfill: %s to %s stored %d entries for %s", start, end, stored, ", ".join(currencies))
+        return stored
+    except Exception as exc:
+        log.warning("⚠️ FX backfill failed (will retry next run): %s", exc)
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Invoice FX resolution (issue #93): EUR for a foreign-currency invoice comes
+# from the ECB rate on the invoice date — not the LLM's own guess — unless the
+# document states the EUR actually charged, or (income) EUR was actually
+# received. See docs/tax-conventions.md-equivalent guidance in issue #93 /
+# private decision D5.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class InvoiceFxResolution:
+    """Authoritative EUR amounts for an OCR-extracted invoice, plus provenance."""
+
+    subtotal_eur: Optional[float]
+    iva_amount: Optional[float]
+    total_eur: Optional[float]
+    fx_rate_used: Optional[float]      # 1 EUR = fx_rate_used units of the original currency
+    fx_rate_date: Optional[str]        # ISO date the rate actually comes from
+    fx_source: str                     # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE
+    fx_stale: bool
+    fx_cross_check_diff_pct: Optional[float]  # |LLM total − resolved total| / resolved total × 100
+    fx_warning: Optional[str]
+
+
+def resolve_invoice_amounts(
+    direction: str,
+    data: dict,
+    db_path: Optional[str | Path] = None,
+) -> InvoiceFxResolution:
+    """Resolve the authoritative EUR amounts for an OCR-extracted invoice (#93).
+
+    ``data`` is the dict returned by ``invoice_ocr.extract_invoice`` (or the
+    merged row from the Invoice Ledger edit form): read for ``currency`` /
+    ``original_currency`` / ``original_amount`` / ``invoice_date`` /
+    ``charged_eur``, plus the LLM's own ``subtotal_eur`` / ``iva_amount`` /
+    ``total_eur`` guess, which is kept only as a cross-check.
+
+    Expenses (``direction='in'``): the EUR actually charged to the card, when
+    the document states it (``charged_eur``, e.g. "Charged 44.07 EUR using 1
+    USD = 0.8813 EUR"), wins. Otherwise EUR = ``original_amount`` / the ECB
+    rate on the invoice date.
+
+    Income (``direction='out'``): resolved the same way from the ECB rate.
+    ``eur_received`` (set later, once known, via the Invoice Ledger tab) is
+    NOT read here — callers must prefer it over this function's result once
+    it is set. The ECB figure this function returns is final per decision D5
+    (art. 79.Once LIVA), not provisional, for money kept in a foreign-currency
+    account.
+
+    A missing rate is never silently left unconverted: it comes back as
+    ``fx_source="NO_RATE"`` with a populated ``fx_warning`` instead of a quiet
+    pass-through of the LLM's own number.
+    """
+    currency = (data.get("original_currency") or data.get("currency") or "EUR").upper()
+    original_amount = data.get("original_amount")
+    invoice_date_str = data.get("invoice_date")
+    llm_subtotal = data.get("subtotal_eur")
+    llm_iva = data.get("iva_amount")
+    llm_total = data.get("total_eur")
+    charged_eur = data.get("charged_eur")
+
+    if currency == "EUR" or not original_amount or not invoice_date_str:
+        # Native EUR, or nothing to convert (missing foreign amount/date) — the
+        # LLM's own figures are the only ones available.
+        return InvoiceFxResolution(
+            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
+            fx_rate_used=None, fx_rate_date=None, fx_source="NATIVE_EUR",
+            fx_stale=False, fx_cross_check_diff_pct=None, fx_warning=None,
+        )
+
+    try:
+        invoice_date = date.fromisoformat(str(invoice_date_str)[:10])
+    except ValueError:
+        warning = f"⚠️ Could not parse invoice_date {invoice_date_str!r} for FX conversion"
+        log.warning(warning)
+        return InvoiceFxResolution(
+            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
+            fx_rate_used=None, fx_rate_date=None, fx_source="INVALID_DATE",
+            fx_stale=False, fx_cross_check_diff_pct=None, fx_warning=warning,
+        )
+
+    fx_stale = False
+    if direction == "in" and charged_eur is not None:
+        total_new = round(float(charged_eur), 2)
+        fx_rate_used = round(original_amount / total_new, 6) if total_new else None
+        fx_source = "CHARGED_EUR"
+        rate_date_str = invoice_date.isoformat()
+    else:
+        info = get_rate_with_fallback_info(invoice_date, currency, db_path)
+        if info.rate is None:
+            warning = (
+                f"⚠️ No ECB rate available for {currency} on or before {invoice_date} — "
+                f"amount left unconverted; load rates for this period in the Currency tab"
+            )
+            log.warning(warning)
+            return InvoiceFxResolution(
+                subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
+                fx_rate_used=None, fx_rate_date=None, fx_source="NO_RATE",
+                fx_stale=True, fx_cross_check_diff_pct=None, fx_warning=warning,
+            )
+        total_new = round(original_amount / info.rate, 2)
+        fx_rate_used = info.rate
+        fx_source = "ECB"
+        fx_stale = info.is_stale
+        rate_date_str = info.rate_date.isoformat() if info.rate_date else None
+
+    # Rescale the LLM's subtotal/IVA split onto the resolved total, preserving
+    # whatever VAT breakdown it gave; a foreign invoice with no VAT breakdown
+    # (the common case — non-EU services) has no basis to invent one, so the
+    # whole resolved amount becomes the base.
+    if llm_total:
+        ratio = total_new / llm_total
+        subtotal_new = round((llm_subtotal or 0.0) * ratio, 2)
+        iva_new = round((llm_iva or 0.0) * ratio, 2)
+    else:
+        subtotal_new = total_new
+        iva_new = 0.0
+
+    diff_pct: Optional[float] = None
+    warning = None
+    if llm_total and total_new:
+        diff_pct = round(abs(llm_total - total_new) / total_new * 100, 2)
+        if diff_pct > 1.0:
+            warning = (
+                f"⚠️ LLM EUR estimate ({llm_total:.2f}) differs from the {fx_source} "
+                f"conversion ({total_new:.2f}) by {diff_pct:.1f}%"
+            )
+            log.warning(warning)
+
+    return InvoiceFxResolution(
+        subtotal_eur=subtotal_new, iva_amount=iva_new, total_eur=total_new,
+        fx_rate_used=fx_rate_used, fx_rate_date=rate_date_str, fx_source=fx_source,
+        fx_stale=fx_stale, fx_cross_check_diff_pct=diff_pct, fx_warning=warning,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Exchange differences (issue #93 / private decision D5): a later conversion
+# of a foreign-currency balance from activity income into EUR realises a
+# gain or loss against the EUR figure originally booked. Recorded here and
+# fed into Modelo 130 box_01_ingresos in the period of conversion.
+# ---------------------------------------------------------------------------
+
+def record_exchange_difference(
+    conversion_date: str,
+    currency: str,
+    foreign_amount: float,
+    eur_obtained: float,
+    booked_eur: float,
+    invoice_id: Optional[str] = None,
+    notes: Optional[str] = None,
+    db_path: Optional[str | Path] = None,
+) -> int:
+    """Record a foreign-currency balance conversion and its resulting gain/loss.
+
+    ``gain_loss_eur = eur_obtained - booked_eur``: positive when the
+    conversion yields more EUR than was originally booked (ECB rate at
+    accrual, or an earlier partial conversion), negative when it yields less.
+    Returns the new row's id.
+    """
+    conn = get_connection(db_path)
+    try:
+        gain_loss = round(float(eur_obtained) - float(booked_eur), 2)
+        cur = conn.execute(
+            """INSERT INTO fx_exchange_differences
+                   (invoice_id, conversion_date, currency, foreign_amount,
+                    eur_obtained, booked_eur, gain_loss_eur, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (invoice_id, conversion_date, currency.upper(), float(foreign_amount),
+             float(eur_obtained), float(booked_eur), gain_loss, notes),
+        )
+        conn.commit()
+        log.info(
+            "ℹ️ Recorded FX exchange difference: %s %.2f → %.2f EUR (booked %.2f, gain/loss %.2f)",
+            currency.upper(), foreign_amount, eur_obtained, booked_eur, gain_loss,
+        )
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_exchange_differences(
+    year: Optional[int] = None,
+    db_path: Optional[str | Path] = None,
+) -> list[dict]:
+    """List recorded exchange differences, newest first, optionally filtered by year."""
+    conn = get_connection(db_path)
+    try:
+        if year is not None:
+            rows = conn.execute(
+                """SELECT * FROM fx_exchange_differences
+                   WHERE conversion_date >= ? AND conversion_date <= ?
+                   ORDER BY conversion_date DESC""",
+                (f"{year}-01-01", f"{year}-12-31"),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM fx_exchange_differences ORDER BY conversion_date DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_exchange_difference(diff_id: int, db_path: Optional[str | Path] = None) -> None:
+    """Delete one recorded exchange difference (data-entry correction)."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute("DELETE FROM fx_exchange_differences WHERE id = ?", (diff_id,))
+        conn.commit()
     finally:
         conn.close()

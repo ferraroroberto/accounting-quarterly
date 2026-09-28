@@ -233,6 +233,10 @@ INVOICE_EDITABLE_FIELDS: tuple[str, ...] = (
     "tax_treatment", "deductible_pct_vat", "deductible_pct_irpf",
     "is_capital_asset", "asset_class", "excluded", "excluded_reason",
     "eur_received", "payment_date",
+    # FX (#93) — charged_eur is the one FX field a user may correct by hand;
+    # the rest (fx_rate_used, fx_source, ...) are derived and re-resolved on
+    # the next OCR extraction, not directly editable.
+    "charged_eur",
 )
 
 # Ledger-owned columns the OCR never produces: `upsert_invoice` only writes them
@@ -337,6 +341,16 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "vendor_vat_id_norm": "TEXT",      # normalize_vat_id(vendor_nif)
         "locked_fields": "TEXT",           # JSON list of user-edited field names
         "reviewed_at": "TEXT",
+        # FX resolution (#93): the LLM's own subtotal_eur/iva_amount/total_eur are
+        # only a cross-check — the authoritative EUR figure is resolved by
+        # src.fx_rates.resolve_invoice_amounts (ECB rate on invoice_date, or the
+        # EUR actually charged when the document states it) and written here.
+        "charged_eur": "REAL",             # EUR actually charged, when the document states it (expenses)
+        "fx_rate_used": "REAL",            # 1 EUR = fx_rate_used units of original_currency
+        "fx_rate_date": "TEXT",            # date the rate actually comes from (may differ from invoice_date)
+        "fx_source": "TEXT",               # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE
+        "fx_stale": "INTEGER NOT NULL DEFAULT 0",       # 1 if the ECB rate used was a stale fallback
+        "fx_cross_check_diff_pct": "REAL", # |LLM total - resolved total| / resolved total x 100
     }
     for col, ddl in additions.items():
         if col not in existing:
@@ -627,6 +641,22 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_ss_payments_date
                 ON social_security_payments(payment_date);
+
+            CREATE TABLE IF NOT EXISTS fx_exchange_differences (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                invoice_id      TEXT,
+                conversion_date TEXT NOT NULL,
+                currency        TEXT NOT NULL,
+                foreign_amount  REAL NOT NULL,
+                eur_obtained    REAL NOT NULL,
+                booked_eur      REAL NOT NULL,
+                gain_loss_eur   REAL NOT NULL,
+                notes           TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_fx_exchange_diff_date
+                ON fx_exchange_differences(conversion_date);
         """)
         _create_fx_rates_table(conn)
         _ensure_transactions_schema(conn)
@@ -1156,6 +1186,12 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
             "excluded_reason": data.get("excluded_reason"),
             "eur_received": data.get("eur_received"),
             "payment_date": data.get("payment_date"),
+            "charged_eur": data.get("charged_eur"),
+            "fx_rate_used": data.get("fx_rate_used"),
+            "fx_rate_date": data.get("fx_rate_date"),
+            "fx_source": data.get("fx_source"),
+            "fx_stale": 1 if data.get("fx_stale") else 0,
+            "fx_cross_check_diff_pct": data.get("fx_cross_check_diff_pct"),
         }
         update_cols = [
             c for c in values
@@ -1210,7 +1246,7 @@ def _coerce_invoice_field(field: str, value, direction: str):
             except ValueError as exc:
                 raise ValueError(f"{field} must be an ISO date (YYYY-MM-DD), got {value!r}") from exc
     elif field in ("subtotal_eur", "iva_rate", "iva_amount", "irpf_rate", "irpf_amount",
-                   "total_eur", "original_amount", "fx_rate", "eur_received"):
+                   "total_eur", "original_amount", "fx_rate", "eur_received", "charged_eur"):
         if value is not None:
             value = float(value)
     return value

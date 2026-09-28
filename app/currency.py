@@ -74,6 +74,7 @@ def render() -> None:
         ("USD", "EUR / USD", "#2D4A7A"),
         ("GBP", "EUR / GBP", "#E74C3C"),
         ("CHF", "EUR / CHF", "#27AE60"),
+        ("AUD", "EUR / AUD", "#8E44AD"),
     ]
 
     for currency, title, color in chart_configs:

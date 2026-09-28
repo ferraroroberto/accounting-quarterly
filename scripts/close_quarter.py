@@ -299,6 +299,18 @@ def cmd_report(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_fx_backfill(args: argparse.Namespace) -> None:
+    """Fetch and store ECB rates from the last stored date up to today (#93).
+
+    Idempotent — safe to rerun at every close-quarter. Uses every currency
+    seen in stored invoices/transactions, not just the hard-coded default list.
+    """
+    from src.fx_rates import backfill_to_today
+
+    stored = backfill_to_today()
+    print(f"FX backfill: stored {stored} rate entries.")
+
+
 def main() -> None:
     default_year, default_quarter = previous_quarter()
 
@@ -348,6 +360,9 @@ def main() -> None:
     p_report.add_argument("--supersede", action="store_true",
                           help="With --freeze: add a new declared version for a corrected re-send")
     p_report.set_defaults(func=cmd_report)
+
+    p_fx = sub.add_parser("fx-backfill", help="Backfill ECB FX rates up to today")
+    p_fx.set_defaults(func=cmd_fx_backfill)
 
     args = parser.parse_args()
     args.func(args)

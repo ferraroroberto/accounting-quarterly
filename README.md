@@ -215,7 +215,7 @@ The card issuing country (`charge.payment_method_details.card.country`) is extra
 
 ## Currency Conversion
 
-Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using daily exchange rates from the European Central Bank (ECB).
+Non-EUR transactions and invoices are automatically converted to EUR using daily exchange rates from the European Central Bank (ECB).
 
 **Source:** [Frankfurter API](https://www.frankfurter.app) — free, open-source, based on ECB reference rates. No API key required.
 
@@ -234,6 +234,13 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 | EUR/USD | US Dollar |
 | EUR/GBP | British Pound |
 | EUR/CHF | Swiss Franc |
+| EUR/AUD | Australian Dollar |
+
+`src.fx_rates.get_currencies_in_use()` also picks up any other currency actually seen in stored invoices or transactions, so a new one is backfilled automatically without a code change.
+
+**Auto-backfill.** `src.fx_rates.backfill_to_today()` fetches and stores rates from the last stored date up to today. It runs once at app start (`app/streamlit_app.py`) and is exposed as `close_quarter.py fx-backfill` for the quarterly close — both are cheap and idempotent, and network failures are caught and logged rather than raised, so they can't break startup.
+
+**Stale rates are flagged, not silent.** When no rate exists for the exact date, the most recent earlier rate is used as before, but if that fallback date is more than 5 days older than the date requested, the lookup is flagged `is_stale` (`src.fx_rates.get_rate_with_fallback_info`) — surfaced as a ⚠️ warning in the Invoice OCR / Invoice Ledger tabs, in the audit trail, and in the logs. A missing rate is never silently left unconverted either — it comes back flagged (`fx_source="NO_RATE"`) with an explanation, instead of a quiet pass-through of an unconverted amount.
 
 ---
 
@@ -242,9 +249,10 @@ Non-EUR transactions (USD, GBP, CHF) are automatically converted to EUR using da
 Transaction data is stored in a SQLite database (`data/accounting.db`):
 
 - **transactions** — Stripe payment records with classification and FX conversion data. The VAT columns (`vat_treatment`, `vat_base_eur`, `vat_amount_eur`) are reserved for manual overrides; they are normally NULL — VAT treatment is derived on-the-fly by the tax engine at computation time, not stored per transaction
-- **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
+- **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF, EUR/AUD, and any other currency seen in stored invoices/transactions)
 - **upload_log** — Invoice upload tracking to prevent duplicates
-- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly — plus the ledger columns described in [Invoice Ledger](#invoice-ledger) (`tax_treatment`, split business-use %, `excluded`, `locked_fields`, …)
+- **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly — plus the ledger columns described in [Invoice Ledger](#invoice-ledger) (`tax_treatment`, split business-use %, `excluded`, `locked_fields`, …) and the FX resolution columns described in [Foreign-currency invoices: EUR resolution](#foreign-currency-invoices-eur-resolution) (`charged_eur`, `fx_rate_used`, `fx_source`, `fx_stale`, …)
+- **fx_exchange_differences** — Gains/losses realised when a foreign-currency income balance booked at the ECB rate is later converted to EUR; see [Exchange rate differences](#exchange-rate-differences)
 - **social_security_payments** — Seguridad Social cuota payments imported from bank account exports (or entered manually). Deduplication key: `(payment_date, amount_eur, description)`. Refunds are stored as negative amounts. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
@@ -287,6 +295,7 @@ The dashboard includes a connection tester and permission checker under **Config
 .venv/Scripts/python.exe scripts/close_quarter.py backfill-emails [--dry-run]           # fill email/country from saved raw charges
 .venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q          # regenerate the Excel report
 .venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q --freeze # ...and freeze it as declared
+.venv/Scripts/python.exe scripts/close_quarter.py fx-backfill                          # backfill ECB FX rates to today
 ```
 
 - **`sweep`** diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
@@ -295,6 +304,7 @@ The dashboard includes a connection tester and permission checker under **Config
 - **`backfill-emails`** fills empty stored `email_meta` / `billing_country` from each row's already-saved raw Stripe charge JSON (`raw_source_json`) — no Stripe API call, and a non-empty stored value is never overwritten. Use it once after upgrading to pick up `billing_details.email` / `billing_details.address.country` for rows fetched before that fallback existed. `--dry-run` reports counts without writing.
 - **`report`** first reclassifies the quarter's stored rows (so a stale row can never be exported), then writes the Excel report. The exporter also refuses — `StaleClassificationError` — to write a non-EUR charge whose geography came from a EUR rule. With **`--freeze`** the written file becomes the quarter's immutable declared report (`declared_reports`); freezing an already-declared quarter needs `--supersede` (a new version, for a corrected re-send). Once a quarter is declared, a plain `report` writes `Stripe_Report_Q<Q>_<Y>_live.xlsx` instead of overwriting the sent file, and prints how the live rows differ from the declared ones.
 - **`add-override`** appends to `classification_rules.json`'s `geographic_overrides` / `email_overrides` — the same mechanism as the Transaction Browser tab's "Add Geographic Override" form.
+- **`fx-backfill`** fetches and stores ECB rates from the last stored date up to today for every currency seen in stored invoices/transactions (`src.fx_rates.backfill_to_today`) — idempotent, safe to rerun every close.
 - All output lives under `tmp/close_quarter/` (git-ignored) — nothing is uploaded or sent anywhere by this script.
 
 ---
@@ -437,7 +447,7 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 |-------|--------|-------------|
 | **Modelo 303** box_29 | Expense invoices (`direction='in'`) | IVA soportado deducible (cuota), weighted by `deductible_pct_vat` |
 | **Modelo 303** box_01 | Income invoices (`IVA_ES_21`) | Base imponible devengado |
-| **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD |
+| **Modelo 130** box_01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD — `eur_received` when set, otherwise the stored (ECB-resolved) `subtotal_eur`, plus `fx_exchange_differences.gain_loss_eur` recorded in the period |
 | **Modelo 130** box_02 | Expense invoices (`direction='in'`, not `is_capital_asset`) | Subtotal gastos (weighted by `deductible_pct_irpf`) YTD |
 | **Modelo 130** box_02 | `fixed_assets` table | Depreciation YTD (see [Fixed Assets](#fixed-assets)) |
 | **Modelo 130** box_02 | `social_security_payments` table | SS cuotas YTD (fully deductible) |
@@ -671,6 +681,37 @@ All fields required for AEAT compliance (Libro de IVA, SII, Modelo 303/347/349):
 | `billing_period_start`, `billing_period_end` | Subscription billing period |
 | `payment_method`, `category`, `notes` | Classification and flags |
 
+### Foreign-currency invoices: EUR resolution
+
+The LLM's own `subtotal_eur`/`iva_amount`/`total_eur` guess for a foreign-currency
+document is used only as a **cross-check** — the authoritative EUR figure comes
+from `src.fx_rates.resolve_invoice_amounts`, called right after extraction
+(`app/invoice_ocr_tab._extract_and_save`), in this order:
+
+1. **`charged_eur`** — when the document itself states the EUR actually charged
+   to the card (e.g. *"Charged 44.07 EUR using 1 USD = 0.8813 EUR"*), that wins.
+   The OCR prompt extracts it into a new `charged_eur` field, left `null` when
+   the document doesn't state it.
+2. Otherwise, **the ECB rate on `invoice_date`** — `original_amount` divided by
+   the daily rate from `fx_rates`, with the fallback/staleness behaviour above.
+
+The resolved rate, its date and its source are stored per invoice
+(`fx_rate_used`, `fx_rate_date`, `fx_source` ∈ `NATIVE_EUR` / `CHARGED_EUR` /
+`ECB` / `NO_RATE` / `INVALID_DATE`, `fx_stale`), and the LLM's own estimate is
+compared against the resolved figure: a difference over 1% is stored as
+`fx_cross_check_diff_pct` and surfaced as a ⚠️ warning in the Invoice OCR and
+Invoice Ledger tabs.
+
+**Income invoices (`direction='out'`):** the same ECB resolution applies at
+extraction time, and it is **final**, not provisional — per art. 79.Once LIVA,
+income kept in a foreign-currency account (never converted) is booked at the
+ECB rate on the invoice date. If the money **was** actually converted on
+receipt, set `eur_received` in the Invoice Ledger tab once it's known; it then
+wins over the stored ECB figure in every tax computation that reads invoice
+income (Modelo 130 box 01, Modelo 303's export base). See
+[Exchange rate differences](#exchange-rate-differences) for what happens when
+a foreign-currency balance booked at the ECB rate is converted later.
+
 ### All Records tab features
 
 - **Date scanned** column shows when each invoice was extracted.
@@ -731,6 +772,8 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 | `eur_received`, `payment_date` | EUR actually received for foreign-currency income, and when. |
 | `vendor_vat_id_norm` | `vendor_nif` normalised for matching: upper-case, separators stripped, Spanish ids `ES`-prefixed. |
 | `locked_fields`, `reviewed_at` | User-edited fields (never overwritten by re-OCR) and last review time. |
+| `charged_eur` | EUR actually charged to the card, when the document states it (expenses) — wins over the ECB rate. The one FX field you may correct by hand. |
+| `fx_rate_used`, `fx_rate_date`, `fx_source`, `fx_stale`, `fx_cross_check_diff_pct` | FX resolution metadata (#93) — see [Foreign-currency invoices: EUR resolution](#foreign-currency-invoices-eur-resolution). Derived; re-resolved on the next OCR extraction, not directly editable. |
 
 **Backfill of `tax_treatment`** from the legacy `vat_treatment` (still stored and kept in sync when you edit the treatment). The mapping preserves what the engine did with the legacy value:
 
@@ -748,6 +791,25 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 | out | `IVA_EXEMPT` + other / unknown region | left empty — review it in the Ledger tab |
 
 The tax engine currently uses `excluded`, `invoice_date` and the split business-use percentages; the per-treatment Modelo 303 box model (reverse charge, capital goods, pro-rata) is a later step.
+
+### Exchange rate differences
+
+A foreign-currency income invoice with no `eur_received` is booked at the ECB
+rate on the invoice date — final, not provisional (see above). If that
+foreign-currency balance is **later converted** to EUR, the conversion
+realises a gain or loss against the EUR figure originally booked, which must
+be recorded as activity income (or a loss) in the quarter of conversion, not
+the invoice's own quarter.
+
+The Invoice Ledger tab's **income** view has an "Exchange rate differences"
+form for this: pick the invoice (optional), the conversion date, the
+foreign-currency amount converted, and the EUR actually obtained. It computes
+`gain_loss_eur = eur_obtained − booked_eur` and stores it in the
+`fx_exchange_differences` table (`src.fx_rates.record_exchange_difference` /
+`get_exchange_differences`). Every recorded gain/loss dated within a quarter's
+year-to-date window is added to that quarter's Modelo 130 box 01 income
+(`src.tax_engine.compute_modelo_130`) — on top of, not instead of, the
+invoice's own booked income, which keeps counting in its own quarter as usual.
 
 ---
 

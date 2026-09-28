@@ -17,6 +17,7 @@ from src.database import (
     get_invoices,
     parse_locked_fields,
 )
+from src.fx_rates import STALE_TOLERANCE_DAYS
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
 from src.vendor_registry import load_registry, upsert_invoice_with_registry
@@ -45,10 +46,19 @@ def _needs_extraction(filename: str, direction: str) -> bool:
 
 def _extract_and_save(filename: str, direction: str) -> dict:
     """Run extraction via the configured OCR backend and persist to DB. Returns the extracted data dict."""
+    from src.fx_rates import resolve_invoice_amounts
     from src.invoice_ocr import extract_invoice
 
     pdf_path = resolve_invoice_dir(direction) / filename
     data = extract_invoice(pdf_path)
+
+    # FX (#93): the LLM's own subtotal_eur/iva_amount/total_eur are only a
+    # cross-check for a foreign-currency document — the authoritative EUR
+    # figures come from the ECB rate on invoice_date, or the EUR actually
+    # charged when the document states it (charged_eur wins for expenses).
+    fx = resolve_invoice_amounts(direction, data)
+    if fx.fx_warning:
+        log.warning("⚠️ FX resolution for %s: %s", filename, fx.fx_warning)
 
     record = {
         "filename": filename,
@@ -63,16 +73,22 @@ def _extract_and_save(filename: str, direction: str) -> dict:
         "client_nif": data.get("client_nif"),
         "client_address": data.get("client_address"),
         "description": data.get("description"),
-        "subtotal_eur": data.get("subtotal_eur"),
+        "subtotal_eur": fx.subtotal_eur,
         "iva_rate": data.get("iva_rate"),
-        "iva_amount": data.get("iva_amount"),
+        "iva_amount": fx.iva_amount,
         "irpf_rate": data.get("irpf_rate"),
         "irpf_amount": data.get("irpf_amount"),
-        "total_eur": data.get("total_eur"),
+        "total_eur": fx.total_eur,
         "currency": data.get("currency", "EUR"),
         "original_currency": data.get("original_currency"),
         "original_amount": data.get("original_amount"),
         "fx_rate": data.get("fx_rate"),
+        "charged_eur": data.get("charged_eur"),
+        "fx_rate_used": fx.fx_rate_used,
+        "fx_rate_date": fx.fx_rate_date,
+        "fx_source": fx.fx_source,
+        "fx_stale": fx.fx_stale,
+        "fx_cross_check_diff_pct": fx.fx_cross_check_diff_pct,
         "payment_method": data.get("payment_method"),
         "category": data.get("category"),
         "notes": data.get("notes"),
@@ -215,6 +231,19 @@ def _render_invoice_fields(rec: dict) -> None:
         st.text(f"Total:        {_fmt(rec.get('total_eur'))} EUR")
         if rec.get("original_currency") and rec.get("original_currency") != "EUR":
             st.text(f"Original:     {_fmt(rec.get('original_amount'))} {rec.get('original_currency')}")
+            fx_source = rec.get("fx_source")
+            if fx_source == "NO_RATE":
+                st.error("⚠️ No ECB rate available for this currency/date — amount NOT converted. "
+                          "Load rates for this period in the Currency tab.")
+            elif fx_source:
+                rate_txt = (f" · rate 1 EUR = {rec['fx_rate_used']:.4f} on {rec.get('fx_rate_date') or '?'}"
+                            if rec.get("fx_rate_used") else "")
+                st.caption(f"FX source: {fx_source}{rate_txt}")
+                if rec.get("fx_stale"):
+                    st.warning(f"⚠️ Stale FX rate (fallback more than {STALE_TOLERANCE_DAYS} days from the invoice date).")
+                diff_pct = rec.get("fx_cross_check_diff_pct")
+                if diff_pct is not None and diff_pct > 1.0:
+                    st.warning(f"⚠️ LLM's own EUR estimate differs from the {fx_source} conversion by {diff_pct:.1f}%.")
         st.markdown("**Tax treatment**")
         if rec.get("direction") == "in":
             match = load_registry().match_invoice(rec)

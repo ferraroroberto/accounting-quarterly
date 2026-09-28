@@ -198,7 +198,7 @@ def _load_income_invoices_range(
         """SELECT id, invoice_date AS tx_date,
                   subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
                   total_eur, category, geo_region, vat_treatment,
-                  client_nif, client_name, description
+                  client_nif, client_name, description, eur_received
            FROM invoices
            WHERE direction = 'out'
              AND COALESCE(excluded, 0) = 0
@@ -224,6 +224,20 @@ def _load_income_invoices_for_quarter(
     """Income invoices (direction='out') for the quarter only."""
     start, end = _invoice_date_range(year, quarter)
     return _load_income_invoices_range(start, end, conn)
+
+
+def _income_invoice_eur(inv: dict) -> float:
+    """Effective EUR value of an income (direction='out') invoice (issue #93).
+
+    ``eur_received`` wins when set — the money was actually converted on
+    receipt. Otherwise the stored ``subtotal_eur`` already holds the ECB rate
+    at the invoice date (resolved at OCR time by
+    ``src.fx_rates.resolve_invoice_amounts``), which is final per decision D5
+    (art. 79.Once LIVA) for income kept in a foreign-currency account — not a
+    provisional figure to be revisited later.
+    """
+    eur_received = inv.get("eur_received")
+    return float(eur_received) if eur_received is not None else (inv.get("subtotal_eur") or 0.0)
 
 
 def _net_amount(row: dict) -> float:
@@ -415,7 +429,7 @@ def compute_modelo_303(
     n_inv_es21 = n_inv_eu_b2b = n_inv_export = 0
     for inv in income_invs_q:
         treatment = inv.get("vat_treatment") or "IVA_EXEMPT"
-        base = inv.get("subtotal_eur") or 0.0
+        base = _income_invoice_eur(inv)
         vat = inv.get("iva_amount") or 0.0
         _rec = {
             "source": "invoice_out",
@@ -552,10 +566,43 @@ def compute_modelo_130(
 
     # Non-Stripe income: manually-issued invoices (direction='out')
     income_invs = _load_income_invoices_ytd(year, quarter, db_conn)
-    inv_income = sum((inv.get("subtotal_eur") or 0.0) for inv in income_invs)
+    inv_income = sum(_income_invoice_eur(inv) for inv in income_invs)
     n_income_invs = len(income_invs)
 
-    result.box_01_ingresos = round(stripe_income + inv_income, 2)
+    # YTD window (Q1 through the end of the given quarter) — shared by the
+    # exchange-differences and social-security-cuota queries below.
+    month_end = quarter * 3
+    last_day = calendar.monthrange(year, month_end)[1]
+    ytd_start = f"{year}-01-01"
+    ytd_end = f"{year}-{month_end:02d}-{last_day:02d}"
+
+    # Exchange differences (#93 / D5): a later conversion of a foreign-currency
+    # balance from activity income into EUR realises a gain/loss against the
+    # EUR figure originally booked. Fed into income in the conversion period.
+    _exch_rows = db_conn.execute(
+        """SELECT id, invoice_id, conversion_date, currency, foreign_amount,
+                  eur_obtained, booked_eur, gain_loss_eur, notes
+           FROM fx_exchange_differences
+           WHERE conversion_date >= ? AND conversion_date <= ?
+           ORDER BY conversion_date""",
+        (ytd_start, ytd_end),
+    ).fetchall()
+    exch_diff_total = round(sum(float(r["gain_loss_eur"]) for r in _exch_rows), 2)
+    exch_records = [
+        {
+            "source": "fx_exchange_difference",
+            "date": r["conversion_date"],
+            "currency": r["currency"],
+            "foreign_amount": round(float(r["foreign_amount"]), 2),
+            "eur_obtained": round(float(r["eur_obtained"]), 2),
+            "booked_eur": round(float(r["booked_eur"]), 2),
+            "gain_loss_eur": round(float(r["gain_loss_eur"]), 2),
+            "notes": r["notes"] or "",
+        }
+        for r in _exch_rows
+    ]
+
+    result.box_01_ingresos = round(stripe_income + inv_income + exch_diff_total, 2)
 
     # Expenses from invoices (direction='in'), YTD
     expense_invs_ytd = _load_expense_invoices_ytd(year, quarter, db_conn)
@@ -581,16 +628,12 @@ def compute_modelo_130(
     n_expense_invs = len(expense_invs_ytd)
 
     # Social Security cuotas paid via bank account, YTD — fully deductible (Art. 30 LIRPF)
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    ss_start = f"{year}-01-01"
-    ss_end = f"{year}-{month_end:02d}-{last_day:02d}"
     _ss_rows = db_conn.execute(
         """SELECT id, payment_date, amount_eur, description
            FROM social_security_payments
            WHERE payment_date >= ? AND payment_date <= ?
            ORDER BY payment_date""",
-        (ss_start, ss_end),
+        (ytd_start, ytd_end),
     ).fetchall()
     ss_gastos = round(sum(float(r["amount_eur"]) for r in _ss_rows), 2)
     ss_records = [
@@ -683,6 +726,8 @@ def compute_modelo_130(
             "client": str(inv.get("client_name") or inv.get("client_nif") or "")[:40],
             "description": str(inv.get("description") or "")[:50],
             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+            "eur_received": (round(inv["eur_received"], 2) if inv.get("eur_received") is not None else None),
+            "eur_used": round(_income_invoice_eur(inv), 2),
             "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
             "vat_treatment": inv.get("vat_treatment") or "",
         }
@@ -706,13 +751,16 @@ def compute_modelo_130(
 
     result.audit = [
         _a("box_01_ingresos",
-           "Ingresos computables acumulados (Q1–Qn) — Stripe + facturas emitidas",
-           f"SUM(vat_base_eur) FROM transactions YTD + SUM(subtotal_eur) FROM invoices WHERE direction='out' YTD",
+           "Ingresos computables acumulados (Q1–Qn) — Stripe + facturas emitidas + diferencias de cambio",
+           f"SUM(vat_base_eur) FROM transactions YTD "
+           f"+ SUM(COALESCE(eur_received, subtotal_eur)) FROM invoices WHERE direction='out' YTD "
+           f"+ SUM(gain_loss_eur) FROM fx_exchange_differences YTD",
            result.box_01_ingresos,
            stripe_income=round(stripe_income, 2),
            inv_income=round(inv_income, 2),
+           exchange_diff_total=exch_diff_total,
            ytd_through_quarter=quarter,
-           records=stripe_income_records + income_inv_records),
+           records=stripe_income_records + income_inv_records + exch_records),
         _a("box_02_gastos",
            "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + SS cuotas + amortizaciones + entradas manuales",
            f"SUM(subtotal_eur * deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 "

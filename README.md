@@ -207,6 +207,23 @@ The default region for each EUR condition is configurable in the Geographic Rule
 
 **Foreign-customer warning.** A EUR charge that falls through to the `eur_default` rule is flagged with ⚠ when the customer looks non-Spanish: a card or billing-address country other than `ES`, or an email (Stripe customer email, billing email, or one written in the description) on a country-code domain other than `.es` (generic-use ccTLDs such as `.io`, `.co`, `.me` are ignored). The flag shows in `close_quarter.py stripe-fetch`, the Transaction Browser (**Review** column) and the Quarter Report. Fix it with a geographic override.
 
+### Customer VAT ID overrides (EU B2B vs. B2C)
+
+For an EU (non-Spain) sale, whether it is booked as B2B (reverse charge) or B2C (Spanish 21% / OSS) depends on whether the customer's VAT id is known — not on the activity (see "VAT treatment classification" below). The VAT id is looked up the same way as a geographic override, in `classification_rules.json`'s `customer_vat_ids`:
+
+```json
+"customer_vat_ids": {
+  "email_vat_ids": {
+    "client@example.com": "DE123456789"
+  },
+  "name_vat_ids": {
+    "client name as it appears in description": "DE123456789"
+  }
+}
+```
+
+Editable in the same **Configuration → Geographic Rules** tab as the geographic overrides, under **Customer VAT IDs (B2B)**. An email match wins, then a name/description match. As a read-only fallback, a Stripe `customer.tax_ids` entry already present in the stored raw charge is used if the override lookup finds nothing (currently a no-op — the Stripe fetch does not request `tax_ids`). VIES validity is **not** checked; verify the id yourself before relying on the reverse charge.
+
 ### Card issuing country
 
 The card issuing country (`charge.payment_method_details.card.country`) is extracted from the Stripe API automatically. It is the first signal used to classify a non-EUR charge's geographic region (see above), and also improves the foreign-customer warning on EUR charges.
@@ -382,17 +399,21 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 
 ### VAT treatment classification
 
-VAT treatment is derived on-the-fly by the tax engine using each transaction's activity × geography — it is not stored per transaction. The mapping is:
+VAT treatment is derived on-the-fly by the tax engine using each transaction's activity × geography (and, for EU sales, the customer's VAT id) — it is not stored per transaction. The mapping is:
 
-| Activity | Geography | Treatment | IVA |
-|----------|-----------|-----------|-----|
-| Any | OUTSIDE_EU | `IVA_EXPORT` | 0% |
-| Any | SPAIN | `IVA_ES_21` | 21% |
-| COACHING / ILLUSTRATIONS | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% (reverse charge) |
-| NEWSLETTER | EU_NOT_SPAIN | `EU_B2C_ES21` (default, not OSS-registered) | 21% Spanish IVA, Modelo 303 box 01/03 |
-| NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` (only when `oss_registered: true`) | Buyer country rate, OSS return |
+| Activity | Geography | Customer VAT id | Treatment | IVA |
+|----------|-----------|-----------------|-----------|-----|
+| Any | OUTSIDE_EU | — | `IVA_EXPORT` | 0% |
+| Any | SPAIN | — | `IVA_ES_21` | 21% |
+| Any | EU_NOT_SPAIN | Known | `IVA_EU_B2B` | 0% (reverse charge) |
+| Any | EU_NOT_SPAIN | Unknown | `EU_B2C_ES21` (default, not OSS-registered) | 21% Spanish IVA, Modelo 303 box 01/03 |
+| Any | EU_NOT_SPAIN | Unknown | `OSS_EU` (only when `oss_registered: true`) | Buyer country rate, OSS return |
 
-**EU consumers below the threshold.** Under art. 73 LIVA, electronically supplied services to consumers in other EU countries stay located in Spain — Spanish 21% IVA — while the year's and the previous year's EU B2C sales are at or below €10,000 (ex-VAT) and you have not opted into OSS. That is `EU_B2C_ES21`. If `default_vat_treatment_eu_newsletter` says `OSS_EU` but `oss_registered` is not true, the engine uses `EU_B2C_ES21` (there is no OSS return to declare it on). The **Tax Obligations → EU B2C / OSS** tab tracks the threshold and a warning banner appears at 80%.
+**B2B vs. B2C follows the customer's status, not the activity** (accounting-quarterly#113 — art. 69/70 LIVA). A sale to an EU business with a valid VAT id is reverse-charged (`IVA_EU_B2B`, Modelo 349 key S); a sale to an EU consumer is taxed in Spain below the €10,000 threshold. The VAT id comes from **Configuration → Geographic Rules → Customer VAT IDs** (an email or name/description override, mirroring the geographic overrides — see "Customer VAT ID overrides" below) or, as a read-only fallback, a Stripe `customer.tax_ids` entry already present in the stored raw charge (not currently requested by the Stripe fetch, so this fallback is a no-op on today's data). **VIES validation of the id is out of scope** — the app trusts whatever VAT id is on file; verify it yourself before relying on the reverse charge.
+
+> **Behaviour change (accounting-quarterly#113):** before this, COACHING and ILLUSTRATIONS EU sales defaulted to `IVA_EU_B2B` regardless of whether the customer had a VAT id on file. They now default to `EU_B2C_ES21` (21% Spanish IVA) unless a VAT id is on record — run `close_quarter.py reclassify --dry-run` after upgrading to see which stored rows this moves.
+
+**EU consumers below the threshold.** Under art. 73 LIVA, electronically supplied services to consumers in other EU countries stay located in Spain — Spanish 21% IVA — while the year's and the previous year's EU B2C sales are at or below €10,000 (ex-VAT) and you have not opted into OSS. That is `EU_B2C_ES21`. If `default_vat_treatment_eu_<activity>` says `OSS_EU` but `oss_registered` is not true, the engine uses `EU_B2C_ES21` (there is no OSS return to declare it on). The **Tax Obligations → EU B2C / OSS** tab tracks the threshold and a warning banner appears at 80%.
 
 ### VAT-inclusive pricing (Stripe amounts)
 
@@ -425,8 +446,9 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
     "vat_registered": true,
     "oss_registered": false,
     "vat_proration_percentage": 100,
-    "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
-    "default_vat_treatment_eu_newsletter": "EU_B2C_ES21"
+    "default_vat_treatment_eu_coaching": "EU_B2C_ES21",
+    "default_vat_treatment_eu_newsletter": "EU_B2C_ES21",
+    "default_vat_treatment_eu_illustrations": "EU_B2C_ES21"
   }
 }
 ```
@@ -439,7 +461,7 @@ Every key above drives a computation:
 | `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
 | `oss_registered` | Default `false` (OSS is opt-in, Modelo 035). Unless `true`, no OSS return is generated (an audit note records why) and EU B2C sales are `EU_B2C_ES21`. |
 | `vat_proration_percentage` | Prorrata general applied to deducible IVA (Modelo 303 casilla 28/29). `100` = fully deductible. |
-| `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` | Override the EU (`EU_NOT_SPAIN`) VAT treatment per activity. Defaults: `IVA_EU_B2B` for coaching; `EU_B2C_ES21` for newsletter (`OSS_EU` when OSS-registered). |
+| `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` / `default_vat_treatment_eu_illustrations` | Pick the EU B2C sub-treatment (`EU_B2C_ES21` or `OSS_EU`) per activity for a sale **without** a known customer VAT id. Default `EU_B2C_ES21` for every activity. No longer selects B2B: since #113, `IVA_EU_B2B` only applies when the customer has a VAT id on file (see "VAT treatment classification" above) — a legacy `IVA_EU_B2B` value here is accepted but ignored. |
 
 ### Invoice data in tax calculations
 

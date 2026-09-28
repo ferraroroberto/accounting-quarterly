@@ -23,30 +23,39 @@ from src.rules_engine import load_rules
 
 log = get_logger(__name__)
 
-_CLASSIFICATION_FIELDS = ("activity_type", "geo_region", "classification_rule", "geo_rule")
+_CLASSIFICATION_FIELDS = (
+    "activity_type", "geo_region", "classification_rule", "geo_rule", "buyer_vat_id",
+)
 _PAYMENT_FIELDS = frozenset(Payment.model_fields)
 
 
 @dataclass(frozen=True)
 class ClassificationChange:
-    """One stored row whose classification differs from the current rules."""
+    """One stored row whose classification differs from the current rules.
+
+    ``buyer_vat_id`` (the customer's EU VAT id, accounting-quarterly#113) is
+    included: a newly-matched or removed VAT-id override changes the derived
+    ``vat_treatment`` (B2B vs. B2C) even when activity/geo don't change, so it
+    must count as a classification change too.
+    """
     id: str
     created_date: datetime
     currency: str
-    old: tuple[str, str, str, str]  # (activity_type, geo_region, classification_rule, geo_rule)
-    new: tuple[str, str, str, str]
+    old: tuple[str, str, str, str, str]  # (activity_type, geo_region, classification_rule, geo_rule, buyer_vat_id)
+    new: tuple[str, str, str, str, str]
 
     @property
     def quarter_key(self) -> tuple[int, int]:
         return self.created_date.year, (self.created_date.month - 1) // 3 + 1
 
     def describe(self) -> str:
-        old_act, old_geo, _, old_geo_rule = self.old
-        new_act, new_geo, _, new_geo_rule = self.new
+        old_act, old_geo, _, old_geo_rule, old_vat_id = self.old
+        new_act, new_geo, _, new_geo_rule, new_vat_id = self.new
+        vat_id_note = f" | VAT id {old_vat_id or '-'} -> {new_vat_id or '-'}" if old_vat_id != new_vat_id else ""
         return (
             f"{self.created_date:%Y-%m-%d} {self.id} [{self.currency.upper()}] "
             f"{old_act}/{old_geo} ({old_geo_rule or '-'}) -> "
-            f"{new_act}/{new_geo} ({new_geo_rule or '-'})"
+            f"{new_act}/{new_geo} ({new_geo_rule or '-'}){vat_id_note}"
         )
 
 
@@ -64,7 +73,7 @@ class ReclassifyResult:
         return dict(sorted(counts.items()))
 
 
-def _classification(p: ClassifiedPayment) -> tuple[str, str, str, str]:
+def _classification(p: ClassifiedPayment) -> tuple[str, str, str, str, str]:
     return tuple(getattr(p, f) or "" for f in _CLASSIFICATION_FIELDS)  # type: ignore[return-value]
 
 

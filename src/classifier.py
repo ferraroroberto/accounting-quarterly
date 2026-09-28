@@ -233,8 +233,95 @@ def eur_default_foreign_warning(payment: ClassifiedPayment) -> Optional[str]:
     return f"EUR charge classified {payment.geo_region} by eur_default, but {hint}"
 
 
+def _match_vat_id_override(
+    description: Optional[str],
+    email_meta: Optional[str],
+    vat_id_overrides: dict,
+) -> Optional[str]:
+    """Try to match a per-customer VAT id override from email or description.
+
+    Mirrors :func:`_match_geo_override`'s precedence: an email match wins,
+    then a name/description match, then the name overrides checked against
+    the email too (a client sometimes typed as their own email domain).
+    """
+    email_ov = vat_id_overrides.get("email_vat_ids", {})
+    name_ov = vat_id_overrides.get("name_vat_ids", {})
+    desc_lower = (description or "").lower()
+
+    if email_meta:
+        email_lower = email_meta.lower()
+        for key, vat_id in email_ov.items():
+            if key.lower() in email_lower:
+                return vat_id
+
+    for key, vat_id in name_ov.items():
+        if key.lower() in desc_lower:
+            return vat_id
+
+    if email_meta:
+        email_lower = email_meta.lower()
+        for key, vat_id in name_ov.items():
+            if key.lower() in email_lower:
+                return vat_id
+
+    return None
+
+
+def _vat_id_from_raw_customer(payment: Payment) -> Optional[str]:
+    """Read-only fallback: a Stripe ``customer.tax_ids`` VAT id already present
+    in the stored raw charge JSON.
+
+    ``src.stripe_client.fetch_charges`` does not currently expand
+    ``data.customer.tax_ids``, so this is a no-op for data fetched today —
+    kept so the id is picked up automatically if that expand is ever added,
+    or for raw sources populated by another path. Returns the first tax id's
+    ``value`` (e.g. ``"DE123456789"``), or ``None``.
+    """
+    raw = payment.raw_source or {}
+    customer = raw.get("customer")
+    if not isinstance(customer, dict):
+        return None
+    tax_ids = customer.get("tax_ids")
+    if isinstance(tax_ids, dict):
+        entries = tax_ids.get("data")
+    elif isinstance(tax_ids, list):
+        entries = tax_ids
+    else:
+        entries = None
+    for entry in entries or []:
+        if isinstance(entry, dict) and entry.get("value"):
+            return str(entry["value"]).strip()
+    return None
+
+
+def customer_vat_id(payment: Payment, rules: Optional[dict] = None) -> Optional[str]:
+    """Return the buyer's EU VAT id for a payment, or ``None`` when unknown.
+
+    Determines B2B vs. B2C for EU (non-Spain) sales (accounting-quarterly#113):
+    a sale to a customer with a known VAT id is business-to-business
+    (reverse charge, Modelo 349 key S); otherwise it is treated as a
+    consumer sale. Looked up in order:
+
+    1. A per-customer override in ``classification_rules.json``'s
+       ``customer_vat_ids`` (email match first, then name/description match —
+       see :func:`_match_vat_id_override`).
+    2. A Stripe ``customer.tax_ids`` entry already present in the stored raw
+       charge JSON (:func:`_vat_id_from_raw_customer`) — a read-only
+       fallback, since the id is not requested by the Stripe fetch today.
+
+    VIES validity of the id is not checked — out of scope for #113.
+    """
+    rules = rules or load_rules()
+    override = _match_vat_id_override(
+        payment.description, payment.email_meta, rules.get("customer_vat_ids", {})
+    )
+    if override:
+        return override
+    return _vat_id_from_raw_customer(payment)
+
+
 def classify_payment(payment: Payment, rules: Optional[dict] = None) -> ClassifiedPayment:
-    """Apply full classification (activity + geography) to a Payment."""
+    """Apply full classification (activity + geography + buyer VAT id) to a Payment."""
     rules = rules or load_rules()
 
     activity, act_rule = classify_activity(
@@ -243,6 +330,7 @@ def classify_payment(payment: Payment, rules: Optional[dict] = None) -> Classifi
         rules,
     )
     geo, geo_rule = classify_geography(payment, rules, activity_type=activity)
+    buyer_vat_id = customer_vat_id(payment, rules)
 
     classified = ClassifiedPayment(
         **payment.model_dump(),
@@ -250,6 +338,7 @@ def classify_payment(payment: Payment, rules: Optional[dict] = None) -> Classifi
         geo_region=geo,
         classification_rule=act_rule,
         geo_rule=geo_rule,
+        buyer_vat_id=buyer_vat_id,
     )
 
     if activity == "UNKNOWN":

@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 
 from src.database import get_invoice_stats, get_latest_stripe_sync_at, get_transaction_count_db, init_db
-from src.fx_rates import get_latest_fx_sync_at, get_rate_count, init_fx_table
+from src.fx_rates import backfill_to_today, get_latest_fx_sync_at, get_rate_count, init_fx_table
 from src.social_security import get_ss_count
 
 
@@ -22,6 +22,10 @@ from src.social_security import get_ss_count
 def _init_app() -> None:
     init_db()
     init_fx_table()
+    # FX rates auto-backfill to today (#93) — cheap, idempotent, and never
+    # raises (network failures are caught and logged inside the function), so
+    # it can't break app startup when offline.
+    backfill_to_today()
 
 
 _init_app()

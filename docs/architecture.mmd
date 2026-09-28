@@ -44,23 +44,23 @@ flowchart TB
   end
 
   subgraph storage["data/accounting.db (SQLite)"]
-    DBFILE["transactions · fx_rates · invoices ·\nsocial_security_payments · quarterly_tax_entries ·\ntax_computation_snapshots · tax_audit_log ·\ndeclared_reports · declared_report_lines ·\nfiled_returns · filed_349_operators ·\nfixed_assets · fixed_asset_vat_usage"]
+    DBFILE["transactions · fx_rates · fx_exchange_differences · invoices ·\nsocial_security_payments · quarterly_tax_entries ·\ntax_computation_snapshots · tax_audit_log ·\ndeclared_reports · declared_report_lines ·\nfiled_returns · filed_349_operators ·\nfixed_assets · fixed_asset_vat_usage"]
   end
 
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
     LOADER["data_loader.py"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
-    INVTABS["invoice_upload · invoice_ocr_tab · invoice_ledger ·\ninvoice_dedupe_tab · invoice_explorer · vendor_registry_tab ·\nfixed_assets_tab"]
+    INVTABS["invoice_upload · invoice_ocr_tab (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe_tab · invoice_explorer · vendor_registry_tab ·\nfixed_assets_tab"]
     SSTAB["social_security_tab"]
     TAXTABS["tax_obligations · tax_validation · tax_audit"]
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]
-    CLOSEQ["close_quarter.py\ninvoice sweep + Stripe fetch + reclassify +\nExcel report (+ freeze)\n(driven by /close-quarter skill, outputs to tmp/, git-ignored)"]
+    CLOSEQ["close_quarter.py\ninvoice sweep + Stripe fetch + reclassify + FX backfill +\nExcel report (+ freeze)\n(driven by /close-quarter skill, outputs to tmp/, git-ignored)"]
   end
 
   STRIPE --> STRIPECLIENT
@@ -98,6 +98,7 @@ flowchart TB
   REPORTTABS --> AGGEXPORT
   INVTABS --> OCR
   INVTABS --> VENDORS
+  INVTABS --> FX
   INVTABS --> ACCCLIENT
   INVTABS --> DEDUPE
   INVTABS --> FIXEDASSETS
@@ -114,6 +115,7 @@ flowchart TB
   CLOSEQ --> CLASSIFIER
   CLOSEQ --> LOADER
   CLOSEQ --> DB
+  CLOSEQ --> FX
   CLOSEQ --> AGGEXPORT
   CLOSEQ --> RECLASSIFY
   CLOSEQ --> DECLARED

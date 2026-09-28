@@ -299,6 +299,41 @@ def cmd_report(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_fx_backfill(args: argparse.Namespace) -> None:
+    """Fetch and store ECB rates from the last stored date up to today (#93).
+
+    Idempotent — safe to rerun at every close-quarter. Uses every currency
+    seen in stored invoices/transactions, not just the hard-coded default list.
+    """
+    from src.fx_rates import backfill_to_today
+
+    stored = backfill_to_today()
+    print(f"FX backfill: stored {stored} rate entries.")
+
+
+def cmd_fx_recompute(args: argparse.Namespace) -> None:
+    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate (#93 follow-up).
+
+    Invoices stored before the FX resolver existed (or before its most recent
+    fix) still carry whatever EUR figure the LLM guessed. Defaults to a dry
+    run — pass nothing written until you add `--apply`.
+    """
+    from src.fx_rates import recompute_stored_invoice_fx
+
+    result = recompute_stored_invoice_fx(dry_run=args.dry_run, since=args.since)
+    mode = "DRY RUN — nothing written" if result.dry_run else "APPLIED"
+    print(f"FX recompute ({mode}): scanned {result.scanned}, changed {result.changed}, "
+          f"stale {result.stale}, cross-check >1% {result.cross_check_flagged}, "
+          f"locked (skipped) {result.locked_skipped}.")
+    for row in result.rows:
+        if row.locked_skipped:
+            print(f"  SKIP (locked): {row.filename} ({row.direction}, {row.currency})")
+        else:
+            print(f"  {row.filename} ({row.direction}, {row.currency}): "
+                  f"{row.old_total_eur} -> {row.new_total_eur} EUR [{row.fx_source}]"
+                  f"{' STALE' if row.fx_stale else ''}")
+
+
 def main() -> None:
     default_year, default_quarter = previous_quarter()
 
@@ -348,6 +383,17 @@ def main() -> None:
     p_report.add_argument("--supersede", action="store_true",
                           help="With --freeze: add a new declared version for a corrected re-send")
     p_report.set_defaults(func=cmd_report)
+
+    p_fx = sub.add_parser("fx-backfill", help="Backfill ECB FX rates up to today")
+    p_fx.set_defaults(func=cmd_fx_backfill)
+
+    p_fx_recompute = sub.add_parser(
+        "fx-recompute", help="Re-resolve stored non-EUR invoices' EUR figures at the ECB rate",
+    )
+    p_fx_recompute.add_argument("--dry-run", action="store_true", dest="dry_run",
+                                help="Report changes without writing")
+    p_fx_recompute.add_argument("--since", default=None, help="Only invoices dated on/after this ISO date")
+    p_fx_recompute.set_defaults(func=cmd_fx_recompute)
 
     args = parser.parse_args()
     args.func(args)

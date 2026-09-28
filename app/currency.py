@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -12,6 +13,7 @@ from src.fx_rates import (
     get_rate_count,
     get_stored_date_range,
     load_and_store_range,
+    recompute_stored_invoice_fx,
 )
 
 
@@ -74,6 +76,7 @@ def render() -> None:
         ("USD", "EUR / USD", "#2D4A7A"),
         ("GBP", "EUR / GBP", "#E74C3C"),
         ("CHF", "EUR / CHF", "#27AE60"),
+        ("AUD", "EUR / AUD", "#8E44AD"),
     ]
 
     for currency, title, color in chart_configs:
@@ -131,3 +134,62 @@ def render() -> None:
                 f"No rate found for {lookup_currency} on {lookup_date}. "
                 f"Try loading rates for that period first."
             )
+
+    _render_recompute_section()
+
+
+def _render_recompute_section() -> None:
+    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate (#93 follow-up).
+
+    Invoices extracted before the FX resolver shipped (or before a later fix
+    to it) keep whatever EUR figure the LLM guessed at the time. This always
+    previews (dry run) first, then a separate confirmation writes the changes.
+    """
+    st.markdown("---")
+    st.subheader("Recompute FX for stored invoices")
+    st.caption(
+        "Re-resolves every stored non-EUR invoice's EUR figures at the ECB rate on its invoice "
+        "date (or the EUR actually charged, when the document states it). A row with a manually "
+        "locked amount is skipped, never overwritten. Always previews before writing."
+    )
+
+    since = st.date_input(
+        "Only invoices on/after", value=None, format="YYYY-MM-DD", key="fx_recompute_since",
+    )
+
+    if st.button("Preview recompute (dry run)", key="fx_recompute_preview_btn"):
+        preview = recompute_stored_invoice_fx(dry_run=True, since=since.isoformat() if since else None)
+        st.session_state["fx_recompute_preview"] = preview
+
+    preview = st.session_state.get("fx_recompute_preview")
+    if preview is not None:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Scanned", preview.scanned)
+        c2.metric("Would change", preview.changed)
+        c3.metric("Stale rate", preview.stale)
+        c4.metric("Locked (skipped)", preview.locked_skipped)
+
+        if preview.rows:
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "filename": r.filename, "direction": r.direction, "currency": r.currency,
+                        "old_total_eur": r.old_total_eur, "new_total_eur": r.new_total_eur,
+                        "fx_source": r.fx_source, "stale": r.fx_stale, "locked_skipped": r.locked_skipped,
+                    }
+                    for r in preview.rows
+                ]),
+                width="stretch", hide_index=True,
+            )
+        else:
+            st.success("Nothing to change — every stored invoice already matches the ECB rate.")
+
+        if preview.changed > 0:
+            if st.button(f"Apply — write {preview.changed} change(s)", type="primary",
+                        key="fx_recompute_apply_btn"):
+                applied = recompute_stored_invoice_fx(
+                    dry_run=False, since=since.isoformat() if since else None,
+                )
+                st.session_state.pop("fx_recompute_preview", None)
+                st.success(f"Applied: {applied.changed} invoice(s) updated.")
+                st.rerun()

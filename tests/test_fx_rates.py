@@ -5,11 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.fx_rates import (
+    SUPPORTED_CURRENCIES,
     convert_to_eur,
     get_all_rates,
     get_rate,
     get_rate_count,
     get_rate_with_fallback,
+    get_rate_with_fallback_info,
     get_stored_date_range,
     init_fx_table,
     store_rates,
@@ -122,6 +124,36 @@ class TestConvertToEur:
         amount, rate = convert_to_eur(0.0, "USD", date(2025, 1, 15), fx_db_with_rates)
         assert amount == 0.0
         assert rate == 1.0280
+
+
+class TestFallbackInfo:
+    """`get_rate_with_fallback_info` (#93) — the staleness-aware sibling of
+    `get_rate_with_fallback`, which stays a thin wrapper returning just the rate."""
+
+    def test_exact_date_is_not_stale(self, fx_db_with_rates):
+        info = get_rate_with_fallback_info(date(2025, 1, 15), "USD", fx_db_with_rates)
+        assert info.rate == 1.0280 and info.source == "exact" and not info.is_stale
+
+    def test_fallback_within_tolerance_is_not_stale(self, fx_db_with_rates):
+        # Jan 18 is a Saturday, no rate stored - falls back to Jan 17 (1 day old).
+        info = get_rate_with_fallback_info(date(2025, 1, 18), "USD", fx_db_with_rates)
+        assert info.rate == 1.0350 and info.source == "fallback" and not info.is_stale
+
+    def test_fallback_beyond_tolerance_is_stale(self, fx_db_with_rates):
+        # Only Jan 13-17 stored; asking for Jan 25 falls back 8 days.
+        info = get_rate_with_fallback_info(date(2025, 1, 25), "USD", fx_db_with_rates)
+        assert info.rate == 1.0350 and info.is_stale
+
+    def test_no_data_and_no_network_is_flagged_none(self, fx_db_with_rates):
+        with patch("src.fx_rates.fetch_single_date", side_effect=Exception("no network")):
+            info = get_rate_with_fallback_info(date(2020, 1, 1), "USD", fx_db_with_rates)
+        assert info.rate is None and info.source == "none" and info.is_stale
+
+    def test_legacy_wrapper_still_returns_just_the_rate(self, fx_db_with_rates):
+        assert get_rate_with_fallback(date(2025, 1, 18), "USD", fx_db_with_rates) == 1.0350
+
+    def test_aud_is_supported(self):
+        assert "AUD" in SUPPORTED_CURRENCIES
 
 
 class TestFetchRates:

@@ -85,6 +85,7 @@ Return ONLY a valid JSON object with these keys (use null for missing/inapplicab
   "original_currency":      string | null,
   "original_amount":        number | null,
   "fx_rate":                number | null,
+  "charged_eur":            number | null,
   "payment_method":         string | null,
   "vat_exempt_reason":      string | null,
   "deductible_pct":         number | null,
@@ -140,6 +141,14 @@ AMOUNTS (all numbers, no strings — convert "1.234,56" → 1234.56):
 - total_eur: final amount payable (subtotal + IVA − IRPF), in EUR.
 - currency: document currency, default "EUR".
 - original_currency / original_amount / fx_rate: if amounts are in a foreign currency.
+  original_amount is the document's own total in that currency. Do NOT compute
+  subtotal_eur/iva_amount/total_eur from your own guess at an exchange rate for
+  a foreign-currency document — the app converts original_amount using the
+  official ECB rate itself; your EUR figures here are only used as a cross-check.
+- charged_eur: the EUR amount ACTUALLY CHARGED to the card/account, ONLY when
+  the document explicitly states it (e.g. "Charged 42.50 EUR using 1 USD =
+  0.8500 EUR", or a card-network conversion line). null when the document does
+  not state an explicit EUR charge — do not estimate or compute this yourself.
 
 VAT TREATMENT:
 - vat_exempt_reason: if IVA = 0% or exempt, state the legal basis if shown
@@ -398,7 +407,7 @@ def extract_invoice(
     for field in (
         "subtotal_eur", "iva_rate", "iva_amount", "irpf_rate",
         "irpf_amount", "total_eur", "original_amount", "fx_rate",
-        "deductible_pct",
+        "deductible_pct", "charged_eur",
     ):
         val = data.get(field)
         if isinstance(val, str):

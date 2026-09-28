@@ -22,6 +22,7 @@ from src.database import (
     unlock_invoice_fields,
     update_invoice_fields,
 )
+from src.fx_rates import get_exchange_differences, record_exchange_difference
 from src.logger import get_logger
 from src.vendor_registry import load_registry
 
@@ -36,11 +37,15 @@ _BULK_COLUMNS = [
     "subtotal_eur", "iva_amount", "total_eur", "currency",
     "tax_treatment", "deductible_pct_vat", "deductible_pct_irpf",
     "is_capital_asset", "asset_class", "excluded", "excluded_reason",
-    "eur_received", "payment_date", "vat_treatment", "locked", "reviewed_at",
+    "eur_received", "payment_date", "vat_treatment",
+    "fx_source", "fx_stale", "fx_cross_check_diff_pct",
+    "locked", "reviewed_at",
 ]
 _BULK_READONLY = [
     "filename", "counterparty", "vendor", "invoice_number", "subtotal_eur", "iva_amount",
-    "total_eur", "currency", "vat_treatment", "locked", "reviewed_at",
+    "total_eur", "currency", "vat_treatment",
+    "fx_source", "fx_stale", "fx_cross_check_diff_pct",
+    "locked", "reviewed_at",
 ]
 UNKNOWN_VENDOR = "⚠ unknown"
 
@@ -90,7 +95,7 @@ def _build_frame(records: list[dict], direction: str) -> pd.DataFrame:
     name_col, nif_col = ("vendor_name", "vendor_nif") if direction == "in" else ("client_name", "client_nif")
     df["counterparty"] = df[name_col].fillna(df[nif_col]).fillna("")
     df["locked"] = df["locked_fields"].map(lambda raw: ", ".join(parse_locked_fields(raw)))
-    for col in ("excluded", "is_capital_asset"):
+    for col in ("excluded", "is_capital_asset", "fx_stale"):
         df[col] = df[col].fillna(0).astype(bool)
     df["quarter"] = df["invoice_date"].map(_quarter_label)
     if direction == "in":
@@ -151,6 +156,11 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
             "vat_treatment": st.column_config.TextColumn("legacy vat_treatment"),
             "vendor": st.column_config.TextColumn(
                 "vendor", help="Vendor-registry match; ⚠ unknown → add it in the Vendors tab",
+            ),
+            "fx_source": st.column_config.TextColumn("FX source", help="How the EUR figure was resolved (#93)"),
+            "fx_stale": st.column_config.CheckboxColumn("FX stale", help="ECB rate fell back to an old date"),
+            "fx_cross_check_diff_pct": st.column_config.NumberColumn(
+                "FX diff %", format="%.1f", help="LLM estimate vs resolved EUR — flagged above 1%",
             ),
         },
     )
@@ -246,6 +256,22 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
             pay_date = st.date_input("Payment date", value=_to_date(rec.get("payment_date")),
                                      min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_payment_date")
             changes["payment_date"] = pay_date.isoformat() if pay_date else None
+            if direction == "in":
+                changes["charged_eur"] = st.number_input(
+                    "EUR actually charged", value=rec.get("charged_eur"), format="%.2f",
+                    help="From the document, e.g. 'Charged 42.50 EUR using 1 USD = 0.8500 EUR'. Wins over the ECB rate.",
+                    key=f"{k}_charged_eur",
+                )
+            if rec.get("fx_source"):
+                fx_bits = [f"FX source: {rec['fx_source']}"]
+                if rec.get("fx_rate_used"):
+                    fx_bits.append(f"rate 1 EUR = {rec['fx_rate_used']:.4f} on {rec.get('fx_rate_date') or '?'}")
+                st.caption(" · ".join(fx_bits))
+                if rec.get("fx_stale"):
+                    st.warning("⚠️ Stale ECB fallback rate — review before relying on this figure.")
+                diff_pct = rec.get("fx_cross_check_diff_pct")
+                if diff_pct is not None and diff_pct > 1.0:
+                    st.warning(f"⚠️ LLM's own EUR estimate differs from the resolved amount by {diff_pct:.1f}%.")
         with c_tax:
             st.markdown("*Tax treatment*")
             current_tt = rec.get("tax_treatment") if rec.get("tax_treatment") in treatments else None
@@ -297,6 +323,94 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
     render_register_from_invoice(rec)
 
 
+def _render_exchange_differences(income_records: list[dict]) -> None:
+    """Record a later conversion of a foreign-currency income balance to EUR (#93 / D5).
+
+    The gain or loss vs. the EUR originally booked (ECB rate at accrual, or an
+    earlier `eur_received`) feeds Modelo 130 box_01_ingresos in the quarter of
+    conversion — see `tax_engine.compute_modelo_130`.
+    """
+    st.markdown("**Exchange rate differences** — later conversion of a foreign-currency income balance")
+    st.caption(
+        "When a foreign-currency invoice was booked at the ECB rate (no EUR received yet) and the "
+        "balance is later converted, record the conversion here. The gain/loss vs. the booked EUR "
+        "feeds Modelo 130 income in the quarter you convert — not the invoice's own quarter."
+    )
+
+    foreign_invoices = {
+        r["id"]: r for r in income_records
+        if r.get("original_currency") and r.get("original_currency") != "EUR"
+    }
+
+    existing = get_exchange_differences()
+    if existing:
+        st.dataframe(
+            pd.DataFrame(existing)[
+                ["conversion_date", "currency", "foreign_amount", "eur_obtained", "booked_eur",
+                 "gain_loss_eur", "notes"]
+            ],
+            width="stretch", hide_index=True,
+        )
+    else:
+        st.caption("No exchange differences recorded yet.")
+
+    with st.form(key="exchange_diff_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            options = [None, *foreign_invoices.keys()]
+            invoice_id = st.selectbox(
+                "Invoice (optional)", options,
+                format_func=lambda i: "— manual / no invoice —" if i is None else (
+                    f"{foreign_invoices[i].get('invoice_date') or '?'} · "
+                    f"{foreign_invoices[i].get('client_name') or foreign_invoices[i].get('client_nif') or '?'} · "
+                    f"{foreign_invoices[i].get('original_amount') or '?'} {foreign_invoices[i].get('original_currency')}"
+                ),
+                key="exchange_diff_invoice",
+            )
+            default_booked = 0.0
+            default_currency = ""
+            default_foreign = 0.0
+            if invoice_id:
+                inv = foreign_invoices[invoice_id]
+                default_booked = float(inv.get("eur_received") or inv.get("subtotal_eur") or 0.0)
+                default_currency = inv.get("original_currency") or ""
+                default_foreign = float(inv.get("original_amount") or 0.0)
+            conversion_date = st.date_input("Conversion date", value=date.today(),
+                                            min_value=date(2000, 1, 1), format="YYYY-MM-DD",
+                                            key="exchange_diff_date")
+            currency = st.text_input("Currency", value=default_currency, key="exchange_diff_currency")
+        with c2:
+            foreign_amount = st.number_input("Foreign-currency amount converted", value=default_foreign,
+                                             format="%.2f", key="exchange_diff_foreign_amount")
+            booked_eur = st.number_input("EUR originally booked", value=default_booked, format="%.2f",
+                                         key="exchange_diff_booked_eur")
+            eur_obtained = st.number_input("EUR actually obtained", value=0.0, format="%.2f",
+                                           key="exchange_diff_eur_obtained")
+        notes = st.text_input("Notes", value="", key="exchange_diff_notes")
+        submitted = st.form_submit_button("Record exchange difference", type="primary")
+
+    if submitted:
+        if not currency.strip():
+            st.error("Currency is required.")
+        elif eur_obtained <= 0:
+            st.error("EUR actually obtained must be greater than zero.")
+        else:
+            gain_loss = round(eur_obtained - booked_eur, 2)
+            record_exchange_difference(
+                conversion_date=conversion_date.isoformat(),
+                currency=currency.strip().upper(),
+                foreign_amount=foreign_amount,
+                eur_obtained=eur_obtained,
+                booked_eur=booked_eur,
+                invoice_id=invoice_id,
+                notes=notes or None,
+            )
+            sign = "gain" if gain_loss >= 0 else "loss"
+            st.success(f"Recorded: {sign} of {abs(gain_loss):,.2f} EUR — feeds Modelo 130 income for "
+                       f"Q{(conversion_date.month - 1) // 3 + 1} {conversion_date.year}.")
+            st.rerun()
+
+
 def render() -> None:
     """Render the Invoice Ledger tab."""
     st.subheader("Invoice Ledger — tax treatment and corrections")
@@ -338,13 +452,15 @@ def render() -> None:
     if only_unreviewed:
         view = view[view["reviewed_at"].isna()]
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("Invoices", len(view))
     m2.metric("Excluded", int(view["excluded"].sum()))
     m3.metric("No tax treatment", int(view["tax_treatment"].isna().sum()))
     m4.metric("Unreviewed", int(view["reviewed_at"].isna().sum()))
     n_unknown = int((view["vendor"] == UNKNOWN_VENDOR).sum()) if "vendor" in view else 0
     m5.metric("⚠ Unknown vendor", n_unknown if direction == "in" else "—")
+    fx_flagged = int(view["fx_stale"].sum()) + int((view["fx_cross_check_diff_pct"].fillna(0) > 1.0).sum())
+    m6.metric("FX flags", fx_flagged, help="Stale ECB fallback, or LLM estimate off by more than 1%")
 
     if view.empty:
         st.warning("No invoices match the current filters.")
@@ -354,3 +470,7 @@ def render() -> None:
     _render_bulk_editor(view, direction, filter_sig)
     st.markdown("---")
     _render_edit_form(view, {r["id"]: r for r in records}, direction)
+
+    if direction == "out":
+        st.markdown("---")
+        _render_exchange_differences(records)

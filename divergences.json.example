@@ -1,0 +1,59 @@
+{
+  "divergences": [
+    {
+      "model": "303",
+      "year": 2026,
+      "quarter": 1,
+      "box": "09",
+      "expected_delta": 12.34,
+      "rule": null,
+      "tolerance": 0.01,
+      "category": "gestor_error",
+      "explanation": "Example: EU consumer sales at 21 % left out of the filed 303."
+    },
+    {
+      "model": "303",
+      "year": null,
+      "quarter": null,
+      "box": "12",
+      "expected_delta": null,
+      "rule": "app_gte_filed",
+      "tolerance": 0.01,
+      "category": "convention",
+      "explanation": "Example: the app reports every non-EU reverse-charge service in 12/13; the filing only some."
+    },
+    {
+      "model": "130",
+      "year": 2026,
+      "quarter": null,
+      "box": "06",
+      "expected_delta": 50.0,
+      "rule": null,
+      "tolerance": 0.01,
+      "category": "gestor_error",
+      "explanation": "Example: one invoice's withholding missing from the filed year-to-date total."
+    },
+    {
+      "model": "349",
+      "year": 2026,
+      "quarter": 1,
+      "box": "op:IE0000000XX:I",
+      "expected_delta": 9.99,
+      "rule": null,
+      "tolerance": 0.01,
+      "category": "gestor_error",
+      "explanation": "Example: an intra-EU supplier (fake VAT id) left off the filed 349."
+    },
+    {
+      "model": "303",
+      "year": null,
+      "quarter": null,
+      "box": "60",
+      "expected_delta": null,
+      "rule": "any",
+      "tolerance": 0.01,
+      "category": "app_choice",
+      "explanation": "Example: informational box; the app books these services in 120 instead."
+    }
+  ]
+}

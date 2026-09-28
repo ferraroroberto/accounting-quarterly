@@ -1,6 +1,6 @@
 """Tests for src/reconciliation.py — filed-vs-app matching, catalogue, 349
-operators, markdown export and the engine → AEAT box adapter (303 native,
-130/349 via the legacy mapping).
+operators, markdown export and the engine → AEAT box adapter (303 and 130 native,
+349 via the legacy mapping).
 
 All data is synthetic (fake VAT ids, round amounts)."""
 from __future__ import annotations
@@ -326,20 +326,11 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
 
 
 class TestAppBoxesAdapter:
-    def test_legacy_fields_map_to_aeat_numbers(self):
-        # A synthetic legacy-shaped 130 result: internal names differ from the form's boxes.
-        legacy = SimpleNamespace(box_01_ingresos=1000.0, box_02_gastos=400.0,
-                                 gastos_dificil_justificacion=30.0, rendimiento_neto=570.0,
-                                 box_05_base=114.0, box_14_pagos_anteriores=20.0,
-                                 box_07_retenciones=15.0, box_16_resultado=79.0)
-        boxes = legacy_boxes("130", legacy)
-        assert boxes["02"] == 430.0                   # 5 % allowance added back into 02
-        assert boxes["04"] == 114.0                   # legacy box_05_base is AEAT 04
-        assert boxes["06"] == 15.0                    # legacy box_07_retenciones is AEAT 06
-        assert boxes["07"] == 79.0                    # 04 − 05 − 06
-        assert boxes["19"] == 79.0
-        # The 303 has its own aeat_boxes() (#97): no legacy mapping is left for it.
-        assert legacy_boxes("303", legacy) == {}
+    def test_no_legacy_mapping_is_left(self):
+        # The 303 (#97), 130 (#98) and 349 (#99) have their own aeat_boxes(): no legacy mapping left.
+        legacy = SimpleNamespace(rows=[], total=9.5)
+        for model in ("303", "130", "349"):
+            assert legacy_boxes(model, legacy) == {}
 
     def test_303_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_303(2025, 1, db_conn, CFG)
@@ -349,15 +340,14 @@ class TestAppBoxesAdapter:
         assert (boxes["07"], boxes["09"], boxes["27"]) == (100.0, 21.0, 21.0)
         assert boxes["01"] == boxes["03"] == 0.0
 
-    def test_legacy_130_puts_the_allowance_inside_box_02(self, db_conn):
-        legacy = compute_modelo_130(2025, 1, db_conn, CFG)
+    def test_130_uses_the_engines_aeat_boxes(self, db_conn):
+        result = compute_modelo_130(2025, 1, db_conn, CFG)
         boxes = app_boxes("130", 2025, 1, db_conn, CFG)
-        assert boxes["02"] == round(legacy.box_02_gastos + legacy.gastos_dificil_justificacion, 2)
-        assert boxes["03"] == legacy.rendimiento_neto
-        assert boxes["04"] == legacy.box_05_base
-        assert boxes["06"] == legacy.box_07_retenciones
-        assert boxes["07"] == round(legacy.box_05_base - legacy.box_14_pagos_anteriores
-                                    - legacy.box_07_retenciones, 2)
+        assert boxes == result.aeat_boxes()
+        assert list(boxes) == [f"{n:02d}" for n in range(1, 20)]
+        # Box 02 includes the 5 % allowance, as on the form.
+        assert boxes["02"] == round(result.gastos_reales + result.gastos_dificil_justificacion, 2)
+        assert reconcile("130", 2025, 1, db_conn, CFG).engine == "aeat"
 
     def test_result_with_aeat_boxes_is_used_verbatim(self, db_conn, monkeypatch):
         class NewResult:
@@ -433,10 +423,9 @@ class TestAuditDrillDown:
         {"cell": "operator_IE1234567X", "value": 5.0}, {"cell": "total", "value": 5.0},
     ]
 
-    def test_legacy_box_uses_the_field_map(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "130", "04", "legacy")]
-        assert cells == ["box_05_base"]
-        assert audit_entries_for_box(self.ENTRIES, "130", "05", "legacy") == []
+    def test_legacy_engine_has_no_field_map_left(self):
+        assert audit_entries_for_box(self.ENTRIES, "349", "02", "legacy") == []
+        assert audit_entries_for_box(self.ENTRIES, "130", "04", "legacy") == []
 
     def test_aeat_box_matches_cells_named_after_it(self):
         cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "07", "aeat")]

@@ -739,7 +739,7 @@ def recompute_stored_invoice_fx(
 # Exchange differences (issue #93 / private decision D5): a later conversion
 # of a foreign-currency balance from activity income into EUR realises a
 # gain or loss against the EUR figure originally booked. Recorded here and
-# fed into Modelo 130 box_01_ingresos in the period of conversion.
+# fed into Modelo 130 box 01 (c01_ingresos) in the period of conversion.
 # ---------------------------------------------------------------------------
 
 def record_exchange_difference(

@@ -41,6 +41,25 @@ _MODELO303_LEGACY_RENAMES: dict[str, str] = {
 }
 
 
+# Pre-#98 Modelo130Result field names -> current AEAT-box fields. The legacy
+# "box_02_gastos" excluded the 5 % allowance (now inside 02) so it becomes the
+# ``gastos_reales`` context field; "rendimiento_neto" was 01 − 02 after the
+# allowance = box 03; "box_05_base" was box 04, "box_14_pagos_anteriores" was
+# 05 (read from tax_filing_status), "box_07_retenciones" was 06 and
+# "box_16_resultado" was max(0, 04 − 05 − 06), i.e. 19 with no 13/15.
+# "box_03_rendimiento" (01 − real expenses) is derivable and dropped.
+_MODELO130_LEGACY_RENAMES: dict[str, str] = {
+    "box_01_ingresos": "c01_ingresos",
+    "box_02_gastos": "gastos_reales",
+    "rendimiento_neto": "c03_rendimiento_neto",
+    "box_05_base": "c04_veinte_pct",
+    "box_14_pagos_anteriores": "c05_pagos_anteriores",
+    "box_07_retenciones": "c06_retenciones",
+    "box_16_resultado": "c19_resultado",
+}
+_MODELO130_LEGACY_DROPPED: tuple[str, ...] = ("box_03_rendimiento",)
+
+
 def _int_key_dict(d: dict[Any, Any]) -> dict[int, float]:
     out: dict[int, float] = {}
     for k, v in d.items():
@@ -102,6 +121,21 @@ def _derive_legacy_303_totals(result: Modelo303Result) -> None:
     result.c46_sin_prorrata = result.c46_resultado_regimen_general
 
 
+def _derive_legacy_130_boxes(result: Modelo130Result) -> None:
+    """Fill the boxes a pre-#98 snapshot never stored, from the ones it did.
+
+    Legacy results had no 13/15 and clamped the result at 0, so 12 = 14 = 17
+    = 19 = max(0, 07) and there is no negative carry.
+    """
+    result.c02_gastos = round(result.gastos_reales + result.gastos_dificil_justificacion, 2)
+    result.c07_pago_fraccionado = round(
+        result.c04_veinte_pct - result.c05_pagos_anteriores - result.c06_retenciones, 2)
+    result.c12_suma_pagos = max(0.0, result.c07_pago_fraccionado)
+    result.c14_diferencia = result.c12_suma_pagos
+    result.c17_total = result.c12_suma_pagos
+    result.c05_source = "legacy snapshot (tax_filing_status)"
+
+
 def _decode_oss_row(r: dict[str, Any]) -> OSSCountryRow:
     return OSSCountryRow(**r)
 
@@ -155,7 +189,13 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
             _derive_legacy_303_totals(result)
         return result
     if model == "130":
-        return _tolerant_construct(Modelo130Result, data)
+        legacy = any(k in data for k in _MODELO130_LEGACY_RENAMES)
+        for key in _MODELO130_LEGACY_DROPPED:
+            data.pop(key, None)
+        result = _tolerant_construct(Modelo130Result, data, _MODELO130_LEGACY_RENAMES)
+        if legacy:
+            _derive_legacy_130_boxes(result)
+        return result
     if model == "OSS":
         return _tolerant_construct(OSSReturnResult, data, row_decoder=_decode_oss_row)
     if model == "347":

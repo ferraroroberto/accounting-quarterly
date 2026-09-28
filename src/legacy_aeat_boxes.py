@@ -1,100 +1,38 @@
-"""Legacy engine field -> AEAT box mapping, used by the reconciliation adapter.
+"""Modelo 390 aggregation and the reconciliation adapter's legacy fallbacks.
 
-TEMPORARY. The Modelo 130 / 349 results (``src/tax_models.py``) still use
-internal field names that do not follow the AEAT form numbering (e.g.
-``Modelo130Result.box_05_base`` is printed in box 04). The box-model rework
-(#98 130, #99 349) gives each engine result an ``aeat_boxes() -> dict[str,
-float]`` method keyed by the printed box number (and the 349 an
-``operators()`` method), as the Modelo 303 already has (#97).
-``src/reconciliation.app_boxes`` calls those when present and falls back to
-this module otherwise.
+TEMPORARY. The quarterly engine results have their own ``aeat_boxes()``
+keyed by the printed box number (Modelo 303 #97, 130 #98, 349 #99, the 349
+also ``operators()``), so ``src/reconciliation`` no longer needs a legacy
+field map for them: ``legacy_boxes`` / ``legacy_audit_cells`` only remain as
+the adapter's fallback for a result without ``aeat_boxes()``.
 
-Delete the 130/349 part (and its import in ``src/reconciliation.py``) once
-#98 and #99 have shipped. The Modelo 390 aggregation below stays until the
-annual pack (#87 step 16) replaces it; ``src/tax_validator.py`` uses it too.
-
-Each mapping row sums signed legacy fields into one AEAT box and carries a
-``note`` wherever the legacy field does not have the AEAT box's exact meaning;
-the reconciliation view shows those notes so a divergence caused by the
-legacy semantics is not mistaken for a data problem.
+What is left is the Modelo 390 aggregation of the four quarterly 303s (used
+by the reconciliation and ``src/tax_validator.py``) with its caveat note,
+until the annual pack (#103) gives the 390 its own engine.
 """
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.tax_engine import compute_modelo_303
 
 
-@dataclass(frozen=True)
-class LegacyBox:
-    """One AEAT box computed from signed legacy result fields."""
-    box: str
-    terms: tuple[tuple[str, int], ...]   # (legacy field, +1 / -1)
-    note: str = ""
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        return tuple(f for f, _ in self.terms)
-
-
-def _one(box: str, field: str, note: str = "") -> LegacyBox:
-    return LegacyBox(box, ((field, 1),), note)
-
-
-LEGACY_130: tuple[LegacyBox, ...] = (
-    _one("01", "box_01_ingresos"),
-    LegacyBox("02", (("box_02_gastos", 1), ("gastos_dificil_justificacion", 1)),
-              "Legacy keeps the 5 % hard-to-justify allowance outside `box_02_gastos`; the adapter "
-              "adds it back because the form's box 02 includes it."),
-    _one("03", "rendimiento_neto",
-         "AEAT 03 = 01 − 02 after the 5 % allowance = legacy `rendimiento_neto` "
-         "(legacy `box_03_rendimiento` is before the allowance)."),
-    _one("04", "box_05_base", "Legacy `box_05_base` is AEAT 04 (20 % × max(0, 03))."),
-    _one("05", "box_14_pagos_anteriores",
-         "Legacy `box_14_pagos_anteriores` sums amounts from tax_filing_status; AEAT 05 is "
-         "Σ positive 07 of earlier quarters − Σ 16, from the filed returns (#98)."),
-    _one("06", "box_07_retenciones", "Legacy `box_07_retenciones` is AEAT 06."),
-    LegacyBox("07", (("box_05_base", 1), ("box_14_pagos_anteriores", -1), ("box_07_retenciones", -1)),
-              "Derived as 04 − 05 − 06 (negative allowed, as on the form)."),
-    _one("19", "box_16_resultado",
-         "Legacy `box_16_resultado` is clamped at 0 and skips 12–18 (no art. 110.3.c reduction "
-         "in 13, no negative-quarter carry in 15), so it matches 19 only in the simple case."),
-)
-
-LEGACY_BOXES: dict[str, tuple[LegacyBox, ...]] = {"130": LEGACY_130}
-
-# Extra audit cells worth showing behind a box (on top of the mapped fields).
-_EXTRA_AUDIT_CELLS: dict[tuple[str, str], tuple[str, ...]] = {
-    ("130", "02"): ("amortizaciones", "capital_assets_excluded"),
-    ("130", "03"): ("box_03_rendimiento", "gastos_dificil_justificacion"),
-}
-
-
 def legacy_boxes(model: str, result: Any) -> dict[str, float]:
-    """Map a legacy 130/349 engine result to AEAT-numbered boxes ({} for other models)."""
-    return {
-        m.box: round(sum(sign * float(getattr(result, f)) for f, sign in m.terms), 2)
-        for m in LEGACY_BOXES.get(model, ())
-    }
+    """AEAT-numbered boxes of a result without ``aeat_boxes()`` — none are left ({})."""
+    return {}
 
 
 def legacy_notes(model: str) -> dict[str, str]:
     """Box -> caveat for the legacy mapping of ``model`` (only boxes with a caveat)."""
     if model == "390":
         return {"33": LEGACY_390_NOTE}
-    return {m.box: m.note for m in LEGACY_BOXES.get(model, ()) if m.note}
+    return {}
 
 
 def legacy_audit_cells(model: str, box: str) -> tuple[str, ...]:
     """Legacy ``tax_audit_log`` cells behind an AEAT box (empty when unknown)."""
-    cells: list[str] = []
-    for m in LEGACY_BOXES.get(model, ()):
-        if m.box == box:
-            cells.extend(m.fields)
-    cells.extend(_EXTRA_AUDIT_CELLS.get((model, box), ()))
-    return tuple(dict.fromkeys(cells))
+    return ()
 
 
 # ---------------------------------------------------------------------------

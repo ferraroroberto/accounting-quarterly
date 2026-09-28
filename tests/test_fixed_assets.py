@@ -317,33 +317,33 @@ class TestModelo130Hook:
     def test_before_registration_invoice_is_expensed(self, db, conn):
         _invoice(db, "v/paper.pdf", 100.0)
         _invoice(db, "v/laptop.pdf", 2000.0)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == 2100.0
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == 2100.0
 
     def test_capital_invoice_excluded_and_depreciation_added_annual_q4(self, db, conn):
         self._setup(db, conn)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == 100.0
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == 100.0
         q4 = compute_modelo_130(2025, 4, conn)
         # 15 Jan – 31 Dec = 351 days → 520 × 351/365
-        assert q4.box_02_gastos == pytest.approx(100.0 + round(520 * 351 / 365, 2))
+        assert q4.c02_gastos == pytest.approx(100.0 + round(520 * 351 / 365, 2))
         audit = {a.cell: a for a in q4.audit}
-        assert audit["amortizaciones"].value == pytest.approx(round(520 * 351 / 365, 2))
-        assert len(json.loads(audit["amortizaciones"].inputs_json)["records"]) == 1
-        assert audit["capital_assets_excluded"].value == 2000.0
-        assert json.loads(audit["box_02_gastos"].inputs_json)["amortizaciones"] == audit["amortizaciones"].value
+        assert audit["c02_amortizaciones"].value == pytest.approx(round(520 * 351 / 365, 2))
+        assert len(json.loads(audit["c02_amortizaciones"].inputs_json)["records"]) == 1
+        assert audit["c02_capital_assets_excluded"].value == 2000.0
+        assert json.loads(audit["c02_gastos_reales"].inputs_json)["amortizaciones"] == audit["c02_amortizaciones"].value
 
     def test_quarterly_posting_in_130(self, db, conn):
         self._setup(db, conn)
         # 15 Jan – 31 Mar = 76 days
-        assert compute_modelo_130(2025, 1, conn, config=QUARTERLY).box_02_gastos == pytest.approx(
+        assert compute_modelo_130(2025, 1, conn, config=QUARTERLY).c02_gastos == pytest.approx(
             100.0 + round(520 * 76 / 365, 2))
 
     def test_flagged_invoice_without_asset_is_reported(self, db, conn):
         rid = _invoice(db, "v/laptop.pdf", 2000.0)
         update_invoice_fields(rid, {"is_capital_asset": True}, db_path=db)
         r = compute_modelo_130(2025, 1, conn)
-        assert r.box_02_gastos == 0.0
+        assert r.c02_gastos == 0.0
         audit = {a.cell: a for a in r.audit}
-        assert json.loads(audit["capital_assets_excluded"].inputs_json)["unregistered_invoice_ids"] == [rid]
+        assert json.loads(audit["c02_capital_assets_excluded"].inputs_json)["unregistered_invoice_ids"] == [rid]
 
     def test_depreciation_for_period_reads_config(self, db, conn):
         self._setup(db, conn)

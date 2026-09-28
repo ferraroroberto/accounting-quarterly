@@ -340,7 +340,7 @@ class TestEngine:
 
         update_invoice_fields(dup, {"excluded": 1, "excluded_reason": "duplicate"}, db_path=db)
         assert compute_modelo_303(2025, 1, conn).box_29_cuota_soportado == pytest.approx(21.0)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == pytest.approx(100.0)
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == pytest.approx(100.0)
 
     def test_excluded_income_ignored(self, db, conn):
         out = dict(direction="out", vendor_nif=None, client_nif=ES_CIF, vendor_name=None)
@@ -348,7 +348,7 @@ class TestEngine:
         rid = upsert_invoice(_ocr_record(filename="o/2.pdf", **out), db_path=db)
         update_invoice_fields(rid, {"excluded": 1, "excluded_reason": "superseded"}, db_path=db)
         assert compute_modelo_303(2025, 1, conn).box_01_base == pytest.approx(100.0)
-        assert compute_modelo_130(2025, 1, conn).box_01_ingresos == pytest.approx(100.0)
+        assert compute_modelo_130(2025, 1, conn).c01_ingresos == pytest.approx(100.0)
 
     def test_april_invoice_for_march_supply_counts_in_q2(self, db, conn):
         upsert_invoice(_ocr_record(
@@ -379,10 +379,10 @@ class TestEngine:
         rid = upsert_invoice(_ocr_record(), db_path=db)
         update_invoice_fields(rid, {"deductible_pct_vat": 50, "deductible_pct_irpf": 20}, db_path=db)
         assert compute_modelo_303(2025, 1, conn).box_29_cuota_soportado == pytest.approx(10.5)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == pytest.approx(20.0)
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == pytest.approx(20.0)
 
     def test_zero_percent_is_not_treated_as_full(self, db, conn):
         rid = upsert_invoice(_ocr_record(), db_path=db)
         update_invoice_fields(rid, {"deductible_pct_vat": 0, "deductible_pct_irpf": 0}, db_path=db)
         assert compute_modelo_303(2025, 1, conn).box_29_cuota_soportado == 0.0
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == 0.0
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == 0.0

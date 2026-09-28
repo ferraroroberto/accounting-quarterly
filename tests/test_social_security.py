@@ -355,4 +355,4 @@ class TestModelo130Integration:
         finally:
             conn.close()
         # Jan + Feb debits (duplicate dropped) minus the March refund.
-        assert result.box_02_gastos == pytest.approx(50.25 + 50.25 - 45.00)
+        assert result.c02_gastos == pytest.approx(50.25 + 50.25 - 45.00)

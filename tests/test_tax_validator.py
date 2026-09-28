@@ -109,7 +109,7 @@ class TestModelo390CrossCheck:
         _insert_tx(db_conn, converted_amount=1000.0)
         # Take the engine's actual annual (Q4 YTD) income as the filed figure so
         # the cross-check reconciles exactly, independent of the engine's VAT math.
-        computed_income = compute_modelo_130(2025, 4, db_conn).box_01_ingresos
+        computed_income = compute_modelo_130(2025, 4, db_conn).c01_ingresos
         result = validate_modelo_390(
             2025, db_conn,
             _filings(m130_ingresos=computed_income, volume_390=12345.0),
@@ -123,7 +123,7 @@ class TestModelo390CrossCheck:
     def test_mismatching_m130_income_is_flagged(self, db_conn):
         """Computed M130 income != filed M130 income → line is flagged."""
         _insert_tx(db_conn, converted_amount=1000.0)
-        computed_income = compute_modelo_130(2025, 4, db_conn).box_01_ingresos
+        computed_income = compute_modelo_130(2025, 4, db_conn).c01_ingresos
         filed_income = computed_income + 500.0  # gestor filed 500 more → discrepancy
         result = validate_modelo_390(
             2025, db_conn,

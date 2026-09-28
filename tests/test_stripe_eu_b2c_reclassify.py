@@ -133,7 +133,7 @@ class TestEuB2CSpanish21:
         assert any(r.get("vat_treatment") == "EU_B2C_ES21" for r in recs)
 
         r130 = compute_modelo_130(2025, 1, conn, {"tax": {}})
-        assert r130.box_01_ingresos == pytest.approx(100.0)
+        assert r130.c01_ingresos == pytest.approx(100.0)
 
         oss = compute_oss_return(2025, 1, conn, {"tax": {}})
         assert oss.rows == []
@@ -319,7 +319,7 @@ class TestDeclaredReport:
         assert report.total_net_eur == pytest.approx(181.0)
         assert len(report.sha256) == 64
 
-        before_130 = compute_modelo_130(2026, 1, conn, {"tax": {}}).box_01_ingresos
+        before_130 = compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos
         assert before_130 == pytest.approx(100.0 + 60.0)
 
         # A later re-fetch re-converts the USD charge at a different ECB rate.
@@ -330,7 +330,7 @@ class TestDeclaredReport:
         r303 = compute_modelo_303(2026, 1, conn, {"tax": {}})
         assert r303.box_01_base == pytest.approx(100.0)
         assert r303.export_base == pytest.approx(60.0)
-        assert compute_modelo_130(2026, 1, conn, {"tax": {}}).box_01_ingresos == \
+        assert compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos == \
             pytest.approx(before_130)
 
         live = load_classified_payments(datetime(2026, 1, 1), datetime(2026, 3, 31, 23, 59, 59),
@@ -358,7 +358,7 @@ class TestDeclaredReport:
         assert v2.version == 2
         assert get_declared_report(conn, 2026, 1).version == 2
         # The engine follows the latest declared version.
-        assert compute_modelo_130(2026, 1, conn, {"tax": {}}).box_01_ingresos == \
+        assert compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos == \
             pytest.approx(round(12.0 / 1.21, 2))
 
     def test_no_declared_report_leaves_live_amounts(self, db_path, conn, sample_rules):

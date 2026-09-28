@@ -202,11 +202,11 @@ class TestIncomeEurReceived:
         row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
         assert row["subtotal_eur"] is not None
         result_before = compute_modelo_130(2025, 1, conn)
-        assert result_before.box_01_ingresos == pytest.approx(row["subtotal_eur"])
+        assert result_before.c01_ingresos == pytest.approx(row["subtotal_eur"])
 
         update_invoice_fields(rid, {"eur_received": 91.11}, db_path=db)
         result_after = compute_modelo_130(2025, 1, conn)
-        assert result_after.box_01_ingresos == pytest.approx(91.11)
+        assert result_after.c01_ingresos == pytest.approx(91.11)
 
     def test_eur_received_wins_in_modelo303_export_base(self, db, conn):
         _store_usd_rate(db)
@@ -220,7 +220,7 @@ class TestIncomeEurReceived:
         _ingest("out", db, filename="out/usd-income-final.pdf")
         result = compute_modelo_130(2025, 1, conn)
         expected = round(100.0 / 1.0280, 2)
-        assert result.box_01_ingresos == pytest.approx(expected)
+        assert result.c01_ingresos == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ class TestExchangeDifferences:
         ).fetchone())["subtotal_eur"]
 
         q1_before = compute_modelo_130(2025, 1, conn)
-        assert q1_before.box_01_ingresos == pytest.approx(booked)
+        assert q1_before.c01_ingresos == pytest.approx(booked)
 
         record_exchange_difference(
             conversion_date="2025-05-15", currency="USD", foreign_amount=100.0,
@@ -256,12 +256,12 @@ class TestExchangeDifferences:
 
         # Q1 (before the conversion date) is unaffected.
         q1_after = compute_modelo_130(2025, 1, conn)
-        assert q1_after.box_01_ingresos == pytest.approx(booked)
+        assert q1_after.c01_ingresos == pytest.approx(booked)
 
         # Q2 YTD picks up the original booked income (still, invoice-date keyed)
         # PLUS the +5.00 gain realised on conversion.
         q2 = compute_modelo_130(2025, 2, conn)
-        assert q2.box_01_ingresos == pytest.approx(booked + 5.0)
+        assert q2.c01_ingresos == pytest.approx(booked + 5.0)
 
     def test_loss_reduces_modelo130_income(self, db, conn):
         _store_usd_rate(db)
@@ -274,7 +274,7 @@ class TestExchangeDifferences:
             eur_obtained=booked - 10.0, booked_eur=booked, invoice_id=rid, db_path=db,
         )
         q1 = compute_modelo_130(2025, 1, conn)
-        assert q1.box_01_ingresos == pytest.approx(booked - 10.0)
+        assert q1.c01_ingresos == pytest.approx(booked - 10.0)
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +423,7 @@ class TestRecomputeStoredInvoiceFx:
         assert row["eur_received"] == 91.11
         # subtotal_eur is corrected, but eur_received (not this function's
         # concern) still wins in the engine per `_income_invoice_eur`.
-        assert compute_modelo_130(2025, 1, conn).box_01_ingresos == pytest.approx(91.11)
+        assert compute_modelo_130(2025, 1, conn).c01_ingresos == pytest.approx(91.11)
 
     def test_since_filters_by_invoice_date(self, db):
         _store_usd_rate(db)

@@ -163,32 +163,39 @@ class TestModelo303:
 # ---------------------------------------------------------------------------
 
 class TestModelo130:
+    """Smoke tests on Stripe-only data; the box model is covered in test_modelo_130.py."""
+
     def test_first_quarter_no_prior_payments(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
         result = compute_modelo_130(2025, 1, db_conn)
-        assert result.box_14_pagos_anteriores == 0.0
+        assert result.c05_pagos_anteriores == 0.0
         # €1000 gross IVA_ES_21 → ex-VAT income base 1000 / 1.21 = 826.45
-        assert result.box_01_ingresos == pytest.approx(826.45)
-        # 5% of 826.45 = 41.32 gastos de difícil justificación
+        assert result.c01_ingresos == pytest.approx(826.45)
+        # 5% of 826.45 = 41.32 gastos de difícil justificación, inside box 02
         assert result.gastos_dificil_justificacion == pytest.approx(41.32)
-        # 826.45 − 41.32 = 785.13
-        assert result.rendimiento_neto == pytest.approx(785.13)
-        # 20% of 785.13 = 157.03
-        assert result.box_05_base == pytest.approx(157.03)
+        assert result.c02_gastos == pytest.approx(41.32)
+        # 826.45 − 41.32 = 785.13; 20% = 157.03 = 07 = 12
+        assert result.c03_rendimiento_neto == pytest.approx(785.13)
+        assert result.c04_veinte_pct == pytest.approx(157.03)
+        # No 2024 activity → box 13 reduction 100 → 19 = 57.03
+        assert result.c13_minoracion == 100.0
+        assert result.c19_resultado == pytest.approx(57.03)
 
-    def test_retenciones_greater_than_20pct_net_gives_zero(self, db_conn):
+    def test_retenciones_greater_than_20pct_net_gives_negative(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
-        # Retenciones YTD = 600 > 20% of 950 (after 5% deduction) = 190
+        # Retenciones YTD 600 > 04 = 157.03 → 07 = −442.97, 12 = 0, 14 = 19 = −100
         db_conn.execute(
             "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) VALUES (2025, 1, 'RETENCIONES_SOPORTADAS', 600.0)"
         )
         db_conn.commit()
         result = compute_modelo_130(2025, 1, db_conn)
-        assert result.box_16_resultado == 0.0
+        assert result.c07_pago_fraccionado == pytest.approx(-442.97)
+        assert result.c12_suma_pagos == 0.0
+        assert result.c19_resultado == -100.0
 
-    def test_high_expenses_rendimiento_negative_gives_zero(self, db_conn):
+    def test_high_expenses_rendimiento_negative(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=500.0, activity_type="COACHING")
         db_conn.execute(
@@ -196,34 +203,32 @@ class TestModelo130:
         )
         db_conn.commit()
         result = compute_modelo_130(2025, 1, db_conn)
-        assert result.box_03_rendimiento < 0
-        assert result.gastos_dificil_justificacion == 0.0  # No deduction on negative rendimiento
-        assert result.box_05_base == 0.0  # max(0, negative)
-        assert result.box_16_resultado == 0.0
+        assert result.c03_rendimiento_neto < 0                 # negative allowed on the form
+        assert result.gastos_dificil_justificacion == 0.0      # no allowance on a loss
+        assert result.c04_veinte_pct == 0.0                    # 20% of the positive 03 only
+        assert result.c19_resultado == -100.0
 
-    def test_q2_accumulates_prior_q1_payment(self, db_conn):
-        # Insert Q1 transaction
+    def test_q2_chains_q1_from_the_app_not_tax_filing_status(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
-        # Insert Q2 transaction
         _insert_tx(db_conn, id="t2", created_date="2025-04-15T10:00:00",
                    converted_amount=1000.0, activity_type="COACHING")
-        # Save Q1 Modelo 130 as COMPUTED with amount 190 (after 5% deduction)
+        # The old engine summed tax_filing_status amounts into "previous payments"; box 05
+        # is now Σ positive 07 of the earlier quarters, so this row must be ignored.
         db_conn.execute(
             """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur)
-               VALUES (2025, '130', 1, 'COMPUTED', 190.0)"""
+               VALUES (2025, '130', 1, 'COMPUTED', 999.0)"""
         )
         db_conn.commit()
         result = compute_modelo_130(2025, 2, db_conn)
-        # Two €1000 gross IVA_ES_21 tx → ex-VAT base each 1000 / 1.21 = 826.45,
-        # YTD income = 826.45 + 826.45 = 1652.90
-        assert result.box_01_ingresos == pytest.approx(1652.90)  # YTD
-        assert result.box_14_pagos_anteriores == pytest.approx(190.0)
-        # rendimiento neto previo = 1652.90, 5% = 82.65, rendimiento neto = 1570.25
-        # 20% of 1570.25 = 314.05 - 190 prior = 124.05
+        # YTD income 826.45 × 2 = 1652.90; 5% = 82.65; 03 = 1570.25; 04 = 314.05
+        assert result.c01_ingresos == pytest.approx(1652.90)
         assert result.gastos_dificil_justificacion == pytest.approx(82.65)
-        assert result.rendimiento_neto == pytest.approx(1570.25)
-        assert result.box_16_resultado == pytest.approx(124.05)
+        assert result.c03_rendimiento_neto == pytest.approx(1570.25)
+        # 05 = app Q1's 07 (157.03); 07 = 314.05 − 157.03 = 157.02; 14 = 19 = 57.02
+        assert result.c05_pagos_anteriores == pytest.approx(157.03)
+        assert result.c07_pago_fraccionado == pytest.approx(157.02)
+        assert result.c19_resultado == pytest.approx(57.02)
 
 
 # ---------------------------------------------------------------------------

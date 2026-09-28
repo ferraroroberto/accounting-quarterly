@@ -224,6 +224,28 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 # Sub-section C: Modelo 130
 # ---------------------------------------------------------------------------
 
+_M130_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("I. Actividades económicas en estimación directa (año acumulado)", (
+        ("01", "Ingresos computables"), ("02", "Gastos fiscalmente deducibles"),
+        ("03", "Rendimiento neto (01 − 02)"), ("04", "20% del importe positivo de 03"),
+        ("05", "Pagos fraccionados de trimestres anteriores"),
+        ("06", "Retenciones e ingresos a cuenta"), ("07", "Pago fraccionado previo (04 − 05 − 06)"),
+    )),
+    ("II. Actividades agrícolas, ganaderas, forestales y pesqueras", (
+        ("08", "Volumen de ingresos"), ("09", "2% de 08"), ("10", "Retenciones e ingresos a cuenta"),
+        ("11", "Pago fraccionado previo (09 − 10)"),
+    )),
+    ("III. Total liquidación", (
+        ("12", "Suma de pagos fraccionados previos (07 + 11)"),
+        ("13", "Minoración art. 110.3.c RIRPF"), ("14", "Diferencia (12 − 13)"),
+        ("15", "Resultados negativos de trimestres anteriores"),
+        ("16", "Deducción préstamo vivienda habitual"), ("17", "Total (14 − 15 − 16)"),
+        ("18", "Resultado de la autoliquidación anterior (complementaria)"),
+        ("19", "Resultado de la autoliquidación (17 − 18)"),
+    )),
+)
+
+
 def _render_modelo_130(year: int, quarter: int,
                        bundle: dict[str, tuple[Any, str]]) -> None:
     st.subheader("C. Modelo 130 — IRPF Trimestral")
@@ -235,33 +257,52 @@ def _render_modelo_130(year: int, quarter: int,
     assert isinstance(result, Modelo130Result)
 
     st.caption(f"Stored calculation: {computed_at}")
-    st.markdown(f"**Period:** {_quarter_label(quarter)} {year} — YTD cumulative")
-    st.divider()
+    st.markdown(f"**Period:** {_quarter_label(quarter)} {year} — boxes 01–07 are year-to-date")
 
-    st.markdown("##### INGRESOS Y GASTOS (year-to-date)")
+    result_val = result.c19_resultado
     col1, col2, col3 = st.columns(3)
-    col1.metric("Box 01 — Ingresos del periodo", _fmt_eur(result.box_01_ingresos))
-    col2.metric("Box 02 — Gastos deducibles", _fmt_eur(result.box_02_gastos))
-    col3.metric("Box 03 — Rendimiento neto (01 − 02)", _fmt_eur(result.box_03_rendimiento))
+    col1.metric("Box 19 — Resultado", _fmt_eur(result_val),
+                delta=("Negativa (carried to box 15)" if result_val < 0
+                       else "To pay" if result_val > 0 else "Resultado cero"),
+                delta_color="inverse" if result_val < 0 else "normal")
+    col2.metric("Negative results pending for later quarters", _fmt_eur(result.negativos_pendientes_posteriores))
+    col3.metric("Box 13 reduction", _fmt_eur(result.c13_minoracion))
+
+    # AEAT boxes in form order; zero boxes are hidden except the key totals.
+    boxes = result.aeat_boxes()
+    always = {"01", "02", "03", "07", "12", "14", "17", "19"}
+    for title, rows in _M130_SECTIONS:
+        shown = [(b, label, boxes[b]) for b, label in rows if boxes.get(b) or b in always]
+        if not shown:
+            continue
+        st.markdown(f"##### {title}")
+        st.dataframe(
+            [{"Casilla": b, "Concepto": label, "Importe": _fmt_eur(v)} for b, label, v in shown],
+            width="stretch", hide_index=True,
+        )
+
+    st.caption(
+        f"Box 02 = real expenses {_fmt_eur(result.gastos_reales)} + 5% gastos de difícil justificación "
+        f"{_fmt_eur(result.gastos_dificil_justificacion)} = {_fmt_eur(result.c02_gastos)} · "
+        f"Box 05 source: {result.c05_source or '—'} · Box 13 from previous-year net "
+        + (f"{_fmt_eur(result.previous_year_net_yield)}" if result.previous_year_net_yield is not None else "—")
+        + f" ({result.previous_year_net_source or '—'})"
+    )
+    if result.notes:
+        st.warning(result.notes)
 
     st.divider()
-    st.markdown("##### CÁLCULO")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Box 05 — 20% de Box 03", _fmt_eur(result.box_05_base))
-    col2.metric("Box 07 — Retenciones soportadas YTD", _fmt_eur(result.box_07_retenciones))
-    col3.metric("Box 14 — Pagos fraccionados anteriores", _fmt_eur(result.box_14_pagos_anteriores))
-    col4.metric("Box 16 — Resultado a ingresar", _fmt_eur(result.box_16_resultado),
-                delta="min €0" if result.box_16_resultado == 0 else None)
-
-    st.divider()
-    _save_filing_button("130", year, quarter, result.box_16_resultado)
+    _save_filing_button("130", year, quarter, result_val)
 
     with st.expander("ℹ️ Notes"):
         st.markdown(
-            "- Box 02 comes from **Gastos Deducibles** entries in Manual Entries below.\n"
-            "- Box 07 comes from **Retenciones Soportadas** entries in Manual Entries below.\n"
-            "- Box 14 is auto-filled from previously saved Modelo 130 amounts.\n"
-            "- Stripe does not capture IRPF retentions — enter them manually."
+            "- Box 02 adds **Gastos Deducibles** manual entries; box 06 adds **Retenciones Soportadas** "
+            "manual entries (Manual Entries below) to the invoice withholdings.\n"
+            "- Boxes 05 and 15 chain from the **filed** 130s of the earlier quarters of the year when "
+            "imported (`python -m src.filed_returns import …`); otherwise from the app's own quarters.\n"
+            "- Box 13 uses the previous year's net yield: the filed Q4 130 box 03, else "
+            "`tax.previous_year_net_yield` in config, else the app's own previous-year figure.\n"
+            "- Stripe does not capture IRPF retentions — issued invoices carry them (`irpf_amount`)."
         )
 
 

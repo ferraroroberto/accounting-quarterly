@@ -34,13 +34,13 @@ flowchart TB
 
   subgraph taxcore["src/ — Spanish tax engine"]
     VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
-    TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130/349/347, OSS, EU B2C threshold, calendar"]
+    TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130 (AEAT boxes, 13 reduction, 15 carry),\n349/347, OSS, EU B2C threshold, calendar"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
     TAXVALIDATOR["tax_validator.py\ngestor-filed vs DB-computed"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
-    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY 130/349 legacy field -> AEAT box map\n(delete after #98/#99) + 390 aggregation"]
+    LEGACYBOXES["legacy_aeat_boxes.py\nTEMPORARY Modelo 390 = sum of the four 303s\n(until the annual pack, #103)"]
   end
 
   subgraph localfiles["git-ignored local config"]

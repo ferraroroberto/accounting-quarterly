@@ -156,31 +156,20 @@ def validate_modelo_130(
         model="130", period=period, filed_date=filing["filed_date"],
         source=filing.get("source", "yaml"),
     )
-    # box_05_base in code = casilla 04 in PDF (20% of rendimiento)
-    # box_07_retenciones in code = casilla 06 in PDF
-    # box_14_pagos_anteriores in code = casilla 05 in PDF
+    boxes = computed.aeat_boxes()
     result.lines = [
-        ValidationLine("01", "Ingresos computables YTD",
-                        v.get("01_ingresos_ytd"), computed.box_01_ingresos),
-        ValidationLine("02", "Gastos fiscalmente deducibles YTD",
-                        v.get("02_gastos_ytd"), computed.box_02_gastos),
-        ValidationLine("03", "Rendimiento neto previo (01 - 02)",
-                        v.get("03_rendimiento_neto"), computed.box_03_rendimiento),
-        ValidationLine("03b", "5% gastos de difícil justificación (max €2,000)",
-                        v.get("03b_gastos_dificil"), computed.gastos_dificil_justificacion),
-        ValidationLine("03c", "Rendimiento neto (03 - 03b)",
-                        v.get("03c_rendimiento_final"), computed.rendimiento_neto),
-        ValidationLine("04", "20% del rendimiento neto (base pago fraccionado)",
-                        v.get("04_veinte_pct"), computed.box_05_base),
-        ValidationLine("05", "Trimestres anteriores (pagos previos imputables)",
-                        v.get("05_trimestres_anteriores"), computed.box_14_pagos_anteriores),
-        ValidationLine("06", "Retenciones soportadas YTD",
-                        v.get("06_retenciones_ytd"), computed.box_07_retenciones),
+        ValidationLine("01", "Ingresos computables YTD", v.get("01_ingresos_ytd"), boxes["01"]),
+        ValidationLine("02", "Gastos fiscalmente deducibles YTD (incl. 5% difícil justificación)",
+                        v.get("02_gastos_ytd"), boxes["02"]),
+        ValidationLine("03", "Rendimiento neto (01 - 02)", v.get("03_rendimiento_neto"), boxes["03"]),
+        ValidationLine("04", "20% del rendimiento neto positivo", v.get("04_veinte_pct"), boxes["04"]),
+        ValidationLine("05", "Pagos fraccionados de trimestres anteriores",
+                        v.get("05_trimestres_anteriores"), boxes["05"]),
+        ValidationLine("06", "Retenciones soportadas YTD", v.get("06_retenciones_ytd"), boxes["06"]),
         ValidationLine("07", "Pago fraccionado previo (04 - 05 - 06)",
-                        v.get("07_pago_fraccionado"),
-                        round(computed.box_05_base - computed.box_14_pagos_anteriores - computed.box_07_retenciones, 2)),
-        ValidationLine("19", "Resultado final (negativa / a ingresar)",
-                        v.get("19_result"), computed.box_16_resultado),
+                        v.get("07_pago_fraccionado"), boxes["07"]),
+        ValidationLine("19", "Resultado de la autoliquidación (negativa / a ingresar)",
+                        v.get("19_result"), boxes["19"]),
     ]
     return result
 
@@ -320,7 +309,7 @@ def validate_modelo_390(
         ValidationLine("108",    "Total volumen de operaciones",
                         v.get("108_total_volumen"),  app["108"]),
         ValidationLine("130/01", "Ingresos anuales computables (M130 cross-check)",
-                        m130_filed_ingresos,  m130.box_01_ingresos),
+                        m130_filed_ingresos,  m130.c01_ingresos),
     ]
     return result
 

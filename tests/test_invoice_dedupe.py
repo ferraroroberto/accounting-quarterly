@@ -343,8 +343,8 @@ class TestApplyAndEngine:
         dup_id = _add(db, filename="b.pdf", file_hash="SAMEHASH", invoice_number="N2",
                       invoice_date="2025-01-06", subtotal_eur=100.0, iva_amount=21.0)
         assert compute_modelo_303(2025, 1, conn).box_29_cuota_soportado == pytest.approx(42.0)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == pytest.approx(200.0)
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == pytest.approx(200.0)
 
         set_invoice_exclusion(dup_id, True, "duplicate", db_path=db)
         assert compute_modelo_303(2025, 1, conn).box_29_cuota_soportado == pytest.approx(21.0)
-        assert compute_modelo_130(2025, 1, conn).box_02_gastos == pytest.approx(100.0)
+        assert compute_modelo_130(2025, 1, conn).c02_gastos == pytest.approx(100.0)

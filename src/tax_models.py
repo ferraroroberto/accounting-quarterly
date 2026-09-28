@@ -189,24 +189,83 @@ class Modelo303Result:
         return self.c120_no_sujetas_localizacion
 
 
+# AEAT Modelo 130 box number -> Modelo130Result field, in form order. Source:
+# the AEAT Sede "Modelo 130 — Instrucciones" (section I estimación directa
+# 01–07, section II agrícolas 08–11, section III total liquidación 12–19).
+MODELO130_BOX_FIELDS: dict[str, str] = {
+    "01": "c01_ingresos",
+    "02": "c02_gastos",
+    "03": "c03_rendimiento_neto",
+    "04": "c04_veinte_pct",
+    "05": "c05_pagos_anteriores",
+    "06": "c06_retenciones",
+    "07": "c07_pago_fraccionado",
+    "08": "c08_ingresos_agricolas",
+    "09": "c09_dos_pct_agricolas",
+    "10": "c10_retenciones_agricolas",
+    "11": "c11_pago_fraccionado_agricolas",
+    "12": "c12_suma_pagos",
+    "13": "c13_minoracion",
+    "14": "c14_diferencia",
+    "15": "c15_negativos_anteriores",
+    "16": "c16_deduccion_vivienda",
+    "17": "c17_total",
+    "18": "c18_complementaria",
+    "19": "c19_resultado",
+}
+
+
 @dataclass
 class Modelo130Result:
+    """Modelo 130 (quarterly IRPF advance) with fields named after the AEAT boxes.
+
+    ``cNN_*`` fields hold the value to type into box NN (year-to-date where the
+    form says so); ``aeat_boxes()`` returns them keyed by the printed box
+    number. Only 04 and 12 are floored at 0 — the form lets 03, 07, 14, 17 and
+    19 be negative. The remaining fields are context, not boxes.
+    """
     year: int
     quarter: int
-    # Ingresos y gastos YTD
-    box_01_ingresos: float = 0.0       # Ingresos computables YTD
-    box_02_gastos: float = 0.0         # Gastos deducibles YTD
-    box_03_rendimiento: float = 0.0    # Box 01 - Box 02 (rendimiento neto previo)
-    # Gastos de difícil justificación (5% of rendimiento neto previo, capped €2,000/year)
-    gastos_dificil_justificacion: float = 0.0
-    rendimiento_neto: float = 0.0      # box_03 - gastos_dificil_justificacion
-    # Cálculo
-    box_05_base: float = 0.0           # 20% × rendimiento_neto
-    box_07_retenciones: float = 0.0    # Retenciones soportadas YTD
-    box_14_pagos_anteriores: float = 0.0  # Previous quarters paid
-    box_16_resultado: float = 0.0      # max(0, Box 05 - Box 07 - Box 14)
+    # --- I. Actividades económicas en estimación directa (YTD) ---
+    c01_ingresos: float = 0.0             # ingresos computables YTD
+    c02_gastos: float = 0.0               # gastos reales + 5% difícil justificación
+    c03_rendimiento_neto: float = 0.0     # 01 − 02 (negative allowed)
+    c04_veinte_pct: float = 0.0           # 20% × max(0, 03)
+    c05_pagos_anteriores: float = 0.0     # Σ positive 07 − Σ 16 of earlier quarters of the year
+    c06_retenciones: float = 0.0          # retenciones e ingresos a cuenta YTD
+    c07_pago_fraccionado: float = 0.0     # 04 − 05 − 06 (negative allowed)
+    # --- II. Actividades agrícolas, ganaderas, forestales y pesqueras (not used) ---
+    c08_ingresos_agricolas: float = 0.0
+    c09_dos_pct_agricolas: float = 0.0
+    c10_retenciones_agricolas: float = 0.0
+    c11_pago_fraccionado_agricolas: float = 0.0
+    # --- III. Total liquidación ---
+    c12_suma_pagos: float = 0.0           # max(0, 07 + 11)
+    c13_minoracion: float = 0.0           # art. 110.3.c RIRPF, by the previous year's net yield
+    c14_diferencia: float = 0.0           # 12 − 13 (negative allowed)
+    c15_negativos_anteriores: float = 0.0  # unused negative 19s of the year, ≤ positive 14
+    c16_deduccion_vivienda: float = 0.0   # housing-loan deduction (not applicable)
+    c17_total: float = 0.0                # 14 − 15 − 16 (negative allowed)
+    c18_complementaria: float = 0.0       # complementary return only
+    c19_resultado: float = 0.0            # 17 − 18 (negative allowed; carried into 15 later)
+    # --- Context (not boxes) ---
+    gastos_reales: float = 0.0            # 02 without the 5% allowance
+    gastos_dificil_justificacion: float = 0.0  # the 5% allowance included in 02
+    previous_year_net_yield: Optional[float] = None
+    previous_year_net_source: str = ""    # filed | config | app
+    c05_source: str = ""                  # filed | app_chain | mixed | none
+    negativos_pendientes_anteriores: float = 0.0   # unused negative 19s before this quarter
+    negativos_pendientes_posteriores: float = 0.0  # left for the next quarters of the year
     notes: str = ""
     audit: list = field(default_factory=list)  # list[AuditEntry]
+
+    def aeat_boxes(self) -> dict[str, float]:
+        """Boxes "01".."19" keyed as printed on the AEAT form, in form order.
+
+        Interface consumed by the reconciliation view (#100) and the filing
+        sheet (#101). Boxes 08–11, 16 and 18 are always 0 for this taxpayer.
+        """
+        return {box: float(getattr(self, name)) for box, name in MODELO130_BOX_FIELDS.items()}
 
 
 @dataclass
@@ -349,7 +408,7 @@ class AuditEntry:
     model: str            # "303", "130", "349", "OSS", "347"
     year: int
     quarter: int          # 0 for annual models
-    cell: str             # field name, e.g. "box_01_base"
+    cell: str             # field name, e.g. "c07_base"
     label: str            # human-readable, e.g. "Base imponible 21% (IVA devengado)"
     formula: str          # text description of the formula/rule applied
     value: float          # computed value in EUR

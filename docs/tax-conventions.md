@@ -25,6 +25,14 @@ Abbreviations: **LIVA** Ley 37/1992 del IVA · **RIVA** RD 1624/1992 · **LIRPF*
 
 **External accountant.** Most book on the invoice date too, which is why the app does. Where a sale invoiced in quarter N was supplied in quarter N−1, a strict reading puts its output VAT in N−1; the app does not do that. Vendors that invoice a monthly fee in the following month push the last month of each quarter into the next one: this is expected, not a missing invoice.
 
+### 1.1 Activity start date (a floor on every range above)
+
+**Rule.** `tax.activity_start_date` (ISO date, absent by default) is a lower bound on the date ranges above: a Stripe charge or invoice dated **before** it is excluded from every model (303, 130, 349, 390, 347), and the 303 box 110 credit chain and the 130 boxes 05/15 chain never reach back before it — a period that ends before the start date gets `c110_source = "none"` / `c05_source = "none"` instead of chaining into pre-activity data. A record dated on the start date itself is counted. An audit note on the 303 and 130 gives the count and total of what was excluded. Absent the key, every range keeps its natural bound (unchanged behaviour, issue #133).
+
+**Legal basis.** A return only covers the period in which the taxable person carried on the activity; nothing accrues before *alta* in the Censo de Empresarios (Modelo 036/037) and the corresponding IAE registration (art. 5 LIVA, art. 27.1 LIRPF activities begin on the date declared to the AEAT).
+
+**External accountant.** A few Stripe test charges or a pre-registration invoice sometimes linger in the data from before the *alta*; the accountant's own working papers exclude them by hand. Setting this key does the same thing consistently, without editing or deleting the underlying rows.
+
 ---
 
 ## 2. Output VAT (sales)

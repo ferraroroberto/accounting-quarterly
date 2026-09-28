@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from src.config import get_stripe_api_key
@@ -31,7 +33,9 @@ def fetch_charges(
 
     Extracts additional metadata when available:
     - card_country: issuing country of the payment card (from payment method details)
-    - email: customer email
+    - email: customer email, falling back to the charge's billing_details.email
+      when the customer has none on file
+    - billing_country: the charge's billing_details.address.country
     - balance_transaction fees
     """
     stripe = _get_stripe()
@@ -96,6 +100,17 @@ def fetch_charges(
                 if charge.customer and hasattr(charge.customer, "email"):
                     email_meta = charge.customer.email
 
+                billing_details = getattr(charge, "billing_details", None)
+                billing_email = getattr(billing_details, "email", None) if billing_details else None
+                billing_address = getattr(billing_details, "address", None) if billing_details else None
+                billing_country = getattr(billing_address, "country", None) if billing_address else None
+
+                # Customer email is often blank on a raw charge; the charge's own
+                # billing_details.email is filled in by Stripe Checkout/Payment
+                # Element even without a Customer object.
+                if not email_meta and billing_email:
+                    email_meta = billing_email
+
                 card_country = None
                 pmd = getattr(charge, "payment_method_details", None)
                 if pmd:
@@ -136,6 +151,7 @@ def fetch_charges(
                     currency=currency,
                     email_meta=email_meta,
                     card_country=card_country,
+                    billing_country=billing_country,
                     stripe_customer_id=customer_id,
                     stripe_payment_intent_id=payment_intent_id,
                     stripe_balance_transaction_id=balance_txn_id,
@@ -188,3 +204,84 @@ def check_permissions(api_key: Optional[str] = None) -> dict[str, bool]:
             permissions[resource_name] = False
 
     return permissions
+
+
+@dataclass
+class BillingBackfillResult:
+    """Outcome of a raw-source billing-details backfill pass."""
+    scanned: int = 0
+    updated: int = 0
+    email_filled: int = 0
+    country_filled: int = 0
+    dry_run: bool = True
+
+
+def backfill_billing_details_from_raw_source(
+    dry_run: bool = True,
+    db_path: Optional[str | Path] = None,
+) -> BillingBackfillResult:
+    """Fill empty ``email_meta`` / ``billing_country`` from stored ``raw_source_json``.
+
+    Rows fetched before the billing_details fallback existed already have the
+    full Stripe charge saved as ``raw_source_json`` (see :func:`fetch_charges`),
+    so this re-parses ``billing_details.email`` / ``billing_details.address.country``
+    out of that saved JSON with no Stripe API call. A non-empty stored value is
+    never overwritten. With ``dry_run=True`` (the default) nothing is written;
+    the returned counts describe what *would* change.
+    """
+    # Imported lazily to avoid a module-load-time dependency between the two
+    # data-access modules; src.database does not import src.stripe_client.
+    from src.database import _ensure_transactions_schema, get_connection
+
+    conn = get_connection(db_path)
+    result = BillingBackfillResult(dry_run=dry_run)
+    try:
+        _ensure_transactions_schema(conn)
+        rows = conn.execute(
+            "SELECT id, email_meta, billing_country, raw_source_json FROM transactions "
+            "WHERE raw_source_json IS NOT NULL "
+            "AND (email_meta IS NULL OR email_meta = '' "
+            "OR billing_country IS NULL OR billing_country = '')"
+        ).fetchall()
+        result.scanned = len(rows)
+
+        for row in rows:
+            try:
+                raw = json.loads(row["raw_source_json"])
+            except (TypeError, ValueError):
+                continue
+
+            billing = raw.get("billing_details") or {}
+            billing_email = billing.get("email") or None
+            billing_country = ((billing.get("address") or {}).get("country")) or None
+
+            fill_email = bool(billing_email) and not row["email_meta"]
+            fill_country = bool(billing_country) and not row["billing_country"]
+            if not (fill_email or fill_country):
+                continue
+
+            new_email = row["email_meta"] or billing_email
+            new_country = row["billing_country"] or billing_country
+
+            if fill_email:
+                result.email_filled += 1
+            if fill_country:
+                result.country_filled += 1
+            result.updated += 1
+
+            if not dry_run:
+                conn.execute(
+                    "UPDATE transactions SET email_meta = ?, billing_country = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (new_email, new_country, row["id"]),
+                )
+
+        if not dry_run:
+            conn.commit()
+            log.info(
+                "ℹ️ Backfilled billing details: %d/%d rows updated (%d emails, %d countries)",
+                result.updated, result.scanned, result.email_filled, result.country_filled,
+            )
+    finally:
+        conn.close()
+    return result

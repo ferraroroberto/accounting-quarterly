@@ -23,6 +23,42 @@ def _get_stripe():
         raise StripeAPIError("stripe library not installed: pip install stripe") from exc
 
 
+def _field(obj: object, name: str) -> object:
+    """Read ``name`` off a Stripe object or a plain dict (raw JSON)."""
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def fee_split_eur(balance_transaction: object) -> tuple[Optional[float], Optional[float]]:
+    """(stripe part, application part) of a balance transaction's fee, in EUR.
+
+    ``fee_details`` amounts are in the balance currency, in cents. The
+    ``application_fee`` entries are what a connected platform keeps; every
+    other entry (``stripe_fee``, ``tax`` on it, pass-through fees) is Stripe's
+    and is already expensed from the monthly Stripe invoices. Returns
+    ``(None, None)`` — split unknown, never guessed — when the balance
+    transaction was not expanded or a detail is not in EUR.
+    """
+    details = _field(balance_transaction, "fee_details") if balance_transaction else None
+    if details is None:
+        return None, None
+    stripe_cents = 0
+    application_cents = 0
+    for detail in details:
+        currency = str(_field(detail, "currency") or "").lower()
+        if currency != "eur":
+            log.warning("⚠️ Balance transaction %s has a %s fee detail; fee split left unknown",
+                        _field(balance_transaction, "id"), currency or "blank-currency")
+            return None, None
+        amount = int(_field(detail, "amount") or 0)
+        if _field(detail, "type") == "application_fee":
+            application_cents += amount
+        else:
+            stripe_cents += amount
+    return stripe_cents / 100.0, application_cents / 100.0
+
+
 def fetch_charges(
     start_date: datetime,
     end_date: datetime,
@@ -36,7 +72,7 @@ def fetch_charges(
     - email: customer email, falling back to the charge's billing_details.email
       when the customer has none on file
     - billing_country: the charge's billing_details.address.country
-    - balance_transaction fees
+    - balance_transaction fees, with the stripe / application split (fee_split_eur)
     """
     stripe = _get_stripe()
     stripe.api_key = api_key or get_stripe_api_key()
@@ -95,6 +131,7 @@ def fetch_charges(
                 fee_eur = 0.0
                 if charge.balance_transaction and hasattr(charge.balance_transaction, "fee"):
                     fee_eur = charge.balance_transaction.fee / 100.0
+                fee_stripe_eur, fee_application_eur = fee_split_eur(charge.balance_transaction)
 
                 email_meta = None
                 if charge.customer and hasattr(charge.customer, "email"):
@@ -148,6 +185,8 @@ def fetch_charges(
                     converted_amount_refunded=amount_refunded_eur,
                     description=description,
                     fee=fee_eur,
+                    fee_stripe=fee_stripe_eur,
+                    fee_application=fee_application_eur,
                     currency=currency,
                     email_meta=email_meta,
                     card_country=card_country,
@@ -282,6 +321,72 @@ def backfill_billing_details_from_raw_source(
                 "ℹ️ Backfilled billing details: %d/%d rows updated (%d emails, %d countries)",
                 result.updated, result.scanned, result.email_filled, result.country_filled,
             )
+    finally:
+        conn.close()
+    return result
+
+
+@dataclass
+class FeeSplitBackfillResult:
+    """Outcome of a fee-split backfill pass over a re-fetched date range."""
+    fetched: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    not_stored: int = 0
+    split_unknown: int = 0
+    dry_run: bool = True
+
+
+def backfill_fee_split(
+    start_date: datetime,
+    end_date: datetime,
+    dry_run: bool = True,
+    db_path: Optional[str | Path] = None,
+    api_key: Optional[str] = None,
+) -> FeeSplitBackfillResult:
+    """Re-fetch ``[start_date, end_date]`` from Stripe and fill the stored fee split (#135).
+
+    Only ``fee_stripe`` / ``fee_application`` of rows already in ``transactions``
+    are written — no insert, no reclassification, no other column touched, so
+    a closed quarter's amounts and classifications cannot move. A charge the
+    API returns without a readable split is counted, never guessed. With
+    ``dry_run=True`` (the default) nothing is written.
+    """
+    from src.database import _ensure_transactions_schema, get_connection
+
+    payments = fetch_charges(start_date, end_date, api_key=api_key)
+    conn = get_connection(db_path)
+    result = FeeSplitBackfillResult(fetched=len(payments), dry_run=dry_run)
+    try:
+        _ensure_transactions_schema(conn)
+        for p in payments:
+            if p.fee_stripe is None or p.fee_application is None:
+                result.split_unknown += 1
+                continue
+            row = conn.execute(
+                "SELECT fee_stripe, fee_application FROM transactions WHERE id = ?", (p.id,)
+            ).fetchone()
+            if row is None:
+                result.not_stored += 1
+                continue
+            if row["fee_stripe"] == p.fee_stripe and row["fee_application"] == p.fee_application:
+                result.unchanged += 1
+                continue
+            result.updated += 1
+            if not dry_run:
+                conn.execute(
+                    "UPDATE transactions SET fee_stripe = ?, fee_application = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (p.fee_stripe, p.fee_application, p.id),
+                )
+        if not dry_run:
+            conn.commit()
+        log.info(
+            "ℹ️ Fee split backfill %s..%s: %d fetched, %d %s, %d unchanged, %d not stored, %d split unknown",
+            start_date.date(), end_date.date(), result.fetched, result.updated,
+            "would update" if dry_run else "updated", result.unchanged, result.not_stored,
+            result.split_unknown,
+        )
     finally:
         conn.close()
     return result

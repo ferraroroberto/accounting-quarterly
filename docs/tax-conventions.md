@@ -187,7 +187,7 @@ Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA
 | Box | What the app puts there |
 |---|---|
 | 01 | Stripe VAT bases (ex-VAT) + issued invoices **gross** of the IRPF withheld (`eur_received` when set) + exchange differences of the period |
-| 02 | Real expenses + the 5% allowance. Real expenses = expense invoices × `deductible_pct_irpf` (excluded rows and capital assets out) + RETA contributions as paid, **net of refunds** + depreciation + manual `GASTOS_DEDUCIBLES` |
+| 02 | Real expenses + the 5% allowance. Real expenses = expense invoices × `deductible_pct_irpf` (excluded rows and capital assets out) + RETA contributions as paid, **net of refunds** + Stripe platform (application) fees + depreciation + manual `GASTOS_DEDUCIBLES` |
 | 03 · 04 | 03 = 01 − 02 (may be negative); 04 = 20% of a positive 03 |
 | 05 | Σ positive 07 − Σ 16 of the year's earlier quarters |
 | 06 | IRPF withheld on issued invoices (`irpf_amount`, exact cents) + manual `RETENCIONES_SOPORTADAS` |
@@ -201,6 +201,7 @@ Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA
 - **5% allowance** (*gastos de difícil justificación*): 5% of the positive (01 − real expenses), capped at €2,000 per year, only when `tax.regime` is `estimacion_directa_simplificada`. The audit shows it as `c02_gastos_dificil_justificacion` next to `c02_gastos_reales`.
 - **Box 13 source:** the previous year's **filed** Q4 130 box 03 (imported receipt), else `tax.previous_year_net_yield`, else the app's own previous-year figure (no activity counts as 0). It applies even when 12 is 0, leaving a negative 14 that a later quarter uses through 15.
 - **Boxes 05 and 15** chain through each earlier quarter's **filed** 130 when its receipt is imported, else the app's own computation (`c05_source`: `filed`, `app_chain`, `mixed`, `none`).
+- **Stripe fees:** each charge's balance-transaction fee is stored split in two (`fee_stripe`, `fee_application`, EUR, from `fee_details`). Stripe's own processing fee (every entry other than `application_fee`) is expensed from Stripe's monthly tax invoices in the ledger, so it is **not** added again. The `application_fee` a connected platform keeps (e.g. a newsletter platform's percentage of each subscription) is on no invoice to the taxpayer, so its year-to-date total is added to real expenses by charge date, for the same classified charges as box 01 (audit cell `c02_platform_fees`, one record per charge). Refunds follow the charge's balance transaction: a platform fee the platform did not return stays an expense. A charge fetched before the split was stored has an unknown split: it is counted in the audit and the result notes ("fee split unknown for N Stripe charge(s); re-fetch"), never estimated. Fill it with `close_quarter.py stripe-fetch --backfill-fee-split --from D --to D`. The 303 treatment of the platform fee (possible reverse charge on a non-EU platform's service) is not decided yet.
 - **RETA:** imported from the bank export (`reta` step, Seguridad Social tab). Debits are contributions; credits (e.g. an automatic refund of excess contributions for multiple activity, *pluriactividad*) are stored negative and net off in the period received.
 
 **Legal basis.**
@@ -208,12 +209,14 @@ Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA
 - Box 13: art. 110.3.c RIRPF.
 - Allowance: the 5% is set by art. 30.2ª RIRPF and the €2,000 annual cap by art. 30.2.4ª LIRPF. The cap applies across all the taxpayer's activities.
 - Withholdings on professional income: 15%, or 7% in the year the activity starts and the two following (art. 101.5.a LIRPF, art. 95.1 RIRPF). They are payments on account by the client, so the income is the gross amount and the withholding is deducted in box 06.
+- Platform fees: an expense necessary to obtain the activity's income (art. 28.1 LIRPF, which applies the corporate-tax rules to the net yield). The supporting document is the Stripe balance transaction and the platform's own statement of fees.
 - RETA contributions paid by the business owner are a deductible expense of the activity (AEAT *Manual práctico de Renta*, rendimientos de actividades económicas en estimación directa, gastos fiscalmente deducibles).
 - Exemption: a professional does not have to file the 130 if at least 70% of the previous year's activity income was subject to withholding (art. 109 RIRPF).
 
 **External accountant.**
 - May book an issued invoice net of the withholding (income too low, withholding lost from 06). That is a `gestor_error`; the invoice's own rounding should also show the exact cents.
 - Shows the 5% inside box 02, as the app does since #98.
+- May expense only what arrives as an invoice, which leaves the platform fees out of box 02 and overstates the net yield: `gestor_error`. Returns filed before #135 from the app's own figures have the same gap.
 - May book a refund of RETA contributions in the year of the contributions instead of the year received; there are views both ways, so catalogue as `convention`.
 
 ---

@@ -14,7 +14,7 @@ import pytest
 
 from src.database import init_db, load_classified_payments, upsert_payments
 from src.models import Payment
-from src.stripe_client import backfill_billing_details_from_raw_source, fetch_charges
+from src.stripe_client import backfill_billing_details_from_raw_source, backfill_fee_split, fetch_charges
 
 
 # ---------------------------------------------------------------------------
@@ -235,3 +235,119 @@ class TestBackfillFromRawSource:
 
         assert result.scanned == 0
         assert result.updated == 0
+
+
+# ---------------------------------------------------------------------------
+# Fee split: Stripe fee vs a connected platform's application fee (#135)
+# ---------------------------------------------------------------------------
+
+def _balance_txn(fee: int, details: list[tuple[str, int, str]]) -> SimpleNamespace:
+    return SimpleNamespace(
+        id="txn_synthetic_1", fee=fee,
+        fee_details=[SimpleNamespace(type=t, amount=a, currency=c) for t, a, c in details],
+    )
+
+
+class TestFetchChargesFeeSplit:
+    def test_application_fee_split_from_fee_details(self, patch_stripe):
+        bt = _balance_txn(140, [("stripe_fee", 40, "eur"), ("application_fee", 100, "eur")])
+        patch_stripe([_fake_charge(currency="eur", balance_transaction=bt)])
+
+        p = fetch_charges(datetime(2025, 1, 1), datetime(2025, 1, 31), api_key="sk_test_fake")[0]
+
+        assert (p.fee, p.fee_stripe, p.fee_application) == (1.40, 0.40, 1.00)
+
+    def test_no_application_fee_is_a_known_zero(self, patch_stripe):
+        bt = _balance_txn(55, [("stripe_fee", 45, "eur"), ("tax", 10, "eur")])
+        patch_stripe([_fake_charge(currency="eur", balance_transaction=bt)])
+
+        p = fetch_charges(datetime(2025, 1, 1), datetime(2025, 1, 31), api_key="sk_test_fake")[0]
+
+        assert (p.fee_stripe, p.fee_application) == (0.55, 0.0)
+
+    def test_unexpanded_balance_transaction_leaves_split_unknown(self, patch_stripe):
+        patch_stripe([_fake_charge(balance_transaction="txn_synthetic_unexpanded")])
+
+        p = fetch_charges(datetime(2025, 1, 1), datetime(2025, 1, 31), api_key="sk_test_fake")[0]
+
+        assert (p.fee_stripe, p.fee_application) == (None, None)
+
+    def test_non_eur_fee_detail_is_not_guessed(self, patch_stripe):
+        bt = _balance_txn(140, [("stripe_fee", 40, "usd"), ("application_fee", 100, "usd")])
+        patch_stripe([_fake_charge(balance_transaction=bt)])
+
+        p = fetch_charges(datetime(2025, 1, 1), datetime(2025, 1, 31), api_key="sk_test_fake")[0]
+
+        assert (p.fee_stripe, p.fee_application) == (None, None)
+
+
+def _split_row(db_path, pid: str) -> tuple:
+    from src.database import get_connection
+
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT fee_stripe, fee_application FROM transactions WHERE id = ?", (pid,)).fetchone()
+        return tuple(row)
+    finally:
+        conn.close()
+
+
+class TestUpsertFeeSplit:
+    def test_insert_stores_the_split(self, tmp_db):
+        init_db(tmp_db)
+        upsert_payments([_stored_payment("ch_f1", None, fee_stripe=0.4, fee_application=1.0)], db_path=tmp_db)
+        assert _split_row(tmp_db, "ch_f1") == (0.4, 1.0)
+
+    def test_refetch_fills_a_legacy_row(self, tmp_db):
+        init_db(tmp_db)
+        upsert_payments([_stored_payment("ch_f2", None)], db_path=tmp_db)
+        assert _split_row(tmp_db, "ch_f2") == (None, None)
+
+        _, updated = upsert_payments([_stored_payment("ch_f2", None, fee_stripe=0.4, fee_application=1.0)],
+                                     db_path=tmp_db)
+
+        assert updated == 1
+        assert _split_row(tmp_db, "ch_f2") == (0.4, 1.0)
+
+    def test_unknown_split_never_overwrites_a_known_one(self, tmp_db):
+        init_db(tmp_db)
+        upsert_payments([_stored_payment("ch_f3", None, fee_stripe=0.4, fee_application=1.0)], db_path=tmp_db)
+        changed = _stored_payment("ch_f3", None).model_copy(update={"description": "changed"})
+        upsert_payments([changed], db_path=tmp_db)
+        assert _split_row(tmp_db, "ch_f3") == (0.4, 1.0)
+
+
+class TestBackfillFeeSplit:
+    @pytest.fixture
+    def refetch(self, monkeypatch):
+        def _set(payments: list[Payment]) -> None:
+            monkeypatch.setattr("src.stripe_client.fetch_charges", lambda *a, **k: payments)
+        return _set
+
+    def test_fills_only_the_split_of_stored_rows(self, tmp_db, refetch):
+        init_db(tmp_db)
+        upsert_payments([_stored_payment("ch_b1", None, email_meta="kept@example.com")], db_path=tmp_db)
+        refetch([
+            _stored_payment("ch_b1", None, fee_stripe=0.4, fee_application=1.0).model_copy(
+                update={"description": "refetched"}),
+            _stored_payment("ch_b2", None, fee_stripe=0.3, fee_application=0.0),     # not stored
+            _stored_payment("ch_b3", None),                                           # split unreadable
+        ])
+
+        result = backfill_fee_split(datetime(2025, 1, 1), datetime(2025, 3, 31), dry_run=False, db_path=tmp_db)
+
+        assert (result.fetched, result.updated, result.not_stored, result.split_unknown) == (3, 1, 1, 1)
+        assert _split_row(tmp_db, "ch_b1") == (0.4, 1.0)
+        stored = load_classified_payments(db_path=tmp_db)
+        assert [p.id for p in stored] == ["ch_b1"]                      # nothing inserted
+        assert (stored[0].description, stored[0].email_meta) == ("", "kept@example.com")   # untouched
+
+    def test_dry_run_writes_nothing(self, tmp_db, refetch):
+        init_db(tmp_db)
+        upsert_payments([_stored_payment("ch_b4", None)], db_path=tmp_db)
+        refetch([_stored_payment("ch_b4", None, fee_stripe=0.4, fee_application=1.0)])
+
+        result = backfill_fee_split(datetime(2025, 1, 1), datetime(2025, 3, 31), dry_run=True, db_path=tmp_db)
+
+        assert result.updated == 1
+        assert _split_row(tmp_db, "ch_b4") == (None, None)

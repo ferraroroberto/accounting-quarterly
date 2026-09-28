@@ -38,6 +38,9 @@ Other subcommands:
     stripe-fetch  Fetch + classify + persist the quarter's Stripe charges and
                   print the full review table (default geo rule ⚠, foreign
                   eur_default charges, EU B2C threshold).
+                  --backfill-fee-split [--from D --to D] [--dry-run] instead
+                  re-fetches the range (default: the quarter) and fills only
+                  the stored rows' Stripe / platform fee split (#135).
     add-override  Add a geographic classification override (name/email
                   substring -> region) to classification_rules.json.
     reclassify    Re-run the classifier over STORED transactions from a date
@@ -223,6 +226,9 @@ def cmd_stripe_check(args: argparse.Namespace) -> int:
 
 def cmd_stripe_fetch(args: argparse.Namespace) -> int:
     from app.data_loader import get_classified_for_period, quarter_dates
+
+    if args.backfill_fee_split:
+        return _backfill_fee_split(args, *quarter_dates(args.year, args.quarter))
     from src.aggregator import calculate_grand_totals, get_transaction_count
     from src.classifier import validate_classifications
 
@@ -261,6 +267,21 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> int:
                   f"— {warning}")
 
     _print_eu_b2c_threshold(args.year, args.quarter)
+    return 0
+
+
+def _backfill_fee_split(args: argparse.Namespace, q_start: datetime, q_end: datetime) -> int:
+    from src.stripe_client import backfill_fee_split
+
+    start = datetime.strptime(args.from_date, "%Y-%m-%d") if args.from_date else q_start
+    end = (datetime.strptime(args.to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+           if args.to_date else q_end)
+    result = backfill_fee_split(start, end, dry_run=args.dry_run)
+    verb = "would update" if result.dry_run else "updated"
+    print(f"Fee split backfill {start:%Y-%m-%d}..{end:%Y-%m-%d}: {result.fetched} fetched, "
+          f"{verb} {result.updated}, {result.unchanged} unchanged, "
+          f"{result.not_stored} not stored (run stripe-fetch first), "
+          f"{result.split_unknown} without a readable split.")
     return 0
 
 
@@ -427,7 +448,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_check.add_argument("--days", type=int, default=90)
     p_check.set_defaults(func=cmd_stripe_check)
 
-    add_step("stripe-fetch", cmd_stripe_fetch, "Fetch + classify + persist the quarter, full review table")
+    p_fetch = add_step("stripe-fetch", cmd_stripe_fetch, "Fetch + classify + persist the quarter, full review table")
+    p_fetch.add_argument("--backfill-fee-split", action="store_true",
+                         help="Only fill the stored rows' Stripe/platform fee split from a re-fetch")
+    p_fetch.add_argument("--from", dest="from_date", help="YYYY-MM-DD (backfill start, default: quarter start)")
+    p_fetch.add_argument("--to", dest="to_date", help="YYYY-MM-DD (backfill end, inclusive, default: quarter end)")
+    p_fetch.add_argument("--dry-run", action="store_true", help="With --backfill-fee-split: report, don't write")
 
     p_override = sub.add_parser("add-override", help="Add a geographic classification override")
     p_override.add_argument("key", help="Substring to match (client name or email)")

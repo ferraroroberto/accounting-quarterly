@@ -63,11 +63,6 @@ LEGACY_130: tuple[LegacyBox, ...] = (
          "in 13, no negative-quarter carry in 15), so it matches 19 only in the simple case."),
 )
 
-LEGACY_349_NOTE = (
-    "The legacy 349 lists only EU B2B sales (reported under key S); intra-EU acquisitions "
-    "(key I) arrive with #99."
-)
-
 LEGACY_BOXES: dict[str, tuple[LegacyBox, ...]] = {"130": LEGACY_130}
 
 # Extra audit cells worth showing behind a box (on top of the mapped fields).
@@ -79,29 +74,14 @@ _EXTRA_AUDIT_CELLS: dict[tuple[str, str], tuple[str, ...]] = {
 
 def legacy_boxes(model: str, result: Any) -> dict[str, float]:
     """Map a legacy 130/349 engine result to AEAT-numbered boxes ({} for other models)."""
-    if model == "349":
-        return {"01": float(len(result.rows)), "02": round(result.total, 2)}
     return {
         m.box: round(sum(sign * float(getattr(result, f)) for f, sign in m.terms), 2)
         for m in LEGACY_BOXES.get(model, ())
     }
 
 
-def legacy_operators(result: Any) -> list[dict]:
-    """Legacy 349 rows in the ``operators()`` contract shape (all key S)."""
-    out = []
-    for row in result.rows:
-        vat = (row.buyer_vat_id or "").strip()
-        country = vat[:2] if vat[:2].isalpha() else ""
-        out.append({"country": country, "vat_id": vat, "name": row.buyer_name or "",
-                    "key": "S", "base": round(row.total_amount, 2)})
-    return out
-
-
 def legacy_notes(model: str) -> dict[str, str]:
     """Box -> caveat for the legacy mapping of ``model`` (only boxes with a caveat)."""
-    if model == "349":
-        return {"02": LEGACY_349_NOTE}
     if model == "390":
         return {"33": LEGACY_390_NOTE}
     return {m.box: m.note for m in LEGACY_BOXES.get(model, ()) if m.note}
@@ -109,8 +89,6 @@ def legacy_notes(model: str) -> dict[str, str]:
 
 def legacy_audit_cells(model: str, box: str) -> tuple[str, ...]:
     """Legacy ``tax_audit_log`` cells behind an AEAT box (empty when unknown)."""
-    if model == "349":
-        return ("total",) if box in ("01", "02") else ()
     cells: list[str] = []
     for m in LEGACY_BOXES.get(model, ()):
         if m.box == box:

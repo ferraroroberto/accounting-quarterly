@@ -1261,78 +1261,119 @@ def compute_modelo_130(
 def compute_modelo_349(
     year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
 ) -> Modelo349Result:
-    """Compute Modelo 349 (intra-EU operations summary) for the given quarter.
+    """Compute Modelo 349 (intra-EU operations) for the given quarter (#99).
 
-    ``config`` is threaded through the VAT-treatment derivation so the EU
-    coaching/newsletter overrides decide which rows count as ``IVA_EU_B2B``.
+    - Key ``I``: ``INTRA_EU_RC`` expense invoices (services acquired from EU
+      businesses), grouped by the vendor VAT id — the invoice's normalised id,
+      else the vendor registry's ``vat_id``; the name is the registry's
+      ``legal_entity``, else the invoice vendor name.
+    - Key ``S``: EU B2B sales — Stripe charges treated ``IVA_EU_B2B`` (customer
+      ``buyer_vat_id``) plus issued invoices with ``tax_treatment`` ``EU_B2B``
+      (``client_nif``), grouped by the normalised VAT id.
+
+    Invoices are keyed by invoice date, bases are the stored EUR values (ECB
+    rate resolved at OCR time; ``eur_received`` for income), ``excluded``
+    invoices are skipped. An operator whose quarter total is zero or negative
+    is left out with a warning (rectification lines are out of scope); lines
+    without a VAT id cannot be declared and are listed in ``unidentified``.
+    ``config`` drives the Stripe VAT-treatment derivation.
     """
+    from src.database import _EU_VAT_PREFIXES, normalize_vat_id
+    from src.vendor_registry import load_registry
+
     result = Modelo349Result(year=year, quarter=quarter)
-    rows = _load_classified_for_quarter(year, quarter, db_conn)
+    ops: dict[tuple[str, str], dict] = {}   # (key, VAT id or "?name") -> bucket
 
-    by_vat_id: dict[str, dict] = {}
-    for row in rows:
-        treatment = _get_vat_treatment(row, config)
-        if treatment != "IVA_EU_B2B":
-            continue
-        vat_id = row.get("buyer_vat_id") or "UNKNOWN"
-        email = row.get("email_meta") or ""
-        key = vat_id
-        if key not in by_vat_id:
-            by_vat_id[key] = {"name": email, "vat_id": vat_id, "total": 0.0}
-        by_vat_id[key]["total"] += _net_amount(row)
+    def _add(key: str, vat: Optional[str], name: str, base: float, rec: dict) -> None:
+        b = ops.setdefault((key, vat or f"?{name}"), {"vat": vat or "", "name": name,
+                                                      "base": 0.0, "records": []})
+        b["name"] = b["name"] or name
+        b["base"] += base
+        b["records"].append({**rec, "base_eur": round(base, 2)})
 
-    # Add EU B2B income invoices (direction='out', vat_treatment='IVA_EU_B2B')
-    inv_eu_b2b = _load_income_invoices_for_quarter(year, quarter, db_conn)
-    for inv in inv_eu_b2b:
-        if (inv.get("vat_treatment") or "") != "IVA_EU_B2B":
+    for row in _load_classified_for_quarter(year, quarter, db_conn):
+        if _get_vat_treatment(row, config) != "IVA_EU_B2B":
             continue
-        vat_id = inv.get("client_nif") or "UNKNOWN"
-        name = inv.get("client_name") or ""
-        amount = inv.get("subtotal_eur") or 0.0
-        if vat_id not in by_vat_id:
-            by_vat_id[vat_id] = {"name": name, "vat_id": vat_id, "total": 0.0}
-        by_vat_id[vat_id]["total"] += amount
+        _add("S", normalize_vat_id(row.get("buyer_vat_id")), row.get("email_meta") or "",
+             _get_vat_base(row, config),
+             {"source": "stripe", "id": row["id"], "date": str(row["created_date"])[:10]})
+
+    for inv in _load_income_invoices_for_quarter(year, quarter, db_conn):
+        if _invoice_tax_treatment("out", inv) != "EU_B2B":
+            continue
+        _add("S", normalize_vat_id(inv.get("client_nif")), inv.get("client_name") or "",
+             _income_invoice_eur(inv),
+             {"source": "invoice_out", "id": inv["id"], "date": str(inv["tx_date"])[:10]})
+
+    registry = load_registry()
+    start, end = _invoice_date_range(year, quarter)
+    purchases = db_conn.execute(
+        """SELECT id, filename, invoice_date AS tx_date, subtotal_eur, iva_amount,
+                  geo_region, vat_treatment, tax_treatment, vendor_nif, vendor_vat_id_norm, vendor_name
+           FROM invoices
+           WHERE direction = 'in' AND COALESCE(excluded, 0) = 0
+             AND invoice_date >= ? AND invoice_date <= ?
+           ORDER BY tx_date""",
+        (start, end),
+    ).fetchall()
+    for inv in map(dict, purchases):
+        if _invoice_tax_treatment("in", inv) != "INTRA_EU_RC":
+            continue
+        match = registry.match_invoice(inv)
+        vendor = match.vendor if match else None
+        vat = (inv.get("vendor_vat_id_norm") or normalize_vat_id(inv.get("vendor_nif"))
+               or normalize_vat_id(vendor.vat_id if vendor else None))
+        name = (vendor.legal_entity if vendor and vendor.legal_entity else None) \
+            or inv.get("vendor_name") or (vendor.key if vendor else "")
+        _add("I", vat, name, inv.get("subtotal_eur") or 0.0,
+             {"source": "invoice_in", "id": inv["id"], "date": str(inv["tx_date"])[:10],
+              "vendor": str(inv.get("vendor_name") or "")[:40]})
 
     warnings: list[str] = []
-    negative_excluded: list[str] = []
-    for info in by_vat_id.values():
-        total = round(info["total"], 2)
-        if total < 0:
-            warnings.append(
-                f"Negative total {total}€ for VAT ID {info['vat_id']} — "
-                f"Model 349 does not accept negative amounts. "
-                f"Corrective invoices must modify the original declaration period."
-            )
-            negative_excluded.append(info["vat_id"])
-            continue  # Exclude negative totals from the submission rows
-        result.rows.append(Modelo349Row(
-            buyer_name=info["name"],
-            buyer_vat_id=info["vat_id"],
-            total_amount=total,
-        ))
-    result.total = round(sum(r.total_amount for r in result.rows), 2)
-    if warnings:
-        result.notes = "; ".join(warnings)
+    eu_prefixes = _EU_VAT_PREFIXES | {"EL"}   # Greece's VAT ids use EL, not GR
+    buckets = sorted(ops.items(), key=lambda kv: (kv[0][0], kv[1]["name"].lower(), kv[1]["vat"]))
+    for (key, _), b in buckets:
+        vat = b["vat"]
+        country = vat[:2] if vat[:2].isalpha() else ""
+        row = Modelo349Row(key=key, country=country, vat_id=vat, name=b["name"],
+                           base=round(b["base"], 2), n_records=len(b["records"]))
+        b["row"] = row
+        if not vat:
+            result.unidentified.append(row)
+            warnings.append(f"{row.name or 'Unnamed operator'} (key {key}, €{row.base:,.2f}) has no "
+                            "VAT id and cannot be declared — add it to the invoice or the vendor registry.")
+        elif row.base <= 0:
+            result.excluded.append(row)
+            warnings.append(f"{vat} (key {key}) totals €{row.base:,.2f} this quarter and is left out — "
+                            "the 349 takes no zero/negative lines; rectify the original period instead.")
+        else:
+            result.rows.append(row)
+            if country not in eu_prefixes:
+                warnings.append(f"{vat} (key {key}) does not start with an EU country prefix — check it.")
+    result.total = round(sum((r.base for r in result.rows), 0.0), 2)
+    result.notes = " ".join(warnings)
 
-    # --- Audit trail ---
+    # --- Audit trail: one cell per operator line (named after its VAT id), then 01/02 ---
     _a = partial(AuditEntry.of, "349", year, quarter)
+    labels = {"I": "Adquisiciones intracomunitarias de servicios",
+              "S": "Prestaciones intracomunitarias de servicios"}
     audit = []
-    for r in result.rows:
+    for n, (_, b) in enumerate(buckets, 1):
+        row = b["row"]
+        state = ("unidentified" if not row.vat_id else "excluded" if row.base <= 0 else "op")
         audit.append(_a(
-            f"operator_{r.buyer_vat_id}",
-            f"Entregas intracomunitarias — {r.buyer_vat_id}",
-            "SUM(net_amount) for IVA_EU_B2B transactions grouped by buyer_vat_id",
-            r.total_amount,
-            buyer_vat_id=r.buyer_vat_id, buyer_name=r.buyer_name,
+            f"{state}_{row.key}_{row.vat_id or n}",
+            f"{labels[row.key]} (clave {row.key}) — {row.name or '?'} {row.vat_id}".rstrip(),
+            "SUM(base EUR) of the quarter's records for this VAT id and key"
+            + ("" if state == "op" else f" — not declared ({state})"),
+            row.base, records=b["records"],
         ))
-    audit.append(_a(
-        "total",
-        "Total entregas intracomunitarias",
-        "SUM(total_amount) across all operators",
-        result.total,
-        operator_count=len(result.rows),
-        negative_excluded=negative_excluded,
-    ))
+    audit.append(_a("c01_operadores", "Número total de operadores",
+                    "COUNT(operator lines with a VAT id and a positive total)", float(len(result.rows)),
+                    excluded=[r.vat_id for r in result.excluded],
+                    unidentified=[r.name for r in result.unidentified]))
+    audit.append(_a("c02_importe", "Importe de las operaciones intracomunitarias",
+                    "SUM(base) of the declared operator lines", result.total))
     result.audit = audit
     return result
 

@@ -272,7 +272,7 @@ class TestModelo349:
                    vat_base_eur=300.0, email_meta="sub@eu.com")
         result = compute_modelo_349(2025, 1, db_conn)
         assert len(result.rows) == 1
-        assert result.rows[0].total_amount == pytest.approx(500.0)
+        assert result.rows[0].base == pytest.approx(500.0)
         assert result.total == pytest.approx(500.0)
 
 
@@ -440,8 +440,8 @@ class TestConfigDrivenTaxSettings:
                    email_meta="biz@eu.com", buyer_vat_id="DE999")
         result = compute_modelo_349(2025, 1, db_conn, {"tax": {}})
         assert len(result.rows) == 1
-        assert result.rows[0].buyer_vat_id == "DE999"
-        assert result.rows[0].total_amount == pytest.approx(300.0)
+        assert result.rows[0].vat_id == "DE999"
+        assert result.rows[0].base == pytest.approx(300.0)
 
 
 class TestTaxSnapshotPersistence:

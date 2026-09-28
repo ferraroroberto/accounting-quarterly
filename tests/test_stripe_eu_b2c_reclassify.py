@@ -168,8 +168,8 @@ class TestEuB2CSpanish21:
 
         r349 = compute_modelo_349(2025, 1, conn, {"tax": {}})
         assert len(r349.rows) == 1
-        assert r349.rows[0].buyer_vat_id == "DE123456789"
-        assert r349.rows[0].total_amount == pytest.approx(500.0)
+        assert r349.rows[0].vat_id == "DE123456789"
+        assert r349.rows[0].base == pytest.approx(500.0)
 
 
 # ---------------------------------------------------------------------------

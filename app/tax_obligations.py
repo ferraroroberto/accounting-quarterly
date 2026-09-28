@@ -28,6 +28,7 @@ from src.tax_models import (
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
+    Modelo349Result,
     OSSReturnResult,
     TaxDeadline,
 )
@@ -455,6 +456,51 @@ def _render_modelo_347(year: int, bundle: dict[str, tuple[Any, str]]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Sub-section H: Modelo 349
+# ---------------------------------------------------------------------------
+
+def _render_modelo_349(year: int, quarter: int, bundle: dict[str, tuple[Any, str]]) -> None:
+    st.subheader("H. Modelo 349 — Operaciones Intracomunitarias")
+    pair = bundle.get("349")
+    if not pair:
+        _missing_snapshot_banner()
+        return
+    result, computed_at = pair
+    assert isinstance(result, Modelo349Result)
+
+    st.caption(f"Stored calculation: {computed_at}")
+    boxes = result.aeat_boxes()
+    c1, c2 = st.columns(2)
+    c1.metric("01 · Número total de operadores", int(boxes["01"]))
+    c2.metric("02 · Importe de las operaciones intracomunitarias", _fmt_eur(boxes["02"]))
+
+    def _table(rows: list) -> None:
+        st.dataframe(
+            [{"Clave": r.key, "País": r.country, "NIF-IVA": r.vat_id[len(r.country):] or "—",
+              "Operador": r.name, "Base imponible": _fmt_eur(r.base), "Registros": r.n_records}
+             for r in rows],
+            width="stretch", hide_index=True,
+        )
+
+    if result.rows:
+        _table(result.rows)
+    else:
+        st.info("No intra-EU operations to declare in this period.")
+    if result.excluded:
+        st.markdown("##### Not declared — zero or negative total")
+        _table(result.excluded)
+    if result.unidentified:
+        st.markdown("##### Not declared — missing VAT id")
+        _table(result.unidentified)
+    if result.notes:
+        st.warning(result.notes)
+    st.caption("Key I = services acquired from EU businesses (reverse charge, 303 boxes 10/11); "
+               "key S = services supplied to EU businesses (303 box 59). Rectifications (03/04) "
+               "are not modelled.")
+    _save_filing_button("349", year, quarter, None)
+
+
+# ---------------------------------------------------------------------------
 # Shared: save filing status button
 # ---------------------------------------------------------------------------
 
@@ -530,13 +576,14 @@ def render() -> None:
     snapshot_bundle = _load_snapshot_bundle(year, quarter)
 
     (tab_calendar, tab_303, tab_130, tab_manual,
-     tab_oss, tab_347) = st.tabs([
+     tab_oss, tab_347, tab_349) = st.tabs([
         "Tax Calendar",
         "Modelo 303 — IVA",
         "Modelo 130 — IRPF",
         "Manual Entries",
         "EU B2C / OSS",
         "Modelo 347",
+        "Modelo 349",
     ])
 
     with tab_calendar:
@@ -557,3 +604,6 @@ def render() -> None:
 
     with tab_347:
         _render_modelo_347(year, snapshot_bundle)
+
+    with tab_349:
+        _render_modelo_349(year, quarter, snapshot_bundle)

@@ -119,11 +119,20 @@ def _decode_347_row(r: dict[str, Any]) -> Modelo347Row:
 
 
 def _decode_349_row(r: dict[str, Any]) -> Modelo349Row:
-    return Modelo349Row(
-        buyer_name=r["buyer_name"],
-        buyer_vat_id=r["buyer_vat_id"],
-        total_amount=float(r["total_amount"]),
-    )
+    if "buyer_vat_id" in r:
+        # Pre-#99 row: EU B2B sales only (key S), VAT id stored as entered.
+        vat = "".join(ch for ch in str(r.get("buyer_vat_id") or "").upper() if ch.isalnum())
+        vat = "" if vat == "UNKNOWN" else vat
+        return Modelo349Row(key="S", country=vat[:2] if vat[:2].isalpha() else "", vat_id=vat,
+                            name=r.get("buyer_name") or "", base=float(r["total_amount"]))
+    return _tolerant_construct(Modelo349Row, r)
+
+
+def _decode_349(data: dict[str, Any]) -> Modelo349Result:
+    data = dict(data)
+    for name in ("excluded", "unidentified"):
+        data[name] = [_decode_349_row(r) for r in data.get(name, [])]
+    return _tolerant_construct(Modelo349Result, data, row_decoder=_decode_349_row)
 
 
 def encode_snapshot(model: str, obj: Any) -> str:
@@ -152,5 +161,5 @@ def decode_snapshot(model: str, payload_json: str) -> Any:
     if model == "347":
         return _tolerant_construct(Modelo347Result, data, row_decoder=_decode_347_row)
     if model == "349":
-        return _tolerant_construct(Modelo349Result, data, row_decoder=_decode_349_row)
+        return _decode_349(data)
     raise ValueError(f"Unknown tax snapshot model: {model}")

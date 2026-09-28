@@ -64,7 +64,7 @@ Stripe API (live charges)
    (VAT treatment derived on-the-fly by the tax engine — not stored per transaction)
 ```
 
-Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API. Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
+Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API, or when you run `scripts/close_quarter.py reclassify` after a rule change (see "Closing a Quarter"). Non-EUR amounts (GBP, USD, CHF) are converted to EUR using ECB exchange rates. If a rate is missing for a transaction date, the system fetches it from the Frankfurter API or falls back to the most recent available rate.
 
 ---
 
@@ -84,7 +84,9 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── _json_store.py             # Shared cached-JSON store backing config.py and rules_engine.py
 │   ├── config.py                  # Load/save config.json
 │   ├── rules_engine.py            # Load/save classification_rules.json
-│   ├── classifier.py              # Activity, geographic and VAT classification
+│   ├── classifier.py              # Activity, geographic and VAT classification (+ eur_default foreign-customer warning)
+│   ├── reclassify.py              # Re-run the classifier over stored transactions, logging every change
+│   ├── declared_reports.py        # Frozen (declared) Stripe reports: immutable per-transaction EUR amounts
 │   ├── aggregator.py              # Monthly/quarterly aggregations and totals
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
@@ -93,7 +95,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results + AuditEntry
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
-│   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, calendar
+│   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
@@ -127,6 +129,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
+│   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
 │   └── test_tax_validator.py      # Gestor-filed vs DB-computed validation
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
@@ -175,6 +178,8 @@ Rules are evaluated in priority order; the first match wins.
 
 The default region for each condition is configurable in the Geographic Rules section of the Configuration tab.
 
+**Foreign-customer warning.** A EUR charge that falls through to rule 4 (`eur_default`) is flagged with ⚠ when the customer looks non-Spanish: a card or billing-address country other than `ES`, or an email (Stripe customer email, billing email, or one written in the description) on a country-code domain other than `.es` (generic-use ccTLDs such as `.io`, `.co`, `.me` are ignored). The flag shows in `close_quarter.py stripe-fetch`, the Transaction Browser (**Review** column) and the Quarter Report. Fix it with a geographic override.
+
 ### Card issuing country
 
 The card issuing country (`charge.payment_method_details.card.country`) is extracted from the Stripe API automatically. This provides ISO country codes (ES, DE, US, etc.) that can improve geographic classification accuracy beyond currency-based heuristics.
@@ -218,6 +223,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
 - **tax_audit_log** — Per-cell calculation audit entries: every box in every model records the formula applied, named inputs, and computed value. Written alongside snapshots; queryable by year/quarter/model/run timestamp
+- **declared_reports** / **declared_report_lines** — The Stripe report actually sent to the gestor, frozen by `close_quarter.py report --freeze`: quarter, version, file name, SHA-256 of the `.xlsx`, and per-transaction EUR amounts. Insert-only (SQLite triggers reject UPDATE/DELETE); a corrected re-send is a new version. The tax engine uses the latest version's EUR amounts for every transaction it contains, so later FX re-conversions cannot move a declared quarter
 
 Classifications are persisted in the database so the classifier only runs when fresh data is fetched from Stripe, not on every page load. Tax obligation figures shown in the Tax Obligations tab are read from stored snapshots until you run **Calculate tax** again.
 
@@ -248,11 +254,15 @@ The dashboard includes a connection tester and permission checker under **Config
 .venv/Scripts/python.exe scripts/close_quarter.py stripe-check [--days N]              # read-only API smoke test
 .venv/Scripts/python.exe scripts/close_quarter.py stripe-fetch --year Y --quarter Q    # fetch + classify + persist
 .venv/Scripts/python.exe scripts/close_quarter.py add-override "<key>" REGION [--type email|name]
+.venv/Scripts/python.exe scripts/close_quarter.py reclassify --from YYYY-MM-DD [--to YYYY-MM-DD] [--dry-run]
 .venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q          # regenerate the Excel report
+.venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q --freeze # ...and freeze it as declared
 ```
 
 - **`sweep`** diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
-- **`stripe-fetch`** flags transactions classified by a *default* geo rule (no client-specific override matched) so they can be double-checked before the report goes out.
+- **`stripe-fetch`** flags transactions classified by a *default* geo rule (no client-specific override matched) so they can be double-checked before the report goes out, lists EUR charges that fell to `eur_default` for a foreign-looking customer (⚠), and prints the EU B2C year-to-date total against the €10,000 art. 73 LIVA threshold.
+- **`reclassify`** re-runs the classifier over the transactions *already stored* from `--from` (optionally up to `--to`) with the current rules and overrides, prints every change (`old activity/geo (rule) -> new`) plus a per-quarter count, and writes only the changed rows. `--dry-run` reports without writing. Idempotent: a second run changes nothing. Run it after any rule change that should apply retroactively.
+- **`report`** first reclassifies the quarter's stored rows (so a stale row can never be exported), then writes the Excel report. The exporter also refuses — `StaleClassificationError` — to write a non-EUR charge whose geography came from a EUR rule. With **`--freeze`** the written file becomes the quarter's immutable declared report (`declared_reports`); freezing an already-declared quarter needs `--supersede` (a new version, for a corrected re-send). Once a quarter is declared, a plain `report` writes `Stripe_Report_Q<Q>_<Y>_live.xlsx` instead of overwriting the sent file, and prints how the live rows differ from the declared ones.
 - **`add-override`** appends to `classification_rules.json`'s `geographic_overrides` / `email_overrides` — the same mechanism as the Transaction Browser tab's "Add Geographic Override" form.
 - All output lives under `tmp/close_quarter/` (git-ignored) — nothing is uploaded or sent anywhere by this script.
 
@@ -323,7 +333,8 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 | **Modelo 303** | Declaración IVA Trimestral | Quarterly | IVA collected (devengado) vs. IVA paid (soportado); net to pay or refund |
 | **Modelo 130** | Pago Fraccionado IRPF | Quarterly | 20% advance on YTD net profit, minus retenciones and prior payments |
 | **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Intra-EU B2B operations grouped by buyer VAT ID |
-| **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country |
+| **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country — only when `oss_registered` is true |
+| **EU B2C threshold** | Art. 73 LIVA | Live | Year-to-date EU B2C sales (ex-VAT) vs €10,000; warns at 80%, flags the previous year too |
 | **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**) |
 
 ### VAT treatment classification
@@ -335,7 +346,10 @@ VAT treatment is derived on-the-fly by the tax engine using each transaction's a
 | Any | OUTSIDE_EU | `IVA_EXPORT` | 0% |
 | Any | SPAIN | `IVA_ES_21` | 21% |
 | COACHING / ILLUSTRATIONS | EU_NOT_SPAIN | `IVA_EU_B2B` | 0% (reverse charge) |
-| NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` | Buyer country rate |
+| NEWSLETTER | EU_NOT_SPAIN | `EU_B2C_ES21` (default, not OSS-registered) | 21% Spanish IVA, Modelo 303 box 01/03 |
+| NEWSLETTER | EU_NOT_SPAIN | `OSS_EU` (only when `oss_registered: true`) | Buyer country rate, OSS return |
+
+**EU consumers below the threshold.** Under art. 73 LIVA, electronically supplied services to consumers in other EU countries stay located in Spain — Spanish 21% IVA — while the year's and the previous year's EU B2C sales are at or below €10,000 (ex-VAT) and you have not opted into OSS. That is `EU_B2C_ES21`. If `default_vat_treatment_eu_newsletter` says `OSS_EU` but `oss_registered` is not true, the engine uses `EU_B2C_ES21` (there is no OSS return to declare it on). The **Tax Obligations → EU B2C / OSS** tab tracks the threshold and a warning banner appears at 80%.
 
 ### VAT-inclusive pricing (Stripe amounts)
 
@@ -344,6 +358,7 @@ Stripe records the gross amount charged to the customer, which for Spain and EU 
 | Treatment | Base formula | Example |
 |-----------|-------------|---------|
 | `IVA_ES_21` | `net ÷ 1.21` | €121 gross → €100.00 base + €21.00 IVA |
+| `EU_B2C_ES21` | `net ÷ 1.21` | €121 gross (AT consumer) → €100.00 base + €21.00 IVA |
 | `OSS_EU` | `net ÷ (1 + country_rate)` | €120 (AT, 20%) → €100.00 base + €20.00 IVA |
 | `IVA_EXPORT` | `net` (no VAT) | €100 gross = €100.00 base |
 | `IVA_EU_B2B` | `net` (reverse charge) | Full amount is income base |
@@ -365,10 +380,10 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
   "tax": {
     "regime": "estimacion_directa_simplificada",
     "vat_registered": true,
-    "oss_registered": true,
+    "oss_registered": false,
     "vat_proration_percentage": 100,
     "default_vat_treatment_eu_coaching": "IVA_EU_B2B",
-    "default_vat_treatment_eu_newsletter": "OSS_EU"
+    "default_vat_treatment_eu_newsletter": "EU_B2C_ES21"
   }
 }
 ```
@@ -379,9 +394,9 @@ Every key above drives a computation:
 |---------|----------------------|
 | `regime` | Gates the 5% *gastos de difícil justificación* in Modelo 130 — only `estimacion_directa_simplificada` is eligible (Art. 30.2.4ª LIRPF). |
 | `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
-| `oss_registered` | When `false`, no OSS return is generated (an audit note records why). |
+| `oss_registered` | Default `false` (OSS is opt-in, Modelo 035). Unless `true`, no OSS return is generated (an audit note records why) and EU B2C sales are `EU_B2C_ES21`. |
 | `vat_proration_percentage` | Prorrata general applied to deducible IVA (Modelo 303 casilla 28/29). `100` = fully deductible. |
-| `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` | Override the EU (`EU_NOT_SPAIN`) VAT treatment per activity. Defaults: `IVA_EU_B2B` for coaching, `OSS_EU` for newsletter. |
+| `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` | Override the EU (`EU_NOT_SPAIN`) VAT treatment per activity. Defaults: `IVA_EU_B2B` for coaching; `EU_B2C_ES21` for newsletter (`OSS_EU` when OSS-registered). |
 
 ### Invoice data in tax calculations
 

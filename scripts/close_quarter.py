@@ -12,12 +12,19 @@ Subcommands:
     stripe-fetch  Fetch + classify + persist the target quarter's Stripe
                   charges, then print a review table flagging transactions
                   classified by a default geo rule (no client-specific
-                  override) so they can be double-checked.
+                  override) so they can be double-checked, EUR charges that
+                  fell to eur_default for a foreign-looking customer, and
+                  the EU B2C year-to-date total vs the art. 73 LIVA limit.
     add-override  Add a geographic classification override (name/email
                   substring -> region) to classification_rules.json.
-    report        Regenerate the quarter's Excel report from the DB and
-                  save it into the same tmp/close_quarter/<year>_Q<quarter>/
-                  folder as the swept invoices.
+    reclassify    Re-run the classifier over STORED transactions from a date
+                  (after a rule change), logging every change; --dry-run
+                  only reports.
+    report        Reclassify the quarter's stored rows, regenerate its Excel
+                  report from the DB and save it into the same
+                  tmp/close_quarter/<year>_Q<quarter>/ folder as the swept
+                  invoices. --freeze stores the report as the quarter's
+                  immutable declared report (the one sent to the gestor).
 
 All outputs are written under tmp/, which is git-ignored.
 """
@@ -30,6 +37,7 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
@@ -38,10 +46,15 @@ if str(ROOT) not in sys.path:
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+from src.classifier import eur_default_foreign_warning  # noqa: E402
 from src.config import load_config  # noqa: E402
+from src.exceptions import ReportAlreadyFrozenError  # noqa: E402
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
+
+if TYPE_CHECKING:
+    from src.reclassify import ReclassifyResult
 
 # app.data_loader pulls in Streamlit (for @st.cache_data); import it lazily,
 # only inside the subcommands that actually need it, so `sweep` / `stripe-check`
@@ -169,6 +182,48 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> None:
     print(f"{len(flagged)} transaction(s) on a DEFAULT geo rule (no client-specific override) "
           f"— worth a manual check.")
 
+    foreign = [(p, w) for p in payments if (w := eur_default_foreign_warning(p))]
+    if foreign:
+        print()
+        print(f"⚠ {len(foreign)} EUR charge(s) fell to eur_default for a customer that looks "
+              f"foreign — add an override (add-override) if they are not in Spain:")
+        for p, warning in foreign:
+            print(f"  ⚠ {p.created_date.strftime('%Y-%m-%d')} {p.id} {p.converted_amount:,.2f} EUR "
+                  f"— {warning}")
+
+    _print_eu_b2c_threshold(args.year, args.quarter)
+
+
+def _print_eu_b2c_threshold(year: int, quarter: int) -> None:
+    from src.database import get_connection
+    from src.tax_engine import compute_eu_b2c_threshold, load_app_config
+
+    conn = get_connection()
+    try:
+        tracker = compute_eu_b2c_threshold(year, quarter, conn, load_app_config())
+    finally:
+        conn.close()
+    print()
+    print(("⚠ " if tracker.status != "OK" else "") + tracker.message)
+
+
+def _print_reclassify(result: ReclassifyResult) -> None:
+    for change in result.changes:
+        print(f"  {change.describe()}")
+    verb = "would change" if result.dry_run else "changed"
+    print(f"Reclassify: scanned {result.scanned}, {verb} {len(result.changes)}.")
+    for (year, quarter), n in result.by_quarter().items():
+        print(f"  {year} Q{quarter}: {n}")
+
+
+def cmd_reclassify(args: argparse.Namespace) -> None:
+    from src.reclassify import reclassify_stored
+
+    start = datetime.strptime(args.from_date, "%Y-%m-%d")
+    end = (datetime.strptime(args.to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+           if args.to_date else None)
+    _print_reclassify(reclassify_stored(start, end, dry_run=args.dry_run))
+
 
 def cmd_add_override(args: argparse.Namespace) -> None:
     rules = load_rules()
@@ -182,14 +237,51 @@ def cmd_add_override(args: argparse.Namespace) -> None:
 
 def cmd_report(args: argparse.Namespace) -> None:
     from app.data_loader import get_classified_for_period, quarter_dates
+    from src.database import get_connection
+    from src.declared_reports import declared_vs_live_drift, freeze_report, get_declared_report
     from src.excel_exporter import create_excel_report, generate_report_filename
+    from src.reclassify import reclassify_stored
 
-    start, end = quarter_dates(args.year, args.quarter)
-    payments = get_classified_for_period(args.year, args.quarter, start, end, input_mode="db")
-    filename = generate_report_filename(args.year, args.quarter)
-    dest = quarter_out_dir(args.year, args.quarter) / filename
-    create_excel_report(payments, dest, args.year, args.quarter, f"Q{args.quarter}_{args.year}")
-    print(f"Saved: {dest}")
+    conn = get_connection()
+    try:
+        declared = get_declared_report(conn, args.year, args.quarter)
+        if args.freeze and declared and not args.supersede:
+            raise SystemExit(
+                f"Q{args.quarter} {args.year} is already declared (v{declared.version}, "
+                f"{declared.created_at}, sha256 {declared.sha256[:12]}…). "
+                f"Use --freeze --supersede only for a corrected re-send."
+            )
+
+        start, end = quarter_dates(args.year, args.quarter)
+        # Stored classifications may predate a rule change; never export them stale.
+        _print_reclassify(reclassify_stored(start, end))
+        payments = get_classified_for_period(args.year, args.quarter, start, end, input_mode="db")
+
+        filename = generate_report_filename(args.year, args.quarter)
+        if declared and not args.freeze:
+            # Never overwrite the file that was sent to the gestor.
+            filename = filename.replace(".xlsx", "_live.xlsx")
+        dest = quarter_out_dir(args.year, args.quarter) / filename
+        create_excel_report(payments, dest, args.year, args.quarter, f"Q{args.quarter}_{args.year}")
+        print(f"Saved: {dest}")
+
+        if args.freeze:
+            try:
+                report = freeze_report(conn, args.year, args.quarter, payments, dest,
+                                       supersede=args.supersede)
+            except ReportAlreadyFrozenError as exc:
+                raise SystemExit(str(exc)) from exc
+            print(f"Frozen as declared report v{report.version}: {report.n_transactions} "
+                  f"transactions, net {report.total_net_eur:,.2f} EUR, sha256 {report.sha256}")
+        elif declared:
+            drift = declared_vs_live_drift(conn, args.year, args.quarter, payments)
+            print(f"⚠ Q{args.quarter} {args.year} was declared on {declared.created_at} "
+                  f"(v{declared.version}, sha256 {declared.sha256[:12]}…); the tax engine uses the "
+                  f"declared EUR amounts. Live vs declared: {len(drift['amount_differs'])} amount "
+                  f"difference(s), {len(drift['live_not_declared'])} live-only, "
+                  f"{len(drift['declared_not_live'])} declared-only.")
+    finally:
+        conn.close()
 
 
 def main() -> None:
@@ -220,8 +312,19 @@ def main() -> None:
     p_override.add_argument("--type", choices=["name", "email"], default="name")
     p_override.set_defaults(func=cmd_add_override)
 
+    p_reclassify = sub.add_parser(
+        "reclassify", help="Re-run the classifier over stored transactions after a rule change")
+    p_reclassify.add_argument("--from", dest="from_date", required=True, help="YYYY-MM-DD (inclusive)")
+    p_reclassify.add_argument("--to", dest="to_date", help="YYYY-MM-DD (inclusive, default: latest)")
+    p_reclassify.add_argument("--dry-run", action="store_true", help="Report changes without writing")
+    p_reclassify.set_defaults(func=cmd_reclassify)
+
     p_report = sub.add_parser("report", help="Regenerate the quarter's Excel report")
     add_yq(p_report)
+    p_report.add_argument("--freeze", action="store_true",
+                          help="Store this report as the quarter's immutable declared report")
+    p_report.add_argument("--supersede", action="store_true",
+                          help="With --freeze: add a new declared version for a corrected re-send")
     p_report.set_defaults(func=cmd_report)
 
     args = parser.parse_args()

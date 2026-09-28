@@ -16,12 +16,15 @@ from src.database import (
     upsert_filing_status,
     get_connection,
 )
+from src.declared_reports import get_declared_report
 from src.tax_engine import (
     compute_and_persist_tax_snapshots,
+    compute_eu_b2c_threshold,
     get_tax_calendar,
 )
 from src.tax_snapshot_codec import decode_snapshot
 from src.tax_models import (
+    EUB2CThresholdResult,
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
@@ -145,6 +148,10 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
     st.metric("Box 59 — Entregas intracom. exentas (EU B2B sales, informative)",
               _fmt_eur(result.box_59_intracom_entregas))
 
+    st.caption(
+        "Box 01/03 include EU consumer (B2C) sales taxed at Spanish 21% (`EU_B2C_ES21`, "
+        "art. 73 LIVA) when not OSS-registered — see the **EU B2C / OSS** tab for the threshold."
+    )
     if result.oss_base > 0:
         st.info(
             f"OSS income (not in Modelo 303): base {_fmt_eur(result.oss_base)}, "
@@ -284,8 +291,46 @@ def _render_manual_entries(year: int, quarter: int) -> None:
 # Sub-section E: OSS Return
 # ---------------------------------------------------------------------------
 
+def _load_eu_b2c_threshold(year: int, quarter: int, config: dict) -> EUB2CThresholdResult:
+    conn = _get_conn()
+    try:
+        return compute_eu_b2c_threshold(year, quarter, conn, config)
+    finally:
+        conn.close()
+
+
+def _show_threshold_alert(tracker: EUB2CThresholdResult) -> None:
+    if tracker.status == "EXCEEDED":
+        st.error(f"🔴 {tracker.message}")
+    elif tracker.status == "WARNING":
+        st.warning(f"⚠️ {tracker.message}")
+
+
+def _render_eu_b2c_threshold(tracker: EUB2CThresholdResult) -> None:
+    st.subheader("E. EU B2C distance-sales threshold (art. 73 LIVA)")
+    st.caption(
+        "Live from the transactions table (declared-report amounts where frozen). EU consumer "
+        "sales stay taxed in Spain at 21% while the year's and the previous year's EU B2C sales "
+        f"(ex-VAT) are at or below €{tracker.limit_eur:,.0f}."
+    )
+    col1, col2, col3 = st.columns(3)
+    col1.metric(f"YTD {tracker.year} (to Q{tracker.quarter})", _fmt_eur(tracker.ytd_base_eur))
+    col2.metric("Of threshold", f"{tracker.ratio:.0%}")
+    col3.metric(f"Previous year {tracker.year - 1}", _fmt_eur(tracker.previous_year_base_eur))
+    st.progress(min(tracker.ratio, 1.0))
+    if tracker.status == "OK":
+        st.success(f"Below {tracker.warn_ratio:.0%} of the threshold.")
+    else:
+        _show_threshold_alert(tracker)
+    if tracker.by_country:
+        with st.expander("By card country"):
+            for country, base in tracker.by_country.items():
+                st.markdown(f"- **{country}**: {_fmt_eur(base)}")
+    st.divider()
+
+
 def _render_oss_return(year: int, quarter: int, bundle: dict[str, tuple[Any, str]]) -> None:
-    st.subheader("E. OSS Return (One Stop Shop)")
+    st.subheader("F. OSS Return (One Stop Shop)")
     pair = bundle.get("OSS")
     if not pair:
         _missing_snapshot_banner()
@@ -341,7 +386,7 @@ def _render_oss_return(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 # ---------------------------------------------------------------------------
 
 def _render_modelo_347(year: int, bundle: dict[str, tuple[Any, str]]) -> None:
-    st.subheader("F. Modelo 347 — Operaciones con Terceros (Annual)")
+    st.subheader("G. Modelo 347 — Operaciones con Terceros (Annual)")
     pair = bundle.get("347")
     if not pair:
         _missing_snapshot_banner()
@@ -429,6 +474,21 @@ def render() -> None:
         "**Calculate tax** (after you sync or change transactions and manual entries)."
     )
 
+    conn = _get_conn()
+    try:
+        declared = get_declared_report(conn, year, quarter)
+    finally:
+        conn.close()
+    if declared:
+        st.caption(
+            f"🔒 Stripe report for Q{quarter} {year} declared on {declared.created_at} "
+            f"(v{declared.version}, {declared.n_transactions} transactions, sha256 "
+            f"`{declared.sha256[:12]}…`): the engine uses its frozen EUR amounts."
+        )
+
+    eu_b2c_tracker = _load_eu_b2c_threshold(year, quarter, config)
+    _show_threshold_alert(eu_b2c_tracker)
+
     st.divider()
 
     snapshot_bundle = _load_snapshot_bundle(year, quarter)
@@ -439,7 +499,7 @@ def render() -> None:
         "Modelo 303 — IVA",
         "Modelo 130 — IRPF",
         "Manual Entries",
-        "OSS Return",
+        "EU B2C / OSS",
         "Modelo 347",
     ])
 
@@ -456,6 +516,7 @@ def render() -> None:
         _render_manual_entries(year, quarter)
 
     with tab_oss:
+        _render_eu_b2c_threshold(eu_b2c_tracker)
         _render_oss_return(year, quarter, snapshot_bundle)
 
     with tab_347:

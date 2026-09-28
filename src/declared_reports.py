@@ -1,0 +1,303 @@
+"""Frozen ("declared") Stripe reports — the figures actually sent to the gestor.
+
+Once a quarter's Stripe report is sent, its per-transaction EUR amounts are
+what the filed returns were built on. Re-fetching from Stripe later re-converts
+non-EUR charges at whatever ECB rate is stored *now*, so the live
+``transactions`` table drifts away from the declared basis. Freezing the report
+stores those per-transaction EUR amounts immutably; the tax engine then prefers
+them over the live row for every transaction that appears in a frozen report
+(see :func:`apply_frozen_amounts`).
+
+Schema lives here (own module, own ``_ensure_declared_reports_schema``) rather
+than in ``src/database.py``; every public function ensures it lazily, and
+read-side helpers treat a missing table as "nothing frozen".
+
+Immutability is enforced by SQLite triggers: rows can be inserted, never
+updated or deleted. A corrected re-send is a new *version* for the same
+quarter (``supersede=True``); the latest version is the one the engine uses.
+"""
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Iterable, Optional
+
+from src.exceptions import ReportAlreadyFrozenError
+from src.logger import get_logger
+from src.models import ClassifiedPayment
+
+log = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class DeclaredReport:
+    id: int
+    year: int
+    quarter: int
+    version: int
+    file_name: str
+    sha256: str
+    n_transactions: int
+    total_net_eur: float
+    created_at: str
+
+
+def _ensure_declared_reports_schema(conn: sqlite3.Connection) -> None:
+    """Create ``declared_reports`` + ``declared_report_lines`` and their guards."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS declared_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year INTEGER NOT NULL,
+            quarter INTEGER NOT NULL,
+            version INTEGER NOT NULL,
+            file_name TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            n_transactions INTEGER NOT NULL,
+            total_net_eur REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE (year, quarter, version)
+        );
+
+        CREATE TABLE IF NOT EXISTS declared_report_lines (
+            report_id INTEGER NOT NULL REFERENCES declared_reports(id),
+            transaction_id TEXT NOT NULL,
+            created_date TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            amount_original REAL,
+            converted_amount REAL NOT NULL,
+            converted_amount_refunded REAL NOT NULL,
+            fee REAL NOT NULL,
+            net_amount_eur REAL NOT NULL,
+            activity_type TEXT,
+            geo_region TEXT,
+            PRIMARY KEY (report_id, transaction_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_declared_report_lines_tx
+            ON declared_report_lines(transaction_id);
+
+        CREATE TRIGGER IF NOT EXISTS declared_reports_no_update
+            BEFORE UPDATE ON declared_reports
+            BEGIN SELECT RAISE(ABORT, 'declared_reports rows are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS declared_reports_no_delete
+            BEFORE DELETE ON declared_reports
+            BEGIN SELECT RAISE(ABORT, 'declared_reports rows are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS declared_report_lines_no_update
+            BEFORE UPDATE ON declared_report_lines
+            BEGIN SELECT RAISE(ABORT, 'declared_report_lines rows are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS declared_report_lines_no_delete
+            BEFORE DELETE ON declared_report_lines
+            BEGIN SELECT RAISE(ABORT, 'declared_report_lines rows are immutable'); END;
+    """)
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def file_sha256(path: str | Path) -> str:
+    """SHA-256 hex digest of a file's bytes."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _row_to_report(row: sqlite3.Row) -> DeclaredReport:
+    return DeclaredReport(
+        id=row["id"], year=row["year"], quarter=row["quarter"], version=row["version"],
+        file_name=row["file_name"], sha256=row["sha256"],
+        n_transactions=row["n_transactions"], total_net_eur=row["total_net_eur"],
+        created_at=row["created_at"],
+    )
+
+
+def get_declared_report(
+    conn: sqlite3.Connection, year: int, quarter: int
+) -> Optional[DeclaredReport]:
+    """Return the latest declared report version for a quarter, or ``None``."""
+    if not _table_exists(conn, "declared_reports"):
+        return None
+    prev_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """SELECT * FROM declared_reports WHERE year = ? AND quarter = ?
+               ORDER BY version DESC LIMIT 1""",
+            (year, quarter),
+        ).fetchone()
+    finally:
+        conn.row_factory = prev_factory
+    return _row_to_report(row) if row else None
+
+
+def freeze_report(
+    conn: sqlite3.Connection,
+    year: int,
+    quarter: int,
+    payments: list[ClassifiedPayment],
+    report_path: str | Path,
+    *,
+    supersede: bool = False,
+) -> DeclaredReport:
+    """Store the report sent to the gestor as an immutable declared version.
+
+    ``payments`` must be exactly the rows written into ``report_path`` — their
+    EUR amounts become the declared basis for the quarter. Raises
+    :class:`ReportAlreadyFrozenError` when the quarter already has a declared
+    report and ``supersede`` is false.
+    """
+    _ensure_declared_reports_schema(conn)
+    existing = get_declared_report(conn, year, quarter)
+    if existing and not supersede:
+        raise ReportAlreadyFrozenError(
+            f"Q{quarter} {year} already has a declared report "
+            f"(v{existing.version}, sha256 {existing.sha256[:12]}…, {existing.created_at}). "
+            f"Pass supersede to store a corrected re-send as a new version."
+        )
+    version = (existing.version + 1) if existing else 1
+    sha = file_sha256(report_path)
+    total_net = round(sum(p.net_amount for p in payments), 2)
+    created_at = datetime.now().isoformat(timespec="seconds")
+
+    try:
+        cur = conn.execute(
+            """INSERT INTO declared_reports
+                   (year, quarter, version, file_name, sha256, n_transactions,
+                    total_net_eur, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (year, quarter, version, Path(report_path).name, sha, len(payments),
+             total_net, created_at),
+        )
+        report_id = cur.lastrowid
+        conn.executemany(
+            """INSERT INTO declared_report_lines
+                   (report_id, transaction_id, created_date, currency, amount_original,
+                    converted_amount, converted_amount_refunded, fee, net_amount_eur,
+                    activity_type, geo_region)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (report_id, p.id, p.created_date.isoformat(), p.currency, p.amount_original,
+                 p.converted_amount, p.converted_amount_refunded, p.fee, p.net_amount,
+                 p.activity_type, p.geo_region)
+                for p in payments
+            ],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    log.info(
+        "✅ Froze declared report Q%d %d v%d | %d transactions | net %.2f EUR | sha256 %s",
+        quarter, year, version, len(payments), total_net, sha,
+    )
+    report = get_declared_report(conn, year, quarter)
+    assert report is not None
+    return report
+
+
+def load_frozen_lines(
+    conn: sqlite3.Connection, transaction_ids: Iterable[str]
+) -> dict[str, dict]:
+    """Declared EUR amounts for the given transactions, keyed by transaction id.
+
+    Only the latest version of each quarter's declared report counts. Returns an
+    empty dict when nothing is frozen (or the table does not exist yet).
+    """
+    ids = list(dict.fromkeys(transaction_ids))
+    if not ids or not _table_exists(conn, "declared_report_lines"):
+        return {}
+    out: dict[str, dict] = {}
+    # Chunk to stay under SQLite's host-parameter limit.
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        placeholders = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"""SELECT l.transaction_id, l.converted_amount, l.converted_amount_refunded,
+                       l.fee, l.net_amount_eur, r.id AS report_id, r.year, r.quarter, r.version
+                FROM declared_report_lines l
+                JOIN declared_reports r ON r.id = l.report_id
+                WHERE l.transaction_id IN ({placeholders})
+                  AND r.version = (SELECT MAX(r2.version) FROM declared_reports r2
+                                   WHERE r2.year = r.year AND r2.quarter = r.quarter)""",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            out[r[0]] = {
+                "converted_amount": r[1],
+                "converted_amount_refunded": r[2],
+                "fee": r[3],
+                "net_amount_eur": r[4],
+                "report_id": r[5],
+                "year": r[6],
+                "quarter": r[7],
+                "version": r[8],
+            }
+    return out
+
+
+def apply_frozen_amounts(rows: list[dict], conn: sqlite3.Connection) -> list[dict]:
+    """Overlay declared EUR amounts onto live transaction row dicts (in place).
+
+    Every row whose ``id`` appears in a frozen report gets the declared
+    ``converted_amount`` / ``converted_amount_refunded`` and a
+    ``declared_report_id`` marker; other rows are untouched. Rows lacking an
+    ``id`` key are skipped.
+    """
+    frozen = load_frozen_lines(conn, (r["id"] for r in rows if r.get("id")))
+    if not frozen:
+        return rows
+    drifted = 0
+    for row in rows:
+        f = frozen.get(row.get("id"))
+        if not f:
+            continue
+        if (round(row.get("converted_amount") or 0.0, 2) != round(f["converted_amount"], 2)
+                or round(row.get("converted_amount_refunded") or 0.0, 2)
+                != round(f["converted_amount_refunded"], 2)):
+            drifted += 1
+        row["converted_amount"] = f["converted_amount"]
+        row["converted_amount_refunded"] = f["converted_amount_refunded"]
+        row["declared_report_id"] = f["report_id"]
+    log.info(
+        "ℹ️ Using declared-report EUR amounts for %d transaction(s) (%d differ from live rows)",
+        sum(1 for r in rows if "declared_report_id" in r), drifted,
+    )
+    return rows
+
+
+def declared_vs_live_drift(
+    conn: sqlite3.Connection, year: int, quarter: int, payments: list[ClassifiedPayment]
+) -> dict:
+    """Compare a quarter's declared report against live rows.
+
+    Returns counts of transactions whose EUR net differs, that are live but not
+    declared, and that are declared but no longer live. Empty dict when the
+    quarter has no declared report.
+    """
+    report = get_declared_report(conn, year, quarter)
+    if report is None:
+        return {}
+    rows = conn.execute(
+        """SELECT transaction_id, net_amount_eur FROM declared_report_lines
+           WHERE report_id = ?""",
+        (report.id,),
+    ).fetchall()
+    declared = {r[0]: r[1] for r in rows}
+    live = {p.id: p.net_amount for p in payments}
+    amount_diff = [tid for tid in declared.keys() & live.keys()
+                   if round(declared[tid], 2) != round(live[tid], 2)]
+    return {
+        "report": report,
+        "amount_differs": sorted(amount_diff),
+        "live_not_declared": sorted(live.keys() - declared.keys()),
+        "declared_not_live": sorted(declared.keys() - live.keys()),
+    }

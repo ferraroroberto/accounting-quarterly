@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.data_loader import first_data_year, get_classified_for_period, invalidate_cache, quarter_dates
+from src.classifier import eur_default_foreign_warning
 from src.database import (
     get_transaction_count_db,
     search_transactions_raw,
@@ -75,6 +76,13 @@ def render() -> None:
         st.info("Raw database results are shown below (if your SQLite DB has data).")
     else:
         st.markdown(f"**{len(filtered)} transactions** (of {len(payments)} total)")
+        foreign = [p for p in payments if eur_default_foreign_warning(p)]
+        if foreign:
+            st.warning(
+                f"⚠️ {len(foreign)} EUR charge(s) fell to the `eur_default` (SPAIN) rule for a "
+                f"customer that looks foreign — see the **Review** column and add a geographic "
+                f"override below if they are not in Spain."
+            )
 
     if payments:
         rows = []
@@ -91,6 +99,7 @@ def render() -> None:
                 "Currency": p.currency.upper(),
                 "Rule": p.classification_rule,
                 "Geo Rule": p.geo_rule,
+                "Review": (f"⚠ {w}" if (w := eur_default_foreign_warning(p)) else ""),
             })
 
         df = pd.DataFrame(rows)

@@ -11,6 +11,7 @@ from typing import Optional
 from src.logger import get_logger
 from src.tax_models import (
     AuditEntry,
+    EUB2CThresholdResult,
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
@@ -22,7 +23,13 @@ from src.tax_models import (
     TaxDeadline,
     _tax_deadline_date,
 )
+from src.declared_reports import apply_frozen_amounts
 from src.vat_rules import (
+    EU_B2C_THRESHOLD_EUR,
+    EU_B2C_TREATMENTS,
+    EU_B2C_WARN_RATIO,
+    SPANISH_21_TREATMENTS,
+    is_oss_registered,
     oss_rate,
     vat_amount_on_base,
     vat_base_from_inclusive,
@@ -76,6 +83,10 @@ def _load_classified_range(
     Shared loader for the quarter- and YTD-scoped wrappers below: the SELECT,
     table, ``activity_type`` filter and ordering are identical between them —
     only the ``start`` bound differs.
+
+    Transactions that appear in a frozen (declared) Stripe report carry the
+    declared EUR amounts instead of the live ones, so later FX re-conversions
+    cannot move a quarter that was already sent to the gestor.
     """
     rows = conn.execute(
         """SELECT id, created_date, converted_amount, converted_amount_refunded,
@@ -87,7 +98,7 @@ def _load_classified_range(
            ORDER BY created_date""",
         (start, end),
     ).fetchall()
-    return [dict(r) for r in rows]
+    return apply_frozen_amounts([dict(r) for r in rows], conn)
 
 
 def _classified_quarter_end(year: int, quarter: int) -> str:
@@ -335,7 +346,9 @@ def compute_modelo_303(
         _agg[key]["base_eur"] = round(_agg[key]["base_eur"] + base, 2)
         _agg[key]["vat_eur"] = round(_agg[key]["vat_eur"] + vat, 2)
 
-        if treatment == "IVA_ES_21":
+        if treatment in SPANISH_21_TREATMENTS:
+            # IVA_ES_21 (Spain) and EU_B2C_ES21 (EU consumers below the art. 73
+            # LIVA threshold, not in OSS) both accrue Spanish 21% IVA.
             result.box_01_base += base
             result.box_03_cuota += vat
         elif treatment == "IVA_EU_B2B":
@@ -363,7 +376,7 @@ def compute_modelo_303(
             rec["oss_country"] = oss_cc
         return rec
 
-    recs_es21  = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_ES_21"]
+    recs_es21  = [_agg_rec(k, v) for k, v in _agg.items() if k[2] in SPANISH_21_TREATMENTS]
     recs_eu_b2b = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_EU_B2B"]
     recs_oss   = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "OSS_EU"]
     recs_export = [_agg_rec(k, v) for k, v in _agg.items() if k[2] == "IVA_EXPORT"]
@@ -457,13 +470,14 @@ def compute_modelo_303(
     _a = partial(AuditEntry.of, "303", year, quarter)
     result.audit = [
         _a("box_01_base",
-           "Base imponible 21% (IVA devengado — Stripe + facturas emitidas España)",
-           "SUM(vat_base_eur) WHERE vat_treatment='IVA_ES_21' (transactions + invoices out)",
+           "Base imponible 21% (IVA devengado — Stripe España + UE B2C art. 73 + facturas emitidas)",
+           "SUM(vat_base_eur) WHERE vat_treatment IN ('IVA_ES_21','EU_B2C_ES21') "
+           "(transactions + invoices out)",
            result.box_01_base,
            records=recs_es21),
         _a("box_03_cuota",
            "Cuota IVA devengado 21%",
-           "SUM(vat_amount_eur) WHERE vat_treatment = 'IVA_ES_21'  [= 21% × box_01_base]",
+           "SUM(vat_amount_eur) WHERE vat_treatment IN ('IVA_ES_21','EU_B2C_ES21')  [= 21% × box_01_base]",
            result.box_03_cuota,
            box_01_base=result.box_01_base, rate=0.21),
         _a("box_59_intracom_entregas",
@@ -832,17 +846,19 @@ def compute_oss_return(
 ) -> OSSReturnResult:
     """Compute OSS quarterly return (B2C digital services to EU non-Spain customers).
 
-    When ``tax.oss_registered`` is false the taxpayer is not enrolled in the One
-    Stop Shop, so no OSS return is produced (an audit note records why). Otherwise
-    ``config`` is threaded through the VAT-treatment derivation.
+    Unless ``tax.oss_registered`` is explicitly true (default **false**) the
+    taxpayer is not enrolled in the One Stop Shop, so no OSS return is produced
+    (an audit note records why) and EU B2C sales are taxed in Spain
+    (``EU_B2C_ES21``, Modelo 303). Otherwise ``config`` is threaded through the
+    VAT-treatment derivation.
     """
     result = OSSReturnResult(year=year, quarter=quarter)
     _a = partial(AuditEntry.of, "OSS", year, quarter)
-    if _tax_settings(config).get("oss_registered", True) is False:
+    if not is_oss_registered(config):
         result.audit = [_a(
             "oss_not_registered",
             "OSS no aplicable — no registrado en el régimen One Stop Shop",
-            "tax.oss_registered = false → no OSS return generated",
+            "tax.oss_registered != true → no OSS return generated (EU B2C → EU_B2C_ES21 in 303)",
             0.0,
             oss_registered=False,
         )]
@@ -918,8 +934,8 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
 
     # Stripe transactions from Spanish counterparties
     rows = db_conn.execute(
-        """SELECT email_meta, buyer_vat_id, converted_amount, converted_amount_refunded, geo_region,
-                  strftime('%m', created_date) as month
+        """SELECT id, email_meta, buyer_vat_id, converted_amount, converted_amount_refunded,
+                  geo_region, strftime('%m', created_date) as month
            FROM transactions
            WHERE strftime('%Y', created_date) = ?
              AND geo_region = 'SPAIN'
@@ -927,6 +943,7 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
            ORDER BY created_date""",
         (str(year),),
     ).fetchall()
+    rows = apply_frozen_amounts([dict(r) for r in rows], db_conn)
 
     # Income invoices issued to Spanish clients.
     # `iva_amount` is selected alongside the base because Modelo 347 reports the
@@ -1164,3 +1181,40 @@ def compute_and_persist_tax_snapshots(
 
     db_conn.commit()
     return computed_at
+
+
+def compute_eu_b2c_threshold(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> EUB2CThresholdResult:
+    """Track year-to-date EU B2C distance sales against the €10,000 art. 73 LIVA limit.
+
+    Counts Stripe rows whose derived VAT treatment is EU B2C (``EU_B2C_ES21`` or
+    ``OSS_EU``) from 1 January through the end of ``quarter``, on their ex-VAT
+    base, plus the full previous year (exceeding the limit in either year ends
+    the Spanish-VAT option). Declared-report amounts win over live ones, like
+    every other engine figure.
+    """
+    result = EUB2CThresholdResult(
+        year=year, quarter=quarter,
+        limit_eur=EU_B2C_THRESHOLD_EUR, warn_ratio=EU_B2C_WARN_RATIO,
+    )
+    by_country: dict[str, float] = defaultdict(float)
+    ytd = 0.0
+    for row in _load_classified_ytd(year, quarter, db_conn):
+        if _get_vat_treatment(row, config) not in EU_B2C_TREATMENTS:
+            continue
+        base = _get_vat_base(row, config)
+        ytd += base
+        by_country[(row.get("card_country") or "UNKNOWN").upper()] += base
+        result.n_transactions += 1
+    prev = sum(
+        _get_vat_base(r, config)
+        for r in _load_classified_ytd(year - 1, 4, db_conn)
+        if _get_vat_treatment(r, config) in EU_B2C_TREATMENTS
+    )
+    result.ytd_base_eur = round(ytd, 2)
+    result.previous_year_base_eur = round(prev, 2)
+    result.by_country = {k: round(v, 2) for k, v in sorted(by_country.items())}
+    if result.status != "OK":
+        log.warning("⚠️ %s", result.message)
+    return result

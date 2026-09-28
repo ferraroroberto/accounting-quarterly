@@ -327,3 +327,32 @@ class TestPeriodTotals:
         totals = get_ss_period_totals(2099, db_path=tmp_db)
         assert totals["yearly_total"] == 0.0
         assert all(v == 0.0 for v in totals["quarters"].values())
+
+
+# ---------------------------------------------------------------------------
+# Modelo 130 integration: contributions net of refunds land in box 02
+# ---------------------------------------------------------------------------
+
+class TestModelo130Integration:
+    def test_box_02_includes_ytd_contributions_net_of_refunds(self, tmp_db, synthetic_export):
+        from src.database import get_connection
+        from src.tax_engine import compute_modelo_130
+
+        init_db(tmp_db)
+        rows = load_bank_export(
+            file_path=synthetic_export,
+            date_column="Fecha",
+            amount_column="Importe",
+            description_column="Más datos",
+            concept_column="Movimiento",
+            concept_patterns=["TGSS"],
+        )
+        upsert_ss_payments(rows, source_file="test", db_path=tmp_db)
+
+        conn = get_connection(tmp_db)
+        try:
+            result = compute_modelo_130(2026, 1, conn)
+        finally:
+            conn.close()
+        # Jan + Feb debits (duplicate dropped) minus the March refund.
+        assert result.box_02_gastos == pytest.approx(50.25 + 50.25 - 45.00)

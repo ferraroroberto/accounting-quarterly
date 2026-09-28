@@ -262,3 +262,58 @@ def test_snapshot_roundtrip(conn):
     back = decode_snapshot("130", encode_snapshot("130", r))
     assert back.aeat_boxes() == r.aeat_boxes()
     assert back.previous_year_net_source == r.previous_year_net_source
+
+# ---------------------------------------------------------------------------
+# Platform (application) fees in box 02 (#135)
+# ---------------------------------------------------------------------------
+
+def _stripe_fee(conn, id, date, base, fee_stripe, fee_application, refunded=0.0):
+    """A Spanish Stripe sale whose balance-transaction fee is split (NULL split = legacy row)."""
+    _stripe(conn, id, date, base)
+    known = [x for x in (fee_stripe, fee_application) if x is not None]
+    conn.execute("UPDATE transactions SET fee = ?, fee_stripe = ?, fee_application = ?, "
+                 "converted_amount_refunded = ? WHERE id = ?",
+                 (round(sum(known), 2) if known else 1.4, fee_stripe, fee_application, refunded, id))
+    conn.commit()
+
+
+def _cell(r, cell):
+    entry = next(e for e in r.audit if e.cell == cell)
+    return entry.value, json.loads(entry.inputs_json)
+
+
+class TestPlatformFees:
+    def test_application_fee_is_expensed_stripe_fee_is_not(self, conn):
+        _stripe_fee(conn, "pf1", "2025-02-10", 100.0, fee_stripe=0.40, fee_application=1.00)
+        r = compute_modelo_130(2025, 1, conn)
+        # Stripe's 0.40 is on the Stripe invoices; only the platform's 1.00 enters 02.
+        assert r.gastos_reales == 1.0
+        value, inputs = _cell(r, "c02_platform_fees")
+        assert value == 1.0 and inputs["fee_split_unknown"] == 0
+        assert [(x["charge_id"], x["fee_application"]) for x in inputs["records"]] == [("pf1", 1.0)]
+        assert _cell(r, "c02_gastos_reales")[1]["platform_fees"] == 1.0
+
+    def test_no_application_fee_adds_nothing(self, conn):
+        _stripe_fee(conn, "pf2", "2025-02-10", 100.0, fee_stripe=0.40, fee_application=0.0)
+        r = compute_modelo_130(2025, 1, conn)
+        assert r.gastos_reales == 0.0
+        assert _cell(r, "c02_platform_fees") == (0.0, {"fee_split_unknown": 0, "records": []})
+        assert "Fee split unknown" not in r.notes
+
+    def test_unknown_split_is_counted_never_guessed(self, conn):
+        _stripe_fee(conn, "pf3", "2025-02-10", 100.0, fee_stripe=None, fee_application=None)
+        _stripe_fee(conn, "pf4", "2025-03-10", 100.0, fee_stripe=0.40, fee_application=1.00)
+        r = compute_modelo_130(2025, 1, conn)
+        assert r.gastos_reales == 1.0                     # the legacy row's 1.40 fee is not expensed
+        assert _cell(r, "c02_platform_fees")[1]["fee_split_unknown"] == 1
+        assert "Fee split unknown for 1 Stripe charge(s); re-fetch" in r.notes
+
+    def test_ytd_by_charge_date_and_refunds_follow_the_balance_transaction(self, conn):
+        _stripe_fee(conn, "pf5", "2025-02-10", 100.0, fee_stripe=0.40, fee_application=1.00)
+        # Refunded in full: the platform did not return its fee on the charge's balance transaction.
+        _stripe_fee(conn, "pf6", "2025-05-10", 50.0, fee_stripe=0.30, fee_application=0.50, refunded=60.5)
+        _stripe_fee(conn, "pf7", "2025-07-01", 80.0, fee_stripe=0.30, fee_application=0.80)   # Q3: not yet
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 1.0
+        r2 = compute_modelo_130(2025, 2, conn)
+        assert r2.gastos_reales == 1.5
+        assert [x["refunded_eur"] for x in _cell(r2, "c02_platform_fees")[1]["records"]] == [0.0, 60.5]

@@ -342,6 +342,16 @@ class TestPLByActivity:
         pl = compute_pl_by_activity(YEAR, conn, {"tax": {"pl_allocation": {"reta": "PAINTING"}}}, year)
         assert pl.allocation["reta"] == "COACHING" and "PAINTING" in pl.notes
 
+    def test_platform_fee_goes_to_the_charge_activity_and_ties(self, conn, year):
+        # #135: the newsletter charge's platform (application) fee is a real expense of IAE 751.
+        conn.execute("UPDATE transactions SET fee_stripe = 0.4, fee_application = 12.0 WHERE id = 'n1'")
+        conn.commit()
+        pl = compute_pl_by_activity(YEAR, conn, CFG, year)
+        by = {a.iae: a for a in pl.activities}
+        assert by["751"].other_expenses == 12.0
+        assert pl.total_expenses == compute_modelo_130(YEAR, 4, conn, CFG).gastos_reales
+        assert pl.ties_to_130
+
 
 # ---------------------------------------------------------------------------
 # Pack assembly, exports, CLI

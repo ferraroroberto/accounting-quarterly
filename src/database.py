@@ -20,6 +20,9 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "billing_country": "TEXT",
     "amount_original": "REAL",
     "fx_rate": "REAL",
+    # Fee split from balance_transaction.fee_details (EUR); NULL = unknown (#135).
+    "fee_stripe": "REAL",
+    "fee_application": "REAL",
     "activity_type": "TEXT",
     "geo_region": "TEXT",
     "classification_rule": "TEXT",
@@ -741,6 +744,17 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         conn.close()
 
 
+def _fee_split_changed(existing: sqlite3.Row, p: Payment) -> bool:
+    """True when ``p`` carries a known fee split that differs from the stored one.
+
+    An unknown split (None, e.g. a key without balance-transaction access) never
+    counts as a change and never overwrites a known one (the UPDATE COALESCEs).
+    """
+    if p.fee_stripe is None or p.fee_application is None:
+        return False
+    return existing["fee_stripe"] != p.fee_stripe or existing["fee_application"] != p.fee_application
+
+
 def upsert_payments(payments: list[Payment], source: str = "api",
                     db_path: Optional[str | Path] = None) -> tuple[int, int]:
     """Insert or update payments. Returns (inserted, updated) counts."""
@@ -751,8 +765,8 @@ def upsert_payments(payments: list[Payment], source: str = "api",
         _ensure_transactions_schema(conn)
         for p in payments:
             existing = conn.execute(
-                "SELECT id, converted_amount, converted_amount_refunded, description, fee, currency, "
-                "payment_type_meta, event_api_id_meta, email_meta, card_country, billing_country, "
+                "SELECT id, converted_amount, converted_amount_refunded, description, fee, "
+                "fee_stripe, fee_application, currency, payment_type_meta, event_api_id_meta, email_meta, card_country, billing_country, "
                 "amount_original, fx_rate, "
                 "stripe_customer_id, stripe_payment_intent_id, stripe_balance_transaction_id, stripe_invoice_id, "
                 "raw_source_type, raw_source_json "
@@ -765,14 +779,14 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                 conn.execute("""
                     INSERT INTO transactions
                         (id, created_date, converted_amount, converted_amount_refunded,
-                         description, fee, currency, payment_type_meta,
+                         description, fee, fee_stripe, fee_application, currency, payment_type_meta,
                          event_api_id_meta, email_meta, card_country, billing_country,
                          amount_original, fx_rate,
                          stripe_customer_id, stripe_payment_intent_id,
                          stripe_balance_transaction_id, stripe_invoice_id,
                          raw_source_type, raw_source_json,
                          source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     p.id,
                     p.created_date.isoformat(),
@@ -780,6 +794,8 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     p.converted_amount_refunded,
                     p.description,
                     p.fee,
+                    p.fee_stripe,
+                    p.fee_application,
                     p.currency,
                     p.payment_type_meta,
                     p.event_api_id_meta,
@@ -804,6 +820,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     or existing["converted_amount_refunded"] != p.converted_amount_refunded
                     or existing["description"] != p.description
                     or existing["fee"] != p.fee
+                    or _fee_split_changed(existing, p)
                     or existing["currency"] != p.currency
                     or existing["payment_type_meta"] != p.payment_type_meta
                     or existing["event_api_id_meta"] != p.event_api_id_meta
@@ -823,7 +840,10 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     conn.execute("""
                         UPDATE transactions SET
                             converted_amount = ?, converted_amount_refunded = ?,
-                            description = ?, fee = ?, currency = ?,
+                            description = ?, fee = ?,
+                            fee_stripe = COALESCE(?, fee_stripe),
+                            fee_application = COALESCE(?, fee_application),
+                            currency = ?,
                             payment_type_meta = ?, event_api_id_meta = ?,
                             email_meta = ?, card_country = ?, billing_country = ?,
                             amount_original = ?, fx_rate = ?,
@@ -834,7 +854,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                         WHERE id = ?
                     """, (
                         p.converted_amount, p.converted_amount_refunded,
-                        p.description, p.fee, p.currency,
+                        p.description, p.fee, p.fee_stripe, p.fee_application, p.currency,
                         p.payment_type_meta, p.event_api_id_meta,
                         p.email_meta, p.card_country, p.billing_country,
                         p.amount_original, p.fx_rate,
@@ -913,6 +933,8 @@ def load_classified_payments(
                 converted_amount_refunded=row["converted_amount_refunded"],
                 description=row["description"],
                 fee=row["fee"],
+                fee_stripe=row["fee_stripe"],
+                fee_application=row["fee_application"],
                 currency=row["currency"],
                 payment_type_meta=row["payment_type_meta"],
                 event_api_id_meta=row["event_api_id_meta"],

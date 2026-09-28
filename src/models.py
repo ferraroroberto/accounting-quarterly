@@ -17,6 +17,11 @@ class Payment(BaseModel):
     converted_amount_refunded: float
     description: str
     fee: float
+    # Split of ``fee`` from balance_transaction.fee_details, EUR (the balance
+    # currency). None = split unknown (fetched before #135, or no balance
+    # transaction readable). fee_stripe is every non-application part.
+    fee_stripe: Optional[float] = None
+    fee_application: Optional[float] = None
     currency: str = "eur"
     payment_type_meta: Optional[str] = None
     event_api_id_meta: Optional[str] = None

@@ -11,7 +11,8 @@ Income: Stripe VAT bases by the transaction's ``activity_type``; issued
 invoices by the invoice ``activity_type`` (an ``EXEMPT_TEACHING`` invoice
 without one is teaching → COACHING); exchange differences by the activity of
 the invoice they come from. Expenses: deductible expense invoices by the
-invoice ``activity_type``, else the vendor registry's ``activity``.
+invoice ``activity_type``, else the vendor registry's ``activity``; Stripe
+platform (application) fees by the activity of the charge they came from.
 
 What has no activity is allocated by a configurable rule,
 ``tax.pl_allocation`` in ``config.json``::
@@ -70,7 +71,7 @@ class ActivityPL:
     expenses_invoices: float = 0.0
     reta: float = 0.0
     depreciation: float = 0.0
-    other_expenses: float = 0.0       # manual entries + expenses allocated from "unallocated"
+    other_expenses: float = 0.0       # platform fees, manual entries + expenses allocated from "unallocated"
 
     @property
     def total_expenses(self) -> float:
@@ -155,7 +156,8 @@ def compute_pl_by_activity(
                       "rule": None if activity else rule_key, **extra})
 
     # --- Income (130 box 01) ----------------------------------------------------
-    for r in _load_classified_ytd(year, 4, db_conn):
+    stripe_rows = _load_classified_ytd(year, 4, db_conn)
+    for r in stripe_rows:
         _line("income", "stripe", _get_vat_base(r, config), _norm_activity(r.get("activity_type")), "unallocated",
               id=r["id"], date=str(r.get("created_date", ""))[:10])
     for inv in _load_income_invoices_ytd(year, 4, db_conn):
@@ -196,6 +198,10 @@ def compute_pl_by_activity(
         (f"{year}-01-01", f"{year}-12-31"),
     ).fetchall():
         _line("expense", "reta", float(r["amount_eur"]), None, "reta", id=r["id"], date=r["payment_date"])
+    for r in stripe_rows:
+        if r.get("fee_application"):
+            _line("expense", "platform_fee", float(r["fee_application"]), _norm_activity(r.get("activity_type")),
+                  "unallocated", id=r["id"], date=str(r.get("created_date", ""))[:10])
     dep = depreciation_for_period(year, 4, db_conn, ytd=True, config=config)
     for d in dep.lines:
         if d.charge_eur:

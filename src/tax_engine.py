@@ -97,7 +97,8 @@ def _load_classified_range(
     rows = conn.execute(
         """SELECT id, created_date, converted_amount, converted_amount_refunded,
                   activity_type, geo_region, card_country, email_meta,
-                  vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id
+                  vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id,
+                  fee_application
            FROM transactions
            WHERE created_date >= ? AND created_date <= ?
              AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
@@ -1002,6 +1003,8 @@ class _Collected130:
     exch_diff_total: float = 0.0
     inv_gastos: float = 0.0
     ss_gastos: float = 0.0
+    platform_fees: float = 0.0
+    fee_split_unknown: int = 0
     manual_gastos: float = 0.0
     inv_retenciones: float = 0.0
     manual_retenciones: float = 0.0
@@ -1016,7 +1019,8 @@ class _Collected130:
 
     @property
     def gastos_reales(self) -> float:
-        return round(self.inv_gastos + self.ss_gastos + self.depreciation.total_eur + self.manual_gastos, 2)
+        return round(self.inv_gastos + self.ss_gastos + self.platform_fees + self.depreciation.total_eur
+                     + self.manual_gastos, 2)
 
     @property
     def c06(self) -> float:
@@ -1076,6 +1080,18 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
         (ytd_start, ytd_end),
     ).fetchall()
     col.ss_gastos = round(sum(float(r["amount_eur"]) for r in ss_rows), 2)
+    # 02 — application fees a connected platform kept from the same Stripe charges
+    # as box 01 (#135). Stripe's own fee is already expensed from its invoices, so
+    # only the application part counts; it follows the charge's balance transaction
+    # (a fee the platform did not return on a refund stays an expense). Rows with
+    # an unknown split (fetched before the split was stored) are counted, not guessed.
+    fee_rows = [r for r in rows if r.get("fee_application")]
+    col.platform_fees = round(sum(float(r["fee_application"]) for r in fee_rows), 2)
+    col.fee_split_unknown = sum(1 for r in rows if r.get("fee_application") is None)
+    if col.fee_split_unknown:
+        log.warning("⚠️ 130 %dQ%d: fee split unknown for %d Stripe charge(s) — their platform fees are "
+                    "not in box 02; re-fetch with `stripe-fetch --backfill-fee-split`",
+                    year, quarter, col.fee_split_unknown)
     col.manual_gastos = _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", conn, ytd=True)
 
     # 06 — IRPF withheld by clients on issued invoices (exact cents) + manual entries.
@@ -1133,6 +1149,12 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
              "description": r["description"] or "Cuota Seguridad Social",
              "amount_eur": round(float(r["amount_eur"]), 2)}
             for r in ss_rows
+        ],
+        "platform_fees": [
+            {"source": "stripe_platform_fee", "date": str(r.get("created_date") or "")[:10],
+             "charge_id": r["id"], "fee_application": round(float(r["fee_application"]), 2),
+             "refunded_eur": round(r.get("converted_amount_refunded") or 0.0, 2)}
+            for r in fee_rows
         ],
         "capital": [
             {"source": "invoice_in_capital", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
@@ -1298,6 +1320,9 @@ def _build_modelo_130(year: int, quarter: int, conn: sqlite3.Connection, config:
     if r.c19_resultado < 0:
         notes.append(f"Negative result: {-r.c19_resultado:,.2f} can be deducted in box 15 of later "
                      f"quarters of {year} (pending after this quarter: {r.negativos_pendientes_posteriores:,.2f}).")
+    if col.fee_split_unknown:
+        notes.append(f"Fee split unknown for {col.fee_split_unknown} Stripe charge(s); re-fetch "
+                     "(stripe-fetch --backfill-fee-split) — their platform fees are not in box 02.")
     if col.unregistered_capital_ids:
         notes.append(f"{len(col.unregistered_capital_ids)} capital-asset invoice(s) have no fixed asset "
                      "registered: neither expensed nor depreciated.")
@@ -1329,13 +1354,20 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
            "gastos_reales + gastos_dificil_justificacion", r.c02_gastos,
            gastos_reales=r.gastos_reales, gastos_dificil_justificacion=r.gastos_dificil_justificacion),
         _a("c02_gastos_reales",
-           "02 · Gastos reales YTD — facturas recibidas + cuotas RETA + amortizaciones + entradas manuales",
+           "02 · Gastos reales YTD — facturas recibidas + cuotas RETA + comisiones de plataforma + "
+           "amortizaciones + entradas manuales",
            "SUM(subtotal_eur × deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 "
            "AND not a capital asset YTD + SUM(amount_eur) FROM social_security_payments YTD (refunds negative) "
+           "+ SUM(fee_application) FROM transactions YTD "
            "+ amortizaciones YTD + SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES'",
            r.gastos_reales, inv_gastos=round(col.inv_gastos, 2), ss_gastos=col.ss_gastos,
-           amortizaciones=dep.total_eur, manual_gastos=round(col.manual_gastos, 2),
+           platform_fees=col.platform_fees, amortizaciones=dep.total_eur, manual_gastos=round(col.manual_gastos, 2),
            ss_records=rec["social_security"], records=rec["expenses"]),
+        _a("c02_platform_fees",
+           "02 · Comisiones de plataforma YTD (application fees retenidas de cargos Stripe)",
+           "SUM(fee_application) FROM transactions YTD (same classified charges as 01, by charge date); "
+           "Stripe's own fee is expensed from the Stripe invoices; split unknown → counted, not guessed",
+           col.platform_fees, fee_split_unknown=col.fee_split_unknown, records=rec["platform_fees"]),
         _a("c02_gastos_dificil_justificacion", "02 · Gastos de difícil justificación (5%, máx. €2.000/año)",
            "min(5% × max(0, 01 − gastos_reales), 2000) if regime = estimacion_directa_simplificada else 0 "
            "[art. 30.2.4ª LIRPF]",

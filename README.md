@@ -80,11 +80,12 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 ├── vendors.json.example
 ├── divergences.json               # Divergence catalogue (git-ignored, copy from .example — see "Reconciliation")
 ├── divergences.json.example
+├── gestor_notes.md                # Free-text notes for the accountant's pack (git-ignored, optional)
 ├── config.json.example
 ├── requirements.txt
 ├── launch_app.bat                 # Windows launch shortcut
 ├── scripts/
-│   └── close_quarter.py           # Deterministic quarterly-close helper (see "Closing a Quarter")
+│   └── close_quarter.py           # Quarter-close CLI over src/close_pipeline.py (see "Closing a Quarter")
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
 │   ├── _json_store.py             # Shared cached-JSON store backing config.py and rules_engine.py
@@ -111,6 +112,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
+│   ├── invoice_ingest.py          # OCR → FX → vendor registry → DB save path (OCR tab + close_quarter.py ocr)
+│   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
@@ -154,7 +157,9 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
 │   ├── test_vendor_registry.py    # Vendor matching, defaults vs locks, unknown vendors, xlsx seed
 │   ├── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
-│   └── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
+│   ├── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
+│   ├── test_close_pipeline.py     # Every close step on a temp DB (OCR/ECB/Stripe mocked), idempotence, skill ↔ CLI
+│   └── test_invoice_ocr_tab.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
@@ -168,7 +173,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   │   └── validation.yaml        # Fallback gestor-filed reference data (git-ignored)
 │   └── close_quarter/             # Output of scripts/close_quarter.py (git-ignored)
 │       ├── invoice_copy_log.json  # Cumulative "already swept" invoice manifest
-│       └── <year>_Q<quarter>/     # Swept invoices + Stripe_Report_Q<quarter>_<year>.xlsx
+│       └── <year>_Q<quarter>/     # Swept invoices, Stripe report, reconciliation/filing sheet .md, accountant's notes + draft email
 └── logs/                          # Rotating daily log files
 ```
 
@@ -309,10 +314,42 @@ The dashboard includes a connection tester and permission checker under **Config
 
 ## Closing a Quarter
 
-`scripts/close_quarter.py` is the deterministic backbone for the recurring quarterly-close chore — invoked interactively via the `/close-quarter` Claude Code skill (`.claude/skills/close-quarter/`), which guides you through it step by step and pauses for confirmation/overrides at the points that need judgement. It can also be run by hand:
+`scripts/close_quarter.py` is the deterministic backbone for the recurring quarterly-close chore — a thin CLI over `src/close_pipeline.py`, invoked interactively via the `/close-quarter` Claude Code skill (`.claude/skills/close-quarter/`), which guides you through it step by step and pauses for review after extraction (`ocr`/`vendors`/`dedupe`) and after `compute`. It can also be run by hand.
+
+### Pipeline
+
+Every step takes `--year Y --quarter Q` (default: the last completed quarter), is idempotent, and prints `[step] N change(s)` with one `+` line per write, `⚠` review items and `❌` errors — a re-run with nothing new prints `[step] no changes`. Exit code 1 only on `❌`.
 
 ```bash
-.venv/Scripts/python.exe scripts/close_quarter.py sweep [--year Y --quarter Q]         # copy new invoice PDFs
+.venv/Scripts/python.exe scripts/close_quarter.py sweep                       # 1. copy new invoice PDFs
+.venv/Scripts/python.exe scripts/close_quarter.py ocr [--direction in|out|both] [--dry-run] [--model ID]  # 2. extract new/changed PDFs
+.venv/Scripts/python.exe scripts/close_quarter.py vendors                     # 3. vendor registry + unknown vendors ⚠
+.venv/Scripts/python.exe scripts/close_quarter.py dedupe [--apply]            # 4. duplicates / out-of-period
+.venv/Scripts/python.exe scripts/close_quarter.py fx [--apply]                # 5. ECB backfill + invoice FX recompute
+.venv/Scripts/python.exe scripts/close_quarter.py stripe                      # 6. fetch + backfill-emails + reclassify + warnings
+.venv/Scripts/python.exe scripts/close_quarter.py reta --file <bank export>   # 7. RETA (TGSS) debits
+.venv/Scripts/python.exe scripts/close_quarter.py compute                     # 8. 303/130/349 (+ OSS, 347) snapshots
+.venv/Scripts/python.exe scripts/close_quarter.py reconcile                   # 9. filed vs app, markdown table
+.venv/Scripts/python.exe scripts/close_quarter.py sheet                       # 10. filing sheet (placeholder until #101)
+.venv/Scripts/python.exe scripts/close_quarter.py gestor-pack [--freeze]      # 11. accountant's pack
+.venv/Scripts/python.exe scripts/close_quarter.py all [--apply] [--freeze] [--reta-file F] [--model ID]  # 1-11 in order
+```
+
+- **`ocr`** extracts every PDF under `invoice_in_dir` / `invoice_out_dir` that is new or changed since its last extraction (MD5 against the stored `file_hash`) through `src/invoice_ingest.extract_and_save` — the same save path as the Invoice OCR tab: OCR, FX resolution, vendor-registry defaults. A failing file is reported (`❌`) and the rest continue; it stays pending and is retried next run. `--dry-run` lists the pending files. `--model` overrides the hub model (else the `LLM_HUB_MODEL` env var, else `gemini_pro`) — use it when the hub no longer serves the default alias.
+- **`vendors`** applies `vendors.json` to stored expense invoices and lists the quarter's invoices with an unknown vendor.
+- **`dedupe`** runs the five detectors of [Duplicate review](#duplicate-review) (out-of-period over the files swept into the quarter folder); `--apply` writes the exclusions, never over a locked row.
+- **`fx`** backfills ECB rates up to today (warns when the stored rates stop short of the quarter end, e.g. network failure) and re-resolves the quarter's stored non-EUR invoices; the recompute writes only with `--apply`.
+- **`stripe`** fetches the quarter from Stripe, fills billing email/country from saved raw charges, reclassifies the quarter, and reports new/changed transactions plus the review warnings of `stripe-fetch` (foreign-looking `eur_default`, EU B2C threshold). Use `stripe-fetch` for the full per-transaction table.
+- **`reta`** imports a bank export of the Social Security debits (column names from `config.json → social_security`, see [Seguridad Social](#seguridad-social-social-security-cuotas)); rows already stored are skipped.
+- **`compute`** computes the quarter and saves the snapshots only when a figure changed (so a re-run doesn't touch `computed_at`).
+- **`reconcile`** reconciles 303/130/349 against the quarter's filed returns when they are imported, otherwise against the previous quarter's (the chain the carry-forwards start from), and writes `reconciliation_<Y>_Q<Q>.md`.
+- **`sheet`** writes `filing_sheet_<Y>_Q<Q>.md` from the stored snapshots — a placeholder (non-zero boxes + 349 operators) behind the `src.close_pipeline.filing_sheet_renderer` hook, which the filing sheet of #101 replaces.
+- **`gestor-pack`** (while an external accountant is engaged) writes the reclassified Stripe report, `gestor_notes_<Y>_Q<Q>.md` — your free text from the git-ignored `gestor_notes.md` at the repo root (a template when absent) plus the special treatments detected in the ledger (partial business use, exclusions, non-default VAT treatment, fixed assets, foreign currency) — and a draft email `gestor_email_<Y>_Q<Q>.txt`. `--freeze` stores the report as the declared report (below); once declared the pack never regenerates it. Nothing is ever sent.
+- **`all`** stops at the first failing step; completed steps are no-ops on the re-run. `--apply` lets `dedupe`/`fx` write, `--freeze` lets `gestor-pack` freeze.
+
+### Other subcommands
+
+```bash
 .venv/Scripts/python.exe scripts/close_quarter.py stripe-check [--days N]              # read-only API smoke test
 .venv/Scripts/python.exe scripts/close_quarter.py stripe-fetch --year Y --quarter Q    # fetch + classify + persist
 .venv/Scripts/python.exe scripts/close_quarter.py add-override "<key>" REGION [--type email|name]
@@ -324,7 +361,7 @@ The dashboard includes a connection tester and permission checker under **Config
 .venv/Scripts/python.exe scripts/close_quarter.py fx-recompute [--dry-run] [--since D] # re-resolve stored invoices' EUR at the ECB rate
 ```
 
-- **`sweep`** diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
+- **`sweep`** (pipeline step 1) diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
 - **`stripe-fetch`** flags transactions classified by a *default* geo rule (no client-specific override matched) so they can be double-checked before the report goes out, lists EUR charges that fell to `eur_default` for a foreign-looking customer (⚠), and prints the EU B2C year-to-date total against the €10,000 art. 73 LIVA threshold.
 - **`reclassify`** re-runs the classifier over the transactions *already stored* from `--from` (optionally up to `--to`) with the current rules and overrides, prints every change (`old activity/geo (rule) -> new`) plus a per-quarter count, and writes only the changed rows. `--dry-run` reports without writing. Idempotent: a second run changes nothing. Run it after any rule change that should apply retroactively.
 - **`backfill-emails`** fills empty stored `email_meta` / `billing_country` from each row's already-saved raw Stripe charge JSON (`raw_source_json`) — no Stripe API call, and a non-empty stored value is never overwritten. Use it once after upgrading to pick up `billing_details.email` / `billing_details.address.country` for rows fetched before that fallback existed. `--dry-run` reports counts without writing.
@@ -784,7 +821,8 @@ All fields required for AEAT compliance (Libro de IVA, SII, Modelo 303/347/349):
 The LLM's own `subtotal_eur`/`iva_amount`/`total_eur` guess for a foreign-currency
 document is used only as a **cross-check** — the authoritative EUR figure comes
 from `src.fx_rates.resolve_invoice_amounts`, called right after extraction
-(`app/invoice_ocr_tab._extract_and_save`), in this order:
+(`src/invoice_ingest.extract_and_save`, shared by the Invoice OCR tab and
+`close_quarter.py ocr`), in this order:
 
 1. **`charged_eur`** — when the document itself states the EUR actually charged
    to the card (e.g. *"Charged 42.50 EUR using 1 USD = 0.8500 EUR"*), that wins.

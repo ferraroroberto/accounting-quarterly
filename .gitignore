@@ -36,5 +36,6 @@ config.json
 classification_rules.json
 vendors.json
 divergences.json
+gestor_notes.md
 # Launcher scratch (ephemeral images/logs written by the tray launcher)
 .launcher-tmp/

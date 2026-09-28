@@ -143,7 +143,7 @@ class TestResolveInvoiceAmounts:
 
 
 # ---------------------------------------------------------------------------
-# Ingestion → storage (mirrors app/invoice_ocr_tab._extract_and_save)
+# Ingestion → storage (mirrors src/invoice_ingest.extract_and_save)
 # ---------------------------------------------------------------------------
 
 def _ingest(direction: str, db_path, **data_overrides) -> str:

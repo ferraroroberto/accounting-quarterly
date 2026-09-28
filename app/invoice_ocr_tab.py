@@ -13,100 +13,15 @@ from src.database import (
     delete_invoice,
     delete_invoices_by_ids,
     get_invoice_by_filename,
-    get_invoice_hash,
     get_invoices,
     parse_locked_fields,
 )
 from src.fx_rates import STALE_TOLERANCE_DAYS
-from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
+from src.invoice_ingest import extract_and_save, list_invoice_files, needs_extraction
 from src.logger import get_logger
-from src.vendor_registry import load_registry, upsert_invoice_with_registry
+from src.vendor_registry import load_registry
 
 log = get_logger(__name__)
-
-
-def _direction_label(direction: str) -> str:
-    return "Expense (In)" if direction == "in" else "Income (Out)"
-
-
-def _compute_hash(filename: str, direction: str) -> str:
-    import hashlib
-    pdf_path = resolve_invoice_dir(direction) / filename
-    return hashlib.md5(pdf_path.read_bytes()).hexdigest()
-
-
-def _needs_extraction(filename: str, direction: str) -> bool:
-    """Return True if the file has not been extracted yet or the PDF has changed."""
-    stored_hash = get_invoice_hash(filename, direction)
-    if stored_hash is None:
-        return True
-    current_hash = _compute_hash(filename, direction)
-    return current_hash != stored_hash
-
-
-def _extract_and_save(filename: str, direction: str) -> dict:
-    """Run extraction via the configured OCR backend and persist to DB. Returns the extracted data dict."""
-    from src.fx_rates import resolve_invoice_amounts
-    from src.invoice_ocr import extract_invoice
-
-    pdf_path = resolve_invoice_dir(direction) / filename
-    data = extract_invoice(pdf_path)
-
-    # FX (#93): the LLM's own subtotal_eur/iva_amount/total_eur are only a
-    # cross-check for a foreign-currency document — the authoritative EUR
-    # figures come from the ECB rate on invoice_date, or the EUR actually
-    # charged when the document states it (charged_eur wins for expenses).
-    fx = resolve_invoice_amounts(direction, data)
-    if fx.fx_warning:
-        log.warning("⚠️ FX resolution for %s: %s", filename, fx.fx_warning)
-
-    record = {
-        "filename": filename,
-        "direction": direction,
-        "file_hash": data.get("_file_hash"),
-        "invoice_number": data.get("invoice_number"),
-        "invoice_date": data.get("invoice_date"),
-        "vendor_name": data.get("vendor_name"),
-        "vendor_nif": data.get("vendor_nif"),
-        "vendor_address": data.get("vendor_address"),
-        "client_name": data.get("client_name"),
-        "client_nif": data.get("client_nif"),
-        "client_address": data.get("client_address"),
-        "description": data.get("description"),
-        "subtotal_eur": fx.subtotal_eur,
-        "iva_rate": data.get("iva_rate"),
-        "iva_amount": fx.iva_amount,
-        "irpf_rate": data.get("irpf_rate"),
-        "irpf_amount": data.get("irpf_amount"),
-        "total_eur": fx.total_eur,
-        "currency": data.get("currency", "EUR"),
-        "original_currency": data.get("original_currency"),
-        "original_amount": data.get("original_amount"),
-        "fx_rate": data.get("fx_rate"),
-        "charged_eur": data.get("charged_eur"),
-        "fx_rate_used": fx.fx_rate_used,
-        "fx_rate_date": fx.fx_rate_date,
-        "fx_source": fx.fx_source,
-        "fx_stale": fx.fx_stale,
-        "fx_cross_check_diff_pct": fx.fx_cross_check_diff_pct,
-        "payment_method": data.get("payment_method"),
-        "category": data.get("category"),
-        "notes": data.get("notes"),
-        "raw_json": data.get("_raw_response"),
-        # Enhanced Spanish accounting fields
-        "invoice_type": data.get("invoice_type"),
-        "supply_date": data.get("supply_date"),
-        "due_date": data.get("due_date"),
-        "is_rectificativa": 1 if data.get("is_rectificativa") else 0,
-        "rectified_invoice_ref": data.get("rectified_invoice_ref"),
-        "vat_exempt_reason": data.get("vat_exempt_reason"),
-        "iva_breakdown": json.dumps(data.get("iva_breakdown")) if data.get("iva_breakdown") else None,
-        "deductible_pct": data.get("deductible_pct"),
-        "billing_period_start": data.get("billing_period_start"),
-        "billing_period_end": data.get("billing_period_end"),
-    }
-    upsert_invoice_with_registry(record)  # vendor-registry defaults, never over locked fields
-    return record
 
 
 def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
@@ -114,7 +29,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
     st.subheader(label)
     st.caption(f"Directory: `{invoice_dir}`")
 
-    all_files = [str(p.relative_to(resolve_invoice_dir(direction))) for p in scan_invoice_pdfs(direction)]
+    all_files = list_invoice_files(direction)
     if not all_files:
         st.info(f"No PDF files found in `{invoice_dir}`.")
         return
@@ -123,7 +38,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
     col_a, col_b = st.columns([1, 3])
     with col_a:
         if st.button(f"Extract new/changed ({direction})", key=f"extract_all_{direction}"):
-            to_process = [f for f in all_files if _needs_extraction(f, direction)]
+            to_process = [f for f in all_files if needs_extraction(f, direction)]
             if not to_process:
                 st.success("All files are already up to date (no changes detected).")
             else:
@@ -131,7 +46,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 errors: list[str] = []
                 for i, fname in enumerate(to_process):
                     try:
-                        _extract_and_save(fname, direction)
+                        extract_and_save(fname, direction)
                     except Exception as exc:
                         log.error("Extraction failed for %s: %s", fname, exc)
                         errors.append(f"{fname}: {exc}")
@@ -145,7 +60,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 st.rerun()
 
     with col_b:
-        pending = sum(1 for f in all_files if _needs_extraction(f, direction))
+        pending = sum(1 for f in all_files if needs_extraction(f, direction))
         st.caption(f"{len(all_files)} PDF(s) found · {pending} pending extraction")
 
     st.markdown("---")
@@ -163,7 +78,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 if st.button("Extract / Re-extract", key=f"extract_{direction}_{fname}"):
                     with st.spinner(f"Extracting {fname}…"):
                         try:
-                            record = _extract_and_save(fname, direction)
+                            record = extract_and_save(fname, direction)
                             st.success("Extracted successfully.")
                             st.rerun()
                         except Exception as exc:

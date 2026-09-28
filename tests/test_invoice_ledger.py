@@ -97,7 +97,7 @@ def _row(db_path, rid: str) -> dict:
 
 
 def _ocr_record(**overrides) -> dict:
-    """Shape of the record `app/invoice_ocr_tab._extract_and_save` passes to upsert_invoice."""
+    """Shape of the record `src/invoice_ingest.extract_and_save` passes to upsert_invoice."""
     rec = {
         "filename": "vendor/inv-001.pdf",
         "direction": "in",

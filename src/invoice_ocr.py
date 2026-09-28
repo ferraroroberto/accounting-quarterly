@@ -254,12 +254,13 @@ def _parse_json_object(raw_text: str) -> dict:
     raise ValueError("unterminated JSON object in response")
 
 
-def _extract_via_hub(pdf_bytes: bytes, pdf_name: str) -> str:
+def _extract_via_hub(pdf_bytes: bytes, pdf_name: str, model: Optional[str] = None) -> str:
     """Send the PDF + prompt through local-llm-hub; return the raw model text.
 
     Uses the Anthropic SDK shape with a ``document`` content block, routed to
-    the ``gemini_pro`` alias. The hub is the standard LAN entry point; do not
-    re-implement a CLI subprocess wrapper here.
+    ``model``, else the ``LLM_HUB_MODEL`` env var, else the ``gemini_pro``
+    alias. The hub is the standard LAN entry point; do not re-implement a CLI
+    subprocess wrapper here.
     """
     try:
         from anthropic import Anthropic
@@ -269,7 +270,7 @@ def _extract_via_hub(pdf_bytes: bytes, pdf_name: str) -> str:
         ) from exc
 
     base_url = os.getenv("LLM_HUB_BASE_URL", HUB_BASE_URL)
-    model = os.getenv("LLM_HUB_MODEL", HUB_MODEL)
+    model = model or os.getenv("LLM_HUB_MODEL", HUB_MODEL)
     log.info("Extracting %s via local-llm-hub (%s, model=%s)…", pdf_name, base_url, model)
 
     client = Anthropic(api_key="local-dummy", base_url=base_url)
@@ -355,6 +356,7 @@ def extract_invoice(
     pdf_path: str | Path,
     api_key: Optional[str] = None,
     provider: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> dict:
     """Extract accounting data from a PDF.
 
@@ -365,6 +367,9 @@ def extract_invoice(
         provider: ``"hub"`` (default) or ``"gemini"``. Falls back to the
                   INVOICE_OCR_PROVIDER env var, then ``invoice_ocr.provider``
                   in config.json, then ``DEFAULT_PROVIDER``.
+        model:    hub model id/alias for the ``hub`` provider. Falls back to
+                  the LLM_HUB_MODEL env var, then ``HUB_MODEL``. Ignored by
+                  the ``gemini`` provider.
 
     Returns:
         Parsed dict with extracted fields plus ``_raw_response`` and
@@ -385,7 +390,7 @@ def extract_invoice(
 
     resolved = _resolve_provider(provider)
     if resolved == "hub":
-        raw_text = _extract_via_hub(pdf_bytes, pdf_path.name)
+        raw_text = _extract_via_hub(pdf_bytes, pdf_path.name, model)
     elif resolved == "gemini":
         raw_text = _extract_via_gemini(pdf_bytes, pdf_path.name, api_key)
     else:

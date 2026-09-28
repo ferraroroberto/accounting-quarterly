@@ -355,8 +355,14 @@ def apply_groups(groups: list[DuplicateGroup], db_path: Optional[str] = None) ->
 # lossy filename mangling in scripts/close_quarter.py:cmd_sweep)
 # ---------------------------------------------------------------------------
 
-def load_sweep_rows(year: int, quarter: int, db_path: Optional[str] = None) -> list[dict]:
-    """Invoice rows whose swept copy lives in ``tmp/close_quarter/<year>_Q<quarter>/``.
+def load_sweep_rows(
+    year: int,
+    quarter: int,
+    db_path: Optional[str | Path] = None,
+    sweep_dir: Optional[Path] = None,
+) -> list[dict]:
+    """Invoice rows whose swept copy lives in ``tmp/close_quarter/<year>_Q<quarter>/``
+    (or ``sweep_dir`` when given).
 
     ``scripts/close_quarter.py``'s sweep renames files (``"IN - " + rel path
     with separators flattened to " - "``), so the reverse match here is
@@ -365,7 +371,8 @@ def load_sweep_rows(year: int, quarter: int, db_path: Optional[str] = None) -> l
     (direction, filename). Files that don't resolve to a known invoice row are
     skipped. Returns ``[]`` if the sweep folder doesn't exist.
     """
-    sweep_dir = ROOT / "tmp" / "close_quarter" / f"{year}_Q{quarter}"
+    if sweep_dir is None:
+        sweep_dir = ROOT / "tmp" / "close_quarter" / f"{year}_Q{quarter}"
     if not sweep_dir.is_dir():
         return []
     rows_by_key = {

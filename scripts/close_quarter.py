@@ -1,20 +1,42 @@
-"""Deterministic helper for closing a Stripe accounting quarter.
+"""Deterministic helper for closing an accounting quarter.
 
 Run from the repo root with the project venv:
     .venv/Scripts/python.exe scripts/close_quarter.py <subcommand> [options]
 
-Subcommands:
+Pipeline (issue #102) — run in this order, or all at once with `all`. Every
+step is idempotent and prints what it changed ("no changes" on a re-run):
     sweep         Copy new invoice PDFs (received + sent) not yet copied or
                   catalogued into tmp/close_quarter/<year>_Q<quarter>/, and
-                  update the cumulative copy-log manifest so re-runs only
-                  pick up files added since the last sweep.
+                  update the cumulative copy-log manifest.
+    ocr           Extract new/changed invoice PDFs (MD5 vs stored hash) via the
+                  OCR backend (local-llm-hub by default), resolve FX and apply
+                  the vendor registry. A failing file is reported and retried
+                  next run. --dry-run lists them; --model overrides the hub
+                  model (else LLM_HUB_MODEL, else gemini_pro).
+    vendors       Apply the vendor registry; list the quarter's unknown vendors (⚠).
+    dedupe        Duplicate / receipt / out-of-period groups (out-of-period =
+                  swept files dated outside the quarter). Writes only with --apply.
+    fx            Backfill ECB rates to today, then re-resolve the quarter's
+                  stored non-EUR invoices. The recompute writes only with --apply.
+    stripe        Stripe fetch + billing-email backfill + reclassify the quarter,
+                  then review warnings (foreign-looking eur_default, art. 73 LIVA).
+    reta          Import the RETA (TGSS) debits of a bank export (--file).
+    compute       Modelo 303/130/349 (+ OSS, 347) snapshots — saved only when a
+                  figure changed.
+    reconcile     Filed vs app, box by box: this quarter if already filed, else
+                  the previous quarter. Writes reconciliation_<Y>_Q<Q>.md.
+    sheet         Filing sheet from the stored snapshots (placeholder until #101).
+    gestor-pack   Stripe report (--freeze stores it as the declared report),
+                  notes on special treatments (from git-ignored gestor_notes.md)
+                  and a draft email. Never sends anything.
+    all           Every step above in order (--apply for dedupe/fx, --freeze for
+                  the pack, --reta-file for reta); stops at a failing step.
+
+Other subcommands:
     stripe-check  Read-only Stripe API smoke test. No DB writes.
-    stripe-fetch  Fetch + classify + persist the target quarter's Stripe
-                  charges, then print a review table flagging transactions
-                  classified by a default geo rule (no client-specific
-                  override) so they can be double-checked, EUR charges that
-                  fell to eur_default for a foreign-looking customer, and
-                  the EU B2C year-to-date total vs the art. 73 LIVA limit.
+    stripe-fetch  Fetch + classify + persist the quarter's Stripe charges and
+                  print the full review table (default geo rule ⚠, foreign
+                  eur_default charges, EU B2C threshold).
     add-override  Add a geographic classification override (name/email
                   substring -> region) to classification_rules.json.
     reclassify    Re-run the classifier over STORED transactions from a date
@@ -24,24 +46,21 @@ Subcommands:
                   Fill empty stored email_meta / billing_country from each
                   row's already-saved raw Stripe charge JSON, no API call;
                   never overwrites a non-empty value. --dry-run only reports.
-    report        Reclassify the quarter's stored rows, regenerate its Excel
-                  report from the DB and save it into the same
-                  tmp/close_quarter/<year>_Q<quarter>/ folder as the swept
-                  invoices. --freeze stores the report as the quarter's
-                  immutable declared report (the one sent to the gestor).
+    report        Reclassify the quarter's stored rows and regenerate its Excel
+                  report. --freeze stores it as the quarter's immutable
+                  declared report (--supersede for a corrected re-send).
+    fx-backfill   Backfill ECB FX rates up to today.
+    fx-recompute  Re-resolve every stored non-EUR invoice at the ECB rate.
 
 All outputs are written under tmp/, which is git-ignored.
 """
 from __future__ import annotations
 
 import argparse
-import json
-import shutil
-import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Optional
 
 ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
@@ -51,9 +70,27 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 from src.classifier import eur_default_foreign_warning  # noqa: E402
-from src.config import load_config  # noqa: E402
+from src.close_pipeline import (  # noqa: E402
+    DEFAULT_GEO_RULES,
+    STEP_ORDER,
+    CloseContext,
+    StepResult,
+    run_all,
+    step_compute,
+    step_dedupe,
+    step_fx,
+    step_gestor_pack,
+    step_ocr,
+    step_reconcile,
+    step_reta,
+    step_sheet,
+    step_stripe,
+    step_sweep,
+    step_vendors,
+    write_stripe_report,
+)
+from src.database import init_db  # noqa: E402
 from src.exceptions import ReportAlreadyFrozenError  # noqa: E402
-from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
 
@@ -61,11 +98,8 @@ if TYPE_CHECKING:
     from src.reclassify import ReclassifyResult
 
 # app.data_loader pulls in Streamlit (for @st.cache_data); import it lazily,
-# only inside the subcommands that actually need it, so `sweep` / `stripe-check`
-# / `add-override` stay free of Streamlit's "no runtime found" cache warning.
-
-MANIFEST_PATH = ROOT / "tmp" / "close_quarter" / "invoice_copy_log.json"
-DEFAULT_GEO_RULES = {"eur_default", "eur_newsletter_default", "non_eur_default"}
+# only inside the subcommands that actually need it, so the other subcommands
+# stay free of Streamlit's "no runtime found" cache warning.
 
 
 def previous_quarter(today: datetime | None = None) -> tuple[int, int]:
@@ -77,86 +111,112 @@ def previous_quarter(today: datetime | None = None) -> tuple[int, int]:
     return today.year, q - 1
 
 
-def quarter_out_dir(year: int, quarter: int) -> Path:
-    d = ROOT / "tmp" / "close_quarter" / f"{year}_Q{quarter}"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def _context(args: argparse.Namespace) -> CloseContext:
+    init_db()  # same idempotent migrations the app runs at start, so new columns exist
+    return CloseContext(args.year, args.quarter)
 
 
-def _load_manifest() -> dict:
-    if MANIFEST_PATH.exists():
-        return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    return {"in": [], "out": []}
+def _emit(result: StepResult, with_output: bool = True) -> int:
+    print(result.render())
+    if with_output and result.output:
+        print()
+        print(result.output)
+    return 1 if result.errors else 0
 
 
-def _save_manifest(manifest: dict) -> None:
-    MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+def _stripe_fetcher(year: int, quarter: int) -> Callable[[], object]:
+    def fetch() -> object:
+        from app.data_loader import get_classified_for_period
+        return get_classified_for_period(year, quarter, input_mode="api")
+    return fetch
 
 
-def _relname(p: Path, base: Path) -> str:
-    return str(p.relative_to(base))
+# ---------------------------------------------------------------------------
+# Pipeline subcommands
+# ---------------------------------------------------------------------------
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    return _emit(step_sweep(_context(args)))
 
 
-def cmd_sweep(args: argparse.Namespace) -> None:
-    cfg = load_config()
-    in_dir = resolve_invoice_dir("in", cfg)
-    out_dir = resolve_invoice_dir("out", cfg)
-    dest = quarter_out_dir(args.year, args.quarter)
-
-    conn = sqlite3.connect(ROOT / "data" / "accounting.db")
-    conn.row_factory = sqlite3.Row
-    known_in = {r["filename"] for r in conn.execute("SELECT filename FROM invoices WHERE direction='in'")}
-    known_out = {r["filename"] for r in conn.execute("SELECT filename FROM invoices WHERE direction='out'")}
-    conn.close()
-
-    manifest = _load_manifest()
-    already_in = set(manifest.get("in", []))
-    already_out = set(manifest.get("out", []))
-
-    pdfs_in = scan_invoice_pdfs("in", cfg)
-    pdfs_out = scan_invoice_pdfs("out", cfg)
-
-    new_in = [p for p in pdfs_in
-              if _relname(p, in_dir) not in known_in and _relname(p, in_dir) not in already_in]
-    new_out = [p for p in pdfs_out
-               if _relname(p, out_dir) not in known_out and _relname(p, out_dir) not in already_out]
-
-    copied_in, copied_out = [], []
-    for p in new_in:
-        rel = _relname(p, in_dir)
-        dest_name = "IN - " + rel.replace("\\", " - ").replace("/", " - ")
-        shutil.copy2(p, dest / dest_name)
-        copied_in.append(rel)
-    for p in new_out:
-        rel = _relname(p, out_dir)
-        dest_name = "OUT - " + rel.replace("\\", " - ").replace("/", " - ")
-        shutil.copy2(p, dest / dest_name)
-        copied_out.append(rel)
-
-    manifest["in"] = sorted(already_in | set(copied_in))
-    manifest["out"] = sorted(already_out | set(copied_out))
-    manifest["last_run_at"] = datetime.now().isoformat(timespec="seconds")
-    _save_manifest(manifest)
-
-    print(f"Copied {len(copied_in)} received + {len(copied_out)} sent invoices -> {dest}")
-    for rel in copied_in:
-        print(f"  IN  {rel}")
-    for rel in copied_out:
-        print(f"  OUT {rel}")
-    if not copied_in and not copied_out:
-        print("No new invoices found.")
+def cmd_ocr(args: argparse.Namespace) -> int:
+    directions = ("in", "out") if args.direction == "both" else (args.direction,)
+    return _emit(step_ocr(_context(args), directions=directions, dry_run=args.dry_run, model=args.model))
 
 
-def cmd_stripe_check(args: argparse.Namespace) -> None:
+def cmd_vendors(args: argparse.Namespace) -> int:
+    return _emit(step_vendors(_context(args)))
+
+
+def cmd_dedupe(args: argparse.Namespace) -> int:
+    return _emit(step_dedupe(_context(args), apply=args.apply))
+
+
+def cmd_fx(args: argparse.Namespace) -> int:
+    return _emit(step_fx(_context(args), apply=args.apply))
+
+
+def cmd_stripe(args: argparse.Namespace) -> int:
+    return _emit(step_stripe(_context(args), fetch=_stripe_fetcher(args.year, args.quarter)))
+
+
+def cmd_reta(args: argparse.Namespace) -> int:
+    return _emit(step_reta(_context(args), args.file))
+
+
+def cmd_compute(args: argparse.Namespace) -> int:
+    return _emit(step_compute(_context(args)))
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    return _emit(step_reconcile(_context(args)))
+
+
+def cmd_sheet(args: argparse.Namespace) -> int:
+    return _emit(step_sheet(_context(args)))
+
+
+def cmd_gestor_pack(args: argparse.Namespace) -> int:
+    return _emit(step_gestor_pack(_context(args), freeze=args.freeze))
+
+
+def cmd_all(args: argparse.Namespace) -> int:
+    ctx = _context(args)
+    print(f"Closing {ctx.period} (apply={args.apply}, freeze={args.freeze}) -> {ctx.quarter_dir}")
+
+    def on_step(n: int, result: StepResult) -> None:
+        print()
+        print(f"== {n}/{len(STEP_ORDER)} ==")
+        _emit(result, with_output=False)
+
+    results = run_all(
+        ctx, apply=args.apply, freeze=args.freeze, reta_file=args.reta_file, model=args.model,
+        stripe_fetch=_stripe_fetcher(args.year, args.quarter), on_step=on_step,
+    )
+    print()
+    print("Summary:")
+    for r in results:
+        print(f"  {r.step:<12} {len(r.changes):>3} change(s)  {len(r.warnings):>3} warning(s)  "
+              f"{len(r.errors):>3} error(s)")
+    if len(results) < len(STEP_ORDER):
+        print(f"❌ Stopped after '{results[-1].step}' — fix it and rerun (completed steps are no-ops).")
+    return 1 if any(r.errors for r in results) else 0
+
+
+# ---------------------------------------------------------------------------
+# Other subcommands
+# ---------------------------------------------------------------------------
+
+def cmd_stripe_check(args: argparse.Namespace) -> int:
     end = datetime.now()
     start = end - timedelta(days=args.days)
     payments = fetch_charges(start, end)
     print(f"OK: Stripe API reachable, {len(payments)} charges in the last {args.days} days "
           f"(read-only, no DB writes).")
+    return 0
 
 
-def cmd_stripe_fetch(args: argparse.Namespace) -> None:
+def cmd_stripe_fetch(args: argparse.Namespace) -> int:
     from app.data_loader import get_classified_for_period, quarter_dates
     from src.aggregator import calculate_grand_totals, get_transaction_count
     from src.classifier import validate_classifications
@@ -196,6 +256,7 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> None:
                   f"— {warning}")
 
     _print_eu_b2c_threshold(args.year, args.quarter)
+    return 0
 
 
 def _print_eu_b2c_threshold(year: int, quarter: int) -> None:
@@ -220,16 +281,17 @@ def _print_reclassify(result: ReclassifyResult) -> None:
         print(f"  {year} Q{quarter}: {n}")
 
 
-def cmd_reclassify(args: argparse.Namespace) -> None:
+def cmd_reclassify(args: argparse.Namespace) -> int:
     from src.reclassify import reclassify_stored
 
     start = datetime.strptime(args.from_date, "%Y-%m-%d")
     end = (datetime.strptime(args.to_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
            if args.to_date else None)
     _print_reclassify(reclassify_stored(start, end, dry_run=args.dry_run))
+    return 0
 
 
-def cmd_backfill_emails(args: argparse.Namespace) -> None:
+def cmd_backfill_emails(args: argparse.Namespace) -> int:
     from src.stripe_client import backfill_billing_details_from_raw_source
 
     result = backfill_billing_details_from_raw_source(dry_run=args.dry_run)
@@ -238,9 +300,10 @@ def cmd_backfill_emails(args: argparse.Namespace) -> None:
         f"Backfill billing details: scanned {result.scanned}, {verb} {result.updated} "
         f"({result.email_filled} emails, {result.country_filled} countries)."
     )
+    return 0
 
 
-def cmd_add_override(args: argparse.Namespace) -> None:
+def cmd_add_override(args: argparse.Namespace) -> int:
     rules = load_rules()
     geo = rules.setdefault("geographic_rules", {})
     key = args.key.strip().lower()
@@ -248,58 +311,18 @@ def cmd_add_override(args: argparse.Namespace) -> None:
     geo.setdefault(bucket, {})[key] = args.region
     save_rules(rules)
     print(f"Added override to {bucket}: {key!r} -> {args.region}")
+    return 0
 
 
-def cmd_report(args: argparse.Namespace) -> None:
-    from app.data_loader import get_classified_for_period, quarter_dates
-    from src.database import get_connection
-    from src.declared_reports import declared_vs_live_drift, freeze_report, get_declared_report
-    from src.excel_exporter import create_excel_report, generate_report_filename
-    from src.reclassify import reclassify_stored
-
-    conn = get_connection()
+def cmd_report(args: argparse.Namespace) -> int:
     try:
-        declared = get_declared_report(conn, args.year, args.quarter)
-        if args.freeze and declared and not args.supersede:
-            raise SystemExit(
-                f"Q{args.quarter} {args.year} is already declared (v{declared.version}, "
-                f"{declared.created_at}, sha256 {declared.sha256[:12]}…). "
-                f"Use --freeze --supersede only for a corrected re-send."
-            )
-
-        start, end = quarter_dates(args.year, args.quarter)
-        # Stored classifications may predate a rule change; never export them stale.
-        _print_reclassify(reclassify_stored(start, end))
-        payments = get_classified_for_period(args.year, args.quarter, start, end, input_mode="db")
-
-        filename = generate_report_filename(args.year, args.quarter)
-        if declared and not args.freeze:
-            # Never overwrite the file that was sent to the gestor.
-            filename = filename.replace(".xlsx", "_live.xlsx")
-        dest = quarter_out_dir(args.year, args.quarter) / filename
-        create_excel_report(payments, dest, args.year, args.quarter, f"Q{args.quarter}_{args.year}")
-        print(f"Saved: {dest}")
-
-        if args.freeze:
-            try:
-                report = freeze_report(conn, args.year, args.quarter, payments, dest,
-                                       supersede=args.supersede)
-            except ReportAlreadyFrozenError as exc:
-                raise SystemExit(str(exc)) from exc
-            print(f"Frozen as declared report v{report.version}: {report.n_transactions} "
-                  f"transactions, net {report.total_net_eur:,.2f} EUR, sha256 {report.sha256}")
-        elif declared:
-            drift = declared_vs_live_drift(conn, args.year, args.quarter, payments)
-            print(f"⚠ Q{args.quarter} {args.year} was declared on {declared.created_at} "
-                  f"(v{declared.version}, sha256 {declared.sha256[:12]}…); the tax engine uses the "
-                  f"declared EUR amounts. Live vs declared: {len(drift['amount_differs'])} amount "
-                  f"difference(s), {len(drift['live_not_declared'])} live-only, "
-                  f"{len(drift['declared_not_live'])} declared-only.")
-    finally:
-        conn.close()
+        result = write_stripe_report(_context(args), freeze=args.freeze, supersede=args.supersede)
+    except ReportAlreadyFrozenError as exc:
+        raise SystemExit(str(exc)) from exc
+    return _emit(result)
 
 
-def cmd_fx_backfill(args: argparse.Namespace) -> None:
+def cmd_fx_backfill(args: argparse.Namespace) -> int:
     """Fetch and store ECB rates from the last stored date up to today (#93).
 
     Idempotent — safe to rerun at every close-quarter. Uses every currency
@@ -309,14 +332,15 @@ def cmd_fx_backfill(args: argparse.Namespace) -> None:
 
     stored = backfill_to_today()
     print(f"FX backfill: stored {stored} rate entries.")
+    return 0
 
 
-def cmd_fx_recompute(args: argparse.Namespace) -> None:
+def cmd_fx_recompute(args: argparse.Namespace) -> int:
     """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate (#93 follow-up).
 
     Invoices stored before the FX resolver existed (or before its most recent
-    fix) still carry whatever EUR figure the LLM guessed. Defaults to a dry
-    run — pass nothing written until you add `--apply`.
+    fix) still carry whatever EUR figure the LLM guessed. Writes unless
+    `--dry-run` is given.
     """
     from src.fx_rates import recompute_stored_invoice_fx
 
@@ -332,9 +356,10 @@ def cmd_fx_recompute(args: argparse.Namespace) -> None:
             print(f"  {row.filename} ({row.direction}, {row.currency}): "
                   f"{row.old_total_eur} -> {row.new_total_eur} EUR [{row.fx_source}]"
                   f"{' STALE' if row.fx_stale else ''}")
+    return 0
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     default_year, default_quarter = previous_quarter()
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -344,17 +369,52 @@ def main() -> None:
         p.add_argument("--year", type=int, default=default_year)
         p.add_argument("--quarter", type=int, default=default_quarter, choices=[1, 2, 3, 4])
 
-    p_sweep = sub.add_parser("sweep", help="Copy new invoice PDFs into the quarter's tmp folder")
-    add_yq(p_sweep)
-    p_sweep.set_defaults(func=cmd_sweep)
+    def add_step(name: str, func: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
+        p = sub.add_parser(name, help=help_text)
+        add_yq(p)
+        p.set_defaults(func=func)
+        return p
+
+    add_step("sweep", cmd_sweep, "1. Copy new invoice PDFs into the quarter's tmp folder")
+
+    p_ocr = add_step("ocr", cmd_ocr, "2. Extract new/changed invoice PDFs (OCR + FX + vendor registry)")
+    p_ocr.add_argument("--direction", choices=["in", "out", "both"], default="both")
+    p_ocr.add_argument("--dry-run", action="store_true", help="List the pending PDFs without extracting")
+    p_ocr.add_argument("--model", default=None,
+                       help="Hub model id/alias (overrides LLM_HUB_MODEL; default gemini_pro)")
+
+    add_step("vendors", cmd_vendors, "3. Apply the vendor registry and list unknown vendors")
+
+    p_dedupe = add_step("dedupe", cmd_dedupe, "4. Duplicate/receipt/out-of-period review")
+    p_dedupe.add_argument("--apply", action="store_true", help="Write the proposed exclusions")
+
+    p_fx_step = add_step("fx", cmd_fx, "5. ECB backfill + recompute the quarter's stored non-EUR invoices")
+    p_fx_step.add_argument("--apply", action="store_true", help="Write the recomputed EUR figures")
+
+    add_step("stripe", cmd_stripe, "6. Stripe fetch + backfill-emails + reclassify + override warnings")
+
+    p_reta = add_step("reta", cmd_reta, "7. Import RETA (TGSS) debits from a bank export")
+    p_reta.add_argument("--file", required=True, help="Bank export (.xls/.xlsx/.csv)")
+
+    add_step("compute", cmd_compute, "8. Compute and snapshot Modelo 303/130/349 (+ OSS, 347)")
+    add_step("reconcile", cmd_reconcile, "9. Filed vs app (this quarter if filed, else the previous)")
+    add_step("sheet", cmd_sheet, "10. Filing sheet from the stored snapshots (placeholder until #101)")
+
+    p_pack = add_step("gestor-pack", cmd_gestor_pack, "11. Stripe report + notes + draft email for the accountant")
+    p_pack.add_argument("--freeze", action="store_true",
+                        help="Freeze the Stripe report as the quarter's declared report")
+
+    p_all = add_step("all", cmd_all, "Run steps 1-11 in order")
+    p_all.add_argument("--apply", action="store_true", help="Let dedupe and fx write")
+    p_all.add_argument("--freeze", action="store_true", help="Let gestor-pack freeze the Stripe report")
+    p_all.add_argument("--reta-file", default=None, help="Bank export for the reta step (skipped if absent)")
+    p_all.add_argument("--model", default=None, help="Hub model for the ocr step (overrides LLM_HUB_MODEL)")
 
     p_check = sub.add_parser("stripe-check", help="Read-only Stripe API smoke test")
     p_check.add_argument("--days", type=int, default=90)
     p_check.set_defaults(func=cmd_stripe_check)
 
-    p_fetch = sub.add_parser("stripe-fetch", help="Fetch + classify + persist the target quarter")
-    add_yq(p_fetch)
-    p_fetch.set_defaults(func=cmd_stripe_fetch)
+    add_step("stripe-fetch", cmd_stripe_fetch, "Fetch + classify + persist the quarter, full review table")
 
     p_override = sub.add_parser("add-override", help="Add a geographic classification override")
     p_override.add_argument("key", help="Substring to match (client name or email)")
@@ -376,13 +436,11 @@ def main() -> None:
     p_backfill_emails.add_argument("--dry-run", action="store_true", help="Report changes without writing")
     p_backfill_emails.set_defaults(func=cmd_backfill_emails)
 
-    p_report = sub.add_parser("report", help="Regenerate the quarter's Excel report")
-    add_yq(p_report)
+    p_report = add_step("report", cmd_report, "Regenerate the quarter's Excel report")
     p_report.add_argument("--freeze", action="store_true",
                           help="Store this report as the quarter's immutable declared report")
     p_report.add_argument("--supersede", action="store_true",
                           help="With --freeze: add a new declared version for a corrected re-send")
-    p_report.set_defaults(func=cmd_report)
 
     p_fx = sub.add_parser("fx-backfill", help="Backfill ECB FX rates up to today")
     p_fx.set_defaults(func=cmd_fx_backfill)
@@ -394,10 +452,13 @@ def main() -> None:
                                 help="Report changes without writing")
     p_fx_recompute.add_argument("--since", default=None, help="Only invoices dated on/after this ISO date")
     p_fx_recompute.set_defaults(func=cmd_fx_recompute)
+    return parser
 
-    args = parser.parse_args()
-    args.func(args)
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args) or 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

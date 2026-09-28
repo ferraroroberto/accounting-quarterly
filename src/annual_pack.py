@@ -51,8 +51,8 @@ def build_annual_pack(year: int, conn: sqlite3.Connection, config: Optional[dict
     return AnnualPack(
         year=year,
         m390=compute_modelo_390(year, conn, config),
-        m347_sales=compute_modelo_347(year, conn),
-        m347_purchases=compute_modelo_347_purchases(year, conn, registry),
+        m347_sales=compute_modelo_347(year, conn, config),
+        m347_purchases=compute_modelo_347_purchases(year, conn, registry, config),
         pl=compute_pl_by_activity(year, conn, config, registry),
     )
 

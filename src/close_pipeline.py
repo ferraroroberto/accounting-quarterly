@@ -535,7 +535,7 @@ def _compute_all(ctx: CloseContext, conn: sqlite3.Connection) -> dict[str, Any]:
         "130": compute_modelo_130(y, q, conn, cfg),
         "OSS": compute_oss_return(y, q, conn, cfg),
         "349": compute_modelo_349(y, q, conn, cfg),
-        "347": compute_modelo_347(y, conn),
+        "347": compute_modelo_347(y, conn, cfg),
     }
 
 

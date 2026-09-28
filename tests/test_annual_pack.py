@@ -283,6 +283,18 @@ class TestModelo347Purchases:
         r = compute_modelo_347_purchases(YEAR, conn, registry)
         assert [(x.nif, x.name, x.total) for x in r.rows] == [("B22222222", "Acme Installers SL", 3630.0)]
 
+    def test_activity_start_date_excludes_purchases_before_it(self, conn):
+        # #133: a purchase dated before the business existed doesn't belong
+        # to it either, same floor as the sales side and the quarterly models.
+        _inv(conn, "before", "in", "2025-01-10", 3000.0, "DOMESTIC", iva=630.0, nif="B87654321",
+             name="Early Vendor")
+        cfg = {"tax": {"activity_start_date": "2025-02-01"}}
+        r = compute_modelo_347_purchases(YEAR, conn, VendorRegistry(), cfg)
+        assert r.rows == []
+        # sanity: without the floor it clears the threshold
+        r_nofloor = compute_modelo_347_purchases(YEAR, conn, VendorRegistry(), {"tax": {}})
+        assert len(r_nofloor.rows) == 1
+
 
 # ---------------------------------------------------------------------------
 # P&L per IAE activity

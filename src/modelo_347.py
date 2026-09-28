@@ -91,16 +91,22 @@ def _is_spanish(inv: dict, nif: Optional[str]) -> bool:
 
 
 def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
-                                 registry=None) -> Modelo347PurchasesResult:
+                                 registry=None, config: Optional[dict] = None) -> Modelo347PurchasesResult:
     """Spanish vendors whose VAT-inclusive purchases of ``year`` exceed €3,005.06.
 
     ``registry`` is the vendor registry used to fill a missing NIF / name
-    (``src.vendor_registry.load_registry()`` when ``None``).
+    (``src.vendor_registry.load_registry()`` when ``None``). ``config``'s
+    ``tax.activity_start_date`` (issue #133), when set and later than 1 January,
+    excludes invoices dated before it — this business had no purchases yet.
     """
     if registry is None:
         from src.vendor_registry import load_registry
         registry = load_registry()
     result = Modelo347PurchasesResult(year=year)
+    start = f"{year}-01-01"
+    floor = (config or {}).get("tax", {}).get("activity_start_date")
+    if floor:
+        start = max(start, str(floor)[:10])
     rows = db_conn.execute(
         """SELECT id, filename, invoice_date, subtotal_eur, iva_amount, irpf_amount, geo_region,
                   vat_treatment, tax_treatment, vendor_nif, vendor_vat_id_norm, vendor_name
@@ -108,7 +114,7 @@ def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
            WHERE direction = 'in' AND COALESCE(excluded, 0) = 0
              AND invoice_date >= ? AND invoice_date <= ?
            ORDER BY invoice_date, id""",
-        (f"{year}-01-01", f"{year}-12-31"),
+        (start, f"{year}-12-31"),
     ).fetchall()
 
     buckets: dict[str, dict] = {}

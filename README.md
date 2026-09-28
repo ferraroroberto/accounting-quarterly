@@ -522,6 +522,7 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
     "regime": "estimacion_directa_simplificada",
     "vat_registered": true,
     "oss_registered": false,
+    "activity_start_date": "2025-01-01",
     "prorrata": {"enabled": true, "definitive_pct_by_year": {"2025": 100}},
     "modelo303_q4_negative_result": "compensate",
     "previous_year_net_yield": {"2025": 5000.00},
@@ -540,6 +541,7 @@ Every key above drives a computation:
 | `regime` | Gates the 5% *gastos de difícil justificación* in Modelo 130 — only `estimacion_directa_simplificada` is eligible (Art. 30.2.4ª LIRPF). |
 | `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
 | `oss_registered` | Default `false` (OSS is opt-in, Modelo 035). Unless `true`, no OSS return is generated (an audit note records why) and EU B2C sales are `EU_B2C_ES21`. |
+| `activity_start_date` | ISO date (`YYYY-MM-DD`) the business activity began. Absent → no lower bound (unchanged behaviour). Set, it floors every quarter/YTD range: a Stripe charge or invoice dated before it is left out of 303, 130, 349, 390 and 347 (income on the date itself is still counted), and the 303 box 110 / 130 box 05-15 chains never reach back before it. An audit note records what was excluded (accounting-quarterly#133). |
 | `prorrata.enabled` | VAT pro-rata (arts. 102–106 LIVA), default `true`. See [Modelo 303 box model](#modelo-303-box-model). |
 | `prorrata.definitive_pct_by_year` | The definitive pro-rata % of each year once filed (Q4 303 / 390); it is the next year's provisional %. Years not listed fall back to the % the app computes from that year's data, then 100. |
 | `previous_year_net_yield` | Previous year's net yield of economic activities for Modelo 130 box 13 — a number, or `{"<year>": amount}`. Only used when the previous year's Q4 130 receipt is not imported; without either, the app's own previous-year figure is used. |

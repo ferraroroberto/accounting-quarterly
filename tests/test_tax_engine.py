@@ -461,6 +461,96 @@ class TestConfigDrivenTaxSettings:
         assert result.rows[0].base == pytest.approx(300.0)
 
 
+class TestActivityStartDate:
+    """tax.activity_start_date floors every date range the engine queries (#133)."""
+
+    CFG = {"tax": {"activity_start_date": "2025-02-01"}}
+
+    def test_stripe_charge_before_start_excluded_from_303_and_130(self, db_conn):
+        _insert_tx(db_conn, id="before", created_date="2025-01-31T23:00:00",
+                   converted_amount=121.0, vat_treatment="IVA_ES_21",
+                   vat_base_eur=100.0, vat_amount_eur=21.0)
+        r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
+        assert r303.c07_base == 0.0
+        assert r303.c09_cuota == 0.0
+        r130 = compute_modelo_130(2025, 1, db_conn, self.CFG)
+        assert r130.c01_ingresos == 0.0
+
+    def test_charge_on_start_date_itself_is_counted(self, db_conn):
+        _insert_tx(db_conn, id="on_start", created_date="2025-02-01T00:00:01",
+                   converted_amount=121.0, vat_treatment="IVA_ES_21",
+                   vat_base_eur=100.0, vat_amount_eur=21.0)
+        r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
+        assert r303.c07_base == 100.0
+        assert r303.c09_cuota == 21.0
+        r130 = compute_modelo_130(2025, 1, db_conn, self.CFG)
+        assert r130.c01_ingresos == 100.0
+
+    def test_invoices_before_start_excluded_from_130(self, db_conn):
+        _insert_invoice(db_conn, id="out_before", direction="out", invoice_date="2025-01-15",
+                        subtotal_eur=500.0)
+        _insert_invoice(db_conn, id="in_before", direction="in", invoice_date="2025-01-20",
+                        subtotal_eur=200.0)
+        r130 = compute_modelo_130(2025, 1, db_conn, self.CFG)
+        assert r130.c01_ingresos == 0.0
+        assert r130.gastos_reales == 0.0
+        # sanity: without the floor both would count
+        r130_nofloor = compute_modelo_130(2025, 1, db_conn, {"tax": {}})
+        assert r130_nofloor.c01_ingresos == pytest.approx(500.0)
+        assert r130_nofloor.gastos_reales == pytest.approx(200.0)
+
+    def test_eu_b2b_charge_before_start_excluded_from_349(self, db_conn):
+        _insert_tx(db_conn, id="eu_b2b_before", created_date="2025-01-15T10:00:00",
+                   converted_amount=500.0, geo_region="EU_NOT_SPAIN",
+                   vat_treatment="IVA_EU_B2B", vat_base_eur=500.0, vat_amount_eur=0.0,
+                   buyer_vat_id="DE123456789")
+        r349 = compute_modelo_349(2025, 1, db_conn, self.CFG)
+        assert r349.rows == []
+        # sanity: without the floor it would be declared
+        r349_nofloor = compute_modelo_349(2025, 1, db_conn, {"tax": {}})
+        assert len(r349_nofloor.rows) == 1
+
+    def test_spanish_charge_before_start_excluded_from_347(self, db_conn):
+        _insert_tx(db_conn, id="es_before", created_date="2025-01-10T10:00:00",
+                   converted_amount=4000.0, geo_region="SPAIN",
+                   activity_type="COACHING", email_meta="client@example.com")
+        r347 = compute_modelo_347(2025, db_conn, self.CFG)
+        assert r347.rows == []
+        # sanity: without the floor it clears the €3,005.06 threshold
+        r347_nofloor = compute_modelo_347(2025, db_conn, {"tax": {}})
+        assert len(r347_nofloor.rows) == 1
+
+    def test_absent_key_leaves_behaviour_unchanged(self, db_conn):
+        _insert_tx(db_conn, id="ancient", created_date="2020-01-01T00:00:00",
+                   converted_amount=121.0, vat_treatment="IVA_ES_21",
+                   vat_base_eur=100.0, vat_amount_eur=21.0)
+        r303 = compute_modelo_303(2020, 1, db_conn)  # no config at all
+        assert r303.c07_base == 100.0
+        r303_empty_tax = compute_modelo_303(2020, 1, db_conn, {"tax": {}})
+        assert r303_empty_tax.c07_base == 100.0
+
+    def test_credit_chain_none_when_previous_quarter_precedes_start(self, db_conn):
+        # Activity starts mid-Q2; a stray Stripe row mis-dated before it must
+        # not pull the app-computed credit chain back past the start.
+        cfg = {"tax": {"activity_start_date": "2025-04-10"}}
+        _insert_tx(db_conn, id="stray", created_date="2025-02-01T10:00:00",
+                   converted_amount=50.0, vat_treatment="IVA_ES_21",
+                   vat_base_eur=41.32, vat_amount_eur=8.68)
+        r = compute_modelo_303(2025, 2, db_conn, cfg)
+        assert r.c110_source == "none"
+
+    def test_audit_note_reports_excluded_stripe_count_and_total(self, db_conn):
+        _insert_tx(db_conn, id="before", created_date="2025-01-15T10:00:00",
+                   converted_amount=121.0, vat_treatment="IVA_ES_21",
+                   vat_base_eur=100.0, vat_amount_eur=21.0)
+        r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
+        assert "before the activity start" in r303.notes
+        assert "1 Stripe transaction(s)" in r303.notes
+        r130 = compute_modelo_130(2025, 1, db_conn, self.CFG)
+        assert "before the activity start" in r130.notes
+        assert "1 Stripe transaction(s)" in r130.notes
+
+
 class TestTaxSnapshotPersistence:
     def test_persist_and_load_roundtrip(self, db_conn):
         _insert_tx(db_conn)

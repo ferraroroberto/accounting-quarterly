@@ -369,3 +369,78 @@ def test_snapshot_roundtrip(conn):
     r = compute_modelo_303(2025, 1, conn)
     back = decode_snapshot("303", encode_snapshot("303", r))
     assert back.aeat_boxes() == r.aeat_boxes()
+
+
+# ---------------------------------------------------------------------------
+# Stripe platform (application) fees as a non-EU reverse charge (#147)
+# ---------------------------------------------------------------------------
+
+def _fee_tx(conn, id, date, fee_application):
+    """A Spanish Stripe sale of 100 + 21 whose connected platform kept ``fee_application``
+    (``None`` = fee split unknown, a row fetched before the split was stored)."""
+    _tx(conn, id, f"{date}T10:00:00", 121.0, "IVA_ES_21", 100.0, 21.0)
+    conn.execute("UPDATE transactions SET fee_application = ? WHERE id = ?", (fee_application, id))
+    conn.commit()
+
+
+def _cell(r, cell):
+    entry = next(e for e in r.audit if e.cell == cell)
+    return entry.value, json.loads(entry.inputs_json)
+
+
+class TestPlatformFeeReverseCharge:
+    @pytest.fixture
+    def fees(self, conn):
+        _fee_tx(conn, "pf_q1", "2025-03-31", 3.00)       # Q1: not in Q2
+        _fee_tx(conn, "pf_a", "2025-04-10", 6.00)
+        _fee_tx(conn, "pf_b", "2025-06-30", 4.00)
+        _fee_tx(conn, "pf_zero", "2025-05-10", 0.0)      # no platform on this charge
+        _fee_tx(conn, "pf_q3", "2025-07-01", 5.00)       # Q3: not in Q2
+        return conn
+
+    def test_accrued_in_12_13_and_deducted_in_28_29(self, fees):
+        r = compute_modelo_303(2025, 2, fees)
+        assert (r.c12_base, r.c13_cuota) == (pytest.approx(10.0), pytest.approx(2.10))
+        assert (r.c28_base, r.c29_cuota) == (pytest.approx(10.0), pytest.approx(2.10))
+        # 27 = 3 Stripe sales × 21 + 2.10 ; neutral at 100%: 46 = the sales VAT only
+        assert r.c27_total_devengado == pytest.approx(65.10)
+        assert r.c46_resultado_regimen_general == pytest.approx(63.0)
+        value, inputs = _cell(r, "c12_base")
+        assert value == 10.0 and inputs["platform_fee_vat_treatment"] == "NON_EU_RC"
+        assert [(x["source"], x["charge_id"], x["fee_application"], x["rate_pct"])
+                for x in inputs["records"]] == [("platform_fee", "pf_a", 6.0, 21.0),
+                                                ("platform_fee", "pf_b", 4.0, 21.0)]
+        assert [x["charge_id"] for x in _cell(r, "c28_base")[1]["records"]] == ["pf_a", "pf_b"]
+
+    def test_other_quarters_count_their_own_charges(self, fees):
+        assert compute_modelo_303(2025, 1, fees).c12_base == pytest.approx(3.0)
+        assert compute_modelo_303(2025, 3, fees).c12_base == pytest.approx(5.0)
+
+    def test_deduction_takes_the_provisional_prorrata(self, fees):
+        r = compute_modelo_303(2025, 2, fees, {"tax": {"prorrata": {"definitive_pct_by_year": {"2024": 80}}}})
+        assert (r.c12_base, r.c13_cuota) == (pytest.approx(10.0), pytest.approx(2.10))
+        assert (r.c28_base, r.c29_cuota) == (pytest.approx(8.0), pytest.approx(1.68))
+
+    def test_none_leaves_the_303_unchanged(self, fees):
+        r = compute_modelo_303(2025, 2, fees, {"tax": {"platform_fee_vat_treatment": "NONE"}})
+        assert (r.c12_base, r.c13_cuota, r.c28_base, r.c29_cuota) == (0.0, 0.0, 0.0, 0.0)
+        assert r.c27_total_devengado == pytest.approx(63.0)
+        assert _cell(r, "c12_base")[1]["records"] == []
+
+    def test_invalid_option_rejected(self, fees):
+        with pytest.raises(ValueError, match="platform_fee_vat_treatment"):
+            compute_modelo_303(2025, 2, fees, {"tax": {"platform_fee_vat_treatment": "EU_RC"}})
+
+    def test_unknown_split_is_counted_never_guessed(self, conn):
+        _fee_tx(conn, "pf_legacy", "2025-04-11", None)
+        _fee_tx(conn, "pf_ok", "2025-04-12", 1.00)
+        r = compute_modelo_303(2025, 2, conn)
+        assert (r.c12_base, r.c13_cuota) == (pytest.approx(1.0), pytest.approx(0.21))
+        assert _cell(r, "c12_base")[1]["fee_split_unknown"] == 1
+        assert "Fee split unknown for 1 Stripe charge(s); re-fetch" in r.notes
+        r_none = compute_modelo_303(2025, 2, conn, {"tax": {"platform_fee_vat_treatment": "NONE"}})
+        assert "Fee split unknown" not in r_none.notes
+
+    def test_activity_start_date_excludes_earlier_charges(self, fees):
+        r = compute_modelo_303(2025, 2, fees, {"tax": {"activity_start_date": "2025-05-01"}})
+        assert (r.c12_base, r.c13_cuota) == (pytest.approx(4.0), pytest.approx(0.84))

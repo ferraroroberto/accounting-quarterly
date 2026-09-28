@@ -208,6 +208,9 @@ def _weights_interiores(rec: dict) -> tuple:
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
     if rec.get("source") == "manual_entry":
         return _nearest_rate(rec.get("vat_rate")), _f(rec.get("base")), _f(rec.get("cuota"))
+    if rec.get("source") == "platform_fee":   # Stripe application fee, NON_EU_RC deducted at 100% (#147)
+        fee, rate = _f(rec.get("fee_application")), _f(rec.get("rate_pct"))
+        return _nearest_rate(rate), fee, fee * rate / 100.0
     if "rate_pct" in rec:   # NON_EU_RC self-assessed, deducted with the current domestic operations
         return _nearest_rate(_f(rec["rate_pct"])), _f(rec.get("subtotal_eur")) * pct, _f(rec.get("deductible_cuota"))
     rate, fallback, raw = _rate_of_record(rec)

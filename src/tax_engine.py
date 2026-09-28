@@ -421,6 +421,9 @@ _RATE_ROWS: dict[float, tuple[str, str]] = {
 }
 _SPANISH_RATES_PCT: tuple[float, ...] = tuple(_RATE_ROWS)
 Q4_NEGATIVE_OPTIONS: tuple[str, ...] = ("compensate", "refund")
+# tax.platform_fee_vat_treatment (#147): self-assess the Stripe application fees
+# as a non-EU reverse charge (default), or leave them out of the 303.
+PLATFORM_FEE_VAT_TREATMENTS: tuple[str, ...] = ("NON_EU_RC", "NONE")
 # Safety bound for the app-computed credit chain when no filed return stops it.
 _CREDIT_CHAIN_MAX_QUARTERS = 40
 
@@ -431,6 +434,10 @@ class _Collected303:
     acc: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     records: dict[str, list[dict]] = field(default_factory=lambda: defaultdict(list))
     notes: list[str] = field(default_factory=list)
+    platform_fee_treatment: str = "NON_EU_RC"
+    platform_fees: float = 0.0          # quarter's fee_application total self-assessed in 12/13 (#147)
+    platform_fees_cuota: float = 0.0
+    fee_split_unknown: int = 0
 
     @property
     def with_right_to_deduct(self) -> float:
@@ -585,6 +592,54 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
         )
 
 
+def _platform_fee_vat_treatment(config: Optional[dict]) -> str:
+    """``tax.platform_fee_vat_treatment``: ``NON_EU_RC`` (default) or ``NONE`` (#147)."""
+    option = _tax_settings(config).get("platform_fee_vat_treatment", "NON_EU_RC")
+    if option not in PLATFORM_FEE_VAT_TREATMENTS:
+        raise ValueError(
+            f"tax.platform_fee_vat_treatment must be one of {PLATFORM_FEE_VAT_TREATMENTS}, got {option!r}")
+    return option
+
+
+def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection,
+                               config: Optional[dict], col: _Collected303) -> None:
+    """Stripe application fees as a non-EU reverse charge (#147, art. 84.Uno.2º LIVA).
+
+    The platforms that keep them are established outside the EU and charge no
+    VAT, so the quarter's ``fee_application`` total — same classified charges as
+    the 303 sales, by charge date — is accrued in 12/13 at 21% and deducted in
+    28/29 at 100% (before the pro-rata), like a ``NON_EU_RC`` invoice (D8).
+    Charges with an unknown fee split are counted in a note, never estimated.
+    """
+    col.platform_fee_treatment = _platform_fee_vat_treatment(config)
+    if col.platform_fee_treatment == "NONE":
+        return
+    rows = _load_classified_for_quarter(year, quarter, conn, config)
+    fee_rows = [r for r in rows if r.get("fee_application")]
+    col.fee_split_unknown = sum(1 for r in rows if r.get("fee_application") is None)
+    rate = IVA_ES_RATE * 100.0
+    col.platform_fees = round(sum(float(r["fee_application"]) for r in fee_rows), 2)
+    col.platform_fees_cuota = round(col.platform_fees * rate / 100.0, 2)
+    col.acc["c12_base"] += col.platform_fees
+    col.acc["c13_cuota"] += col.platform_fees_cuota
+    col.acc["c28_base"] += col.platform_fees
+    col.acc["c29_cuota"] += col.platform_fees_cuota
+    for r in fee_rows:
+        rec = {"source": "platform_fee", "charge_id": r["id"], "date": str(r.get("created_date") or "")[:10],
+               "activity": r.get("activity_type") or "", "fee_application": round(float(r["fee_application"]), 2),
+               "rate_pct": rate}
+        col.records["c12_base"].append(rec)
+        col.records["c28_base"].append(rec)
+    if col.fee_split_unknown:
+        log.warning("⚠️ 303 %dQ%d: fee split unknown for %d Stripe charge(s) — their platform fees are "
+                    "not in boxes 12/13/28/29; re-fetch with `stripe-fetch --backfill-fee-split`",
+                    year, quarter, col.fee_split_unknown)
+        col.notes.append(
+            f"Fee split unknown for {col.fee_split_unknown} Stripe charge(s); re-fetch "
+            "(stripe-fetch --backfill-fee-split) — their platform fees are not in boxes 12/13/28/29."
+        )
+
+
 def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
                            config: Optional[dict], col: _Collected303) -> None:
     """Reverse-charge accruals and deductible VAT (at 100%, before pro-rata)."""
@@ -670,6 +725,8 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             col.records[accr_b].append(rc)
             col.records[ded_b].append(rc)
         # NO_VAT and NOT_DEDUCTIBLE carry no deductible VAT.
+
+    _collect_303_platform_fees(year, quarter, conn, config, col)
 
     cg = capital_goods_vat_for_period(year, quarter, conn)
     col.acc["c30_base"] += cg.box_30_base
@@ -975,6 +1032,8 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
     rec = col.records
     pro = {"prorrata_provisional_pct": provisional, "prorrata_source": prov_source,
            "vat_registered": vat_registered}
+    fees = {"platform_fee_vat_treatment": col.platform_fee_treatment, "platform_fees": col.platform_fees,
+            "platform_fees_cuota": col.platform_fees_cuota, "fee_split_unknown": col.fee_split_unknown}
     return [
         _a("c01_base", "01 Base imponible 4%", "SUM(base) income invoices ES_21 at 4%", r.c01_base,
            records=rec["c01_base"]),
@@ -992,20 +1051,23 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
            "SUM(round(base × rate, 2)) of the 10 invoices, rate 21% unless a Spanish rate is stated",
            r.c11_cuota),
         _a("c12_base", "12 Otras operaciones con ISP — base",
-           "SUM(subtotal_eur) expense invoices NON_EU_RC (D8, art. 84.Uno.2º LIVA)", r.c12_base,
-           records=rec["c12_base"]),
-        _a("c13_cuota", "13 Otras operaciones con ISP — cuota", "SUM(round(base × rate, 2)) of the 12 invoices",
-           r.c13_cuota),
+           "SUM(subtotal_eur) expense invoices NON_EU_RC (D8, art. 84.Uno.2º LIVA) "
+           "+ SUM(fee_application) FROM transactions in Q (same classified charges as the sales, by charge "
+           "date) when tax.platform_fee_vat_treatment = NON_EU_RC", r.c12_base,
+           records=rec["c12_base"], **fees),
+        _a("c13_cuota", "13 Otras operaciones con ISP — cuota",
+           "SUM(round(base × rate, 2)) of the 12 invoices + round(platform fees × 21%, 2)",
+           r.c13_cuota, **fees),
         _a("c27_total_devengado", "27 Total cuota devengada", "03 + 06 + 09 + 11 + 13", r.c27_total_devengado,
            c03=r.c03_cuota, c06=r.c06_cuota, c09=r.c09_cuota, c11=r.c11_cuota, c13=r.c13_cuota),
         _a("c28_base", "28 Base — operaciones interiores corrientes",
-           "(SUM(base × deductible_pct_vat) DOMESTIC excl. capital goods + NON_EU_RC + manual entries "
-           "(cuota / rate)) × provisional pro-rata", r.c28_base,
-           base_100=round(col.acc["c28_base"], 2), records=rec["c28_base"], **pro),
+           "(SUM(base × deductible_pct_vat) DOMESTIC excl. capital goods + NON_EU_RC + platform fees at 100% "
+           "+ manual entries (cuota / rate)) × provisional pro-rata", r.c28_base,
+           base_100=round(col.acc["c28_base"], 2), records=rec["c28_base"], **pro, **fees),
         _a("c29_cuota", "29 Cuota — operaciones interiores corrientes",
            "(SUM(iva × deductible_pct_vat) DOMESTIC excl. capital goods + NON_EU_RC self-assessed "
-           "+ manual IVA_SOPORTADO) × provisional pro-rata", r.c29_cuota,
-           cuota_100=round(col.acc["c29_cuota"], 2), **pro),
+           "+ platform fees self-assessed at 100% + manual IVA_SOPORTADO) × provisional pro-rata", r.c29_cuota,
+           cuota_100=round(col.acc["c29_cuota"], 2), **pro, **fees),
         _a("c30_base", "30 Base — bienes de inversión",
            "(fixed-asset register capital goods acquired in Q: base × vat_business_pct "
            "+ unregistered DOMESTIC_CAPITAL invoices) × provisional pro-rata", r.c30_base,

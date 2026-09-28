@@ -525,6 +525,7 @@ Add a `tax` section to `config.json` (see `config.json.example`), or use the **C
     "activity_start_date": "2025-01-01",
     "prorrata": {"enabled": true, "definitive_pct_by_year": {"2025": 100}},
     "modelo303_q4_negative_result": "compensate",
+    "platform_fee_vat_treatment": "NON_EU_RC",
     "previous_year_net_yield": {"2025": 5000.00},
     "vat_proration_percentage": 100,
     "default_vat_treatment_eu_coaching": "EU_B2C_ES21",
@@ -546,6 +547,7 @@ Every key above drives a computation:
 | `prorrata.definitive_pct_by_year` | The definitive pro-rata % of each year once filed (Q4 303 / 390); it is the next year's provisional %. Years not listed fall back to the % the app computes from that year's data, then 100. |
 | `previous_year_net_yield` | Previous year's net yield of economic activities for Modelo 130 box 13 — a number, or `{"<year>": amount}`. Only used when the previous year's Q4 130 receipt is not imported; without either, the app's own previous-year figure is used. |
 | `modelo303_q4_negative_result` | `compensate` (default, box 72) or `refund` (box 73) for a negative Q4 result. Q1–Q3 always carry forward. |
+| `platform_fee_vat_treatment` | `NON_EU_RC` (default): the quarter's Stripe platform (application) fees are self-assessed as a non-EU reverse charge — base in 303 box 12, 21% in 13, deducted in 28/29 (accounting-quarterly#147). `NONE` leaves them out of the 303 (e.g. to mirror an accountant during a shadow run); the 130 expenses them either way. |
 | `pl_allocation` | P&L per activity: where RETA (`reta`), depreciation (`depreciation`) and lines without an activity (`unallocated`) go — an activity (`COACHING`, `NEWSLETTER`, `ILLUSTRATIONS`) or `BY_INCOME` (split by directly attributed income). Default `COACHING` (IAE 826) for all three, as the external accountant does. |
 | `vat_proration_percentage` | Legacy flat pro-rata %. Only used, as the provisional %, when it is not `100` and the previous year has no `prorrata.definitive_pct_by_year` entry. |
 | `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` / `default_vat_treatment_eu_illustrations` | Pick the EU B2C sub-treatment (`EU_B2C_ES21` or `OSS_EU`) per activity for a sale **without** a known customer VAT id. Default `EU_B2C_ES21` for every activity. No longer selects B2B: since #113, `IVA_EU_B2B` only applies when the customer has a VAT id on file (see "VAT treatment classification" above) — a legacy `IVA_EU_B2B` value here is accepted but ignored. |
@@ -558,8 +560,8 @@ Every key above drives a computation:
 |-----|--------|
 | 01–09 | Stripe Spain + EU consumers at Spanish 21% (`EU_B2C_ES21`, no OSS) and income invoices `ES_21` (by rate) / `EU_B2C_ES21` |
 | 10/11 · 36/37 | `INTRA_EU_RC` purchases: base × 21% self-assessed (accrued), and deducted × `deductible_pct_vat` |
-| 12/13 | `NON_EU_RC` purchases (non-EU services, reverse charge — VAT-neutral), deducted in 28/29 |
-| 28/29 | `DOMESTIC` invoices × `deductible_pct_vat` (minus any capital-good share), `NON_EU_RC`, manual `IVA_SOPORTADO` entries (cuota ÷ their rate for the base) |
+| 12/13 | `NON_EU_RC` purchases (non-EU services, reverse charge — VAT-neutral) and the quarter's Stripe platform (application) fees at 21% (same classified charges as the sales, by charge date; audit source `platform_fee`, one record per charge; `tax.platform_fee_vat_treatment`), deducted in 28/29 |
+| 28/29 | `DOMESTIC` invoices × `deductible_pct_vat` (minus any capital-good share), `NON_EU_RC`, Stripe platform fees at 100%, manual `IVA_SOPORTADO` entries (cuota ÷ their rate for the base) |
 | 30/31 | Capital goods (unit base > €3,005.06) from the fixed-asset register at their VAT business-use %; `DOMESTIC_CAPITAL` invoices not in the register use the invoice |
 | 43 · 44 | Q4 only: capital-goods regularisation (arts. 107–109 LIVA) and the pro-rata regularisation |
 | 59 · 60 · 120 | EU B2B sales · exports of goods (none today) · non-EU sales not subject by location rules (Stripe non-EU customers + `NON_EU_NOT_SUBJECT` invoices). Earlier filings by the external accountant put non-EU service invoices in 60 instead of 120 — informational only, no money effect |

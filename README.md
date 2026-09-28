@@ -23,6 +23,7 @@ Copy the example files and edit them:
 ```bash
 cp config.json.example config.json
 cp classification_rules.json.example classification_rules.json
+cp vendors.json.example vendors.json  # vendor registry (optional; see "Vendor Registry")
 cp .env.example .env  # add your Stripe API key (and optional Accounting API settings)
 ```
 
@@ -74,6 +75,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 ├── config.json                    # App settings (git-ignored, use config.json.example)
 ├── classification_rules.json      # Classification rules (git-ignored, copy from .example)
 ├── classification_rules.json.example
+├── vendors.json                   # Vendor registry (git-ignored, copy from .example — see "Vendor Registry")
+├── vendors.json.example
 ├── config.json.example
 ├── requirements.txt
 ├── launch_app.bat                 # Windows launch shortcut
@@ -102,6 +105,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
+│   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard
@@ -116,6 +120,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub / Gemini)
 │   ├── invoice_ledger.py          # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
 │   ├── invoice_dedupe_tab.py      # Duplicate Review tab: scan/confirm/apply invoice_dedupe.py groups
+│   ├── vendor_registry_tab.py     # Vendors tab: registry editor, apply, unknown vendors, spreadsheet import
 │   ├── invoice_explorer.py        # Filterable table of all extracted invoices
 │   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
 │   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS)
@@ -136,7 +141,9 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_tax_validator.py      # Gestor-filed vs DB-computed validation
 │   ├── test_filed_returns.py      # AEAT receipt parser/import (synthetic PDFs only)
 │   ├── test_invoice_dedupe.py     # Dedupe detectors, keeper rule, locked rows, engine picks up exclusions
-│   └── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
+│   ├── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
+│   ├── test_vendor_registry.py    # Vendor matching, defaults vs locks, unknown vendors, xlsx seed
+│   └── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
@@ -691,6 +698,7 @@ When `GOOGLE_APPLICATION_CREDENTIALS` is set the module switches to Vertex AI mo
 The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a direction (expenses / income) and optionally a quarter (by invoice date), then:
 
 - **Bulk edit** — an `st.data_editor` grid over the ledger columns (invoice date, tax treatment, VAT/IRPF business-use %, capital asset, exclusion, EUR received, payment date). Edits apply on **Save changes**.
+- **Vendor** (expenses) — the [vendor-registry](#vendor-registry) match for each row; **⚠ unknown** when no vendor matches (also counted in the *⚠ Unknown vendor* metric).
 - **Edit one invoice** — a form covering the OCR fields (number, dates, parties, amounts, …) and the ledger columns. Saving stamps `reviewed_at` even when nothing changed.
 
 **Locks.** Every field you change is added to the invoice's `locked_fields` (JSON list). Re-extracting the PDF in the Invoice OCR tab never overwrites a locked field — enforced in `src/database.py` (`upsert_invoice`), not just in the UI. Ledger-only columns (`excluded`, `eur_received`, …) also survive a plain re-extract. **Unlock all fields** releases the locks (values stay as they are) so the next re-extract may overwrite them.
@@ -757,6 +765,31 @@ Detection is a pure function (`find_duplicate_groups`) — nothing is written un
 
 Excluded rows are ignored by every tax computation (Modelo 303/130/347), same as a manual exclusion.
 
+## Vendor Registry
+Vendors repeat every month, so a small registry makes expense classification deterministic instead of relying on the (often missing) vendor VAT id.
+**Source of truth:** `vendors.json` at the repo root — git-ignored like `classification_rules.json`, because it holds real vendor tax ids. The repo ships `vendors.json.example` with fake vendors. There is no `vendors` table: the registry's defaults are written onto the `invoices` rows, so the tax engine only reads invoices. A missing file means an empty registry (every expense invoice is flagged).
+| Field | Meaning |
+|-------|---------|
+| `key` | Normalised vendor name (lower-case, punctuation → spaces). Should equal the vendor's sub-folder under `invoice_in_dir`. |
+| `aliases` | Other names / folder names for the same vendor. |
+| `legal_entity`, `country` (ISO-2), `vat_id`, `alt_vat_ids` | Who bills you. `country` fills `geo_region` / `supply_country` when the invoice has none. |
+| `default_tax_treatment` | One of the expense treatments (`DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT`, `NOT_DEDUCTIBLE`). Typical: EU SaaS with a reverse-charge note → `INTRA_EU_RC`; US SaaS without VAT → `NON_EU_RC`; foreign vendor charging Spanish VAT → `DOMESTIC`; bank / fintech fees → `NO_VAT`. |
+| `default_deductible_pct_vat`, `default_deductible_pct_irpf` | Business-use % (e.g. home-office utilities, mixed-use devices). |
+| `activity` | `COACHING` (IAE 826), `NEWSLETTER` (IAE 751) or `ILLUSTRATIONS` (IAE 861) — written to `invoices.activity_type` for the P&L per activity. |
+| `asset_class`, `recurrence`, `notes` | Optional. |
+Leave a default empty to keep the invoice's own (heuristic) value — e.g. for a vendor that bills from both an EU and a US entity.
+**Matching** (first hit wins): (1) the invoice's **sub-folder** (first component of `filename`) against `key` / `aliases`; (2) the normalised **vendor VAT id** against `vat_id` / `alt_vat_ids`; (3) the **vendor name** against `key` / `aliases` / `legal_entity` (whole-word, longest alias first).
+**Applying.** Every OCR extraction applies the registry to the new row, and the **Vendors** tab's **Apply registry** button (or the CLI below) re-applies it to all stored expense invoices — idempotent:
+- `tax_treatment` (legacy `vat_treatment` kept in sync), `deductible_pct_vat`, `deductible_pct_irpf`, `activity_type` and `asset_class` take the registry default, **except 🔒 locked fields** — a Ledger edit always wins.
+- `vendor_vat_id_norm`, `geo_region` (only when `UNKNOWN`) and `supply_country` are filled only when missing: an id read from the document wins.
+- Registry writes never lock a field and never mark the invoice reviewed.
+**Unknown vendors** are listed in the **Vendors** tab (grouped by suggested key = the invoice folder), flagged ⚠ in the Invoice Ledger grid, and warned about on the Invoice OCR card.
+**Editing.** The Vendors tab has an editable grid (**Save registry** validates every row) and an **Import from a spreadsheet** panel: an `.xlsx` whose first sheet has a vendor column (`vendor` / `item` / `name`) plus optional `activity` (or `business`: coaching / newsletter / illustration) and `recurrence` (or `recurrency`). New vendors are added; existing vendors only get an empty activity / recurrence filled.
+**CLI:**
+# Build or extend vendors.json from a vendor spreadsheet (merge; hand edits are kept)
+.\.venv\Scripts\python.exe -m src.vendor_registry seed-from-xlsx <path-to-vendor-list.xlsx>
+# Apply the registry to every stored expense invoice and list the unknown vendors
+.\.venv\Scripts\python.exe -m src.vendor_registry apply [--db data/accounting.db] [--registry vendors.json]
 ---
 
 ## Invoice Explorer

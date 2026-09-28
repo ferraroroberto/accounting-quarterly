@@ -16,10 +16,10 @@ from src.database import (
     get_invoice_hash,
     get_invoices,
     parse_locked_fields,
-    upsert_invoice,
 )
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
+from src.vendor_registry import load_registry, upsert_invoice_with_registry
 
 log = get_logger(__name__)
 
@@ -89,7 +89,7 @@ def _extract_and_save(filename: str, direction: str) -> dict:
         "billing_period_start": data.get("billing_period_start"),
         "billing_period_end": data.get("billing_period_end"),
     }
-    upsert_invoice(record)
+    upsert_invoice_with_registry(record)  # vendor-registry defaults, never over locked fields
     return record
 
 
@@ -216,6 +216,12 @@ def _render_invoice_fields(rec: dict) -> None:
         if rec.get("original_currency") and rec.get("original_currency") != "EUR":
             st.text(f"Original:     {_fmt(rec.get('original_amount'))} {rec.get('original_currency')}")
         st.markdown("**Tax treatment**")
+        if rec.get("direction") == "in":
+            match = load_registry().match_invoice(rec)
+            if match:
+                st.text(f"Vendor:       {match.vendor.key} (registry, by {match.signal})")
+            else:
+                st.warning("⚠ Unknown vendor — add it in the Vendors tab, then apply the registry.")
         st.text(f"Treatment:    {rec.get('tax_treatment') or '— (unset)'}")
         st.text(f"Business use: VAT {_fmt_pct(rec.get('deductible_pct_vat'))} · "
                 f"IRPF {_fmt_pct(rec.get('deductible_pct_irpf'))}")

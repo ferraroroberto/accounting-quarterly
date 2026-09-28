@@ -34,5 +34,6 @@ __pycache__
 .env
 config.json
 classification_rules.json
+vendors.json
 # Launcher scratch (ephemeral images/logs written by the tray launcher)
 .launcher-tmp/

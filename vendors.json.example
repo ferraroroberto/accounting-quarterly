@@ -1,0 +1,79 @@
+{
+  "vendors": [
+    {
+      "key": "bankco",
+      "aliases": ["BankCo Payments"],
+      "legal_entity": "BankCo Payments Ltd",
+      "country": "LT",
+      "vat_id": null,
+      "alt_vat_ids": [],
+      "default_tax_treatment": "NO_VAT",
+      "default_deductible_pct_vat": null,
+      "default_deductible_pct_irpf": 100,
+      "activity": "COACHING",
+      "asset_class": null,
+      "recurrence": "monthly",
+      "notes": "Bank or fintech fees: financial services, no VAT."
+    },
+    {
+      "key": "example cloud",
+      "aliases": ["Example Cloud", "ExampleCloud Ltd"],
+      "legal_entity": "Example Cloud Ireland Limited",
+      "country": "IE",
+      "vat_id": "IE0000000XX",
+      "alt_vat_ids": [],
+      "default_tax_treatment": "INTRA_EU_RC",
+      "default_deductible_pct_vat": 100,
+      "default_deductible_pct_irpf": 100,
+      "activity": "NEWSLETTER",
+      "asset_class": null,
+      "recurrence": "monthly",
+      "notes": "EU SaaS with an EU VAT id and a reverse-charge note."
+    },
+    {
+      "key": "gadget store",
+      "aliases": ["Gadget Store Europe"],
+      "legal_entity": "Gadget Store Europe SARL",
+      "country": "LU",
+      "vat_id": "LU00000000",
+      "alt_vat_ids": ["ESN0000000X"],
+      "default_tax_treatment": "DOMESTIC",
+      "default_deductible_pct_vat": 100,
+      "default_deductible_pct_irpf": 100,
+      "activity": "ILLUSTRATIONS",
+      "asset_class": null,
+      "recurrence": "variable",
+      "notes": "Foreign vendor that charges Spanish VAT."
+    },
+    {
+      "key": "power utility",
+      "aliases": ["Power Utility SA"],
+      "legal_entity": "Power Utility SA",
+      "country": "ES",
+      "vat_id": "A00000000",
+      "alt_vat_ids": [],
+      "default_tax_treatment": "DOMESTIC",
+      "default_deductible_pct_vat": 5,
+      "default_deductible_pct_irpf": 5,
+      "activity": "COACHING",
+      "asset_class": null,
+      "recurrence": "monthly",
+      "notes": "Home-office utility: business-use share of the home."
+    },
+    {
+      "key": "sample ai",
+      "aliases": ["Sample AI Inc", "SampleAI"],
+      "legal_entity": "Sample AI, Inc.",
+      "country": "US",
+      "vat_id": null,
+      "alt_vat_ids": [],
+      "default_tax_treatment": "NON_EU_RC",
+      "default_deductible_pct_vat": 100,
+      "default_deductible_pct_irpf": 100,
+      "activity": "NEWSLETTER",
+      "asset_class": null,
+      "recurrence": "monthly",
+      "notes": "US SaaS without VAT: reverse charge on a non-EU service."
+    }
+  ]
+}

@@ -9,8 +9,21 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import src.vendor_registry as vendor_registry
+from src._json_store import JsonCache
 from src.models import ClassifiedPayment, Payment
 from src.rules_engine import load_rules
+
+
+@pytest.fixture(autouse=True)
+def isolated_vendor_registry(tmp_path, monkeypatch):
+    """Point the default vendor registry at an empty temp file: tests never read the
+    real (private, git-ignored) vendors.json. Returns the temp registry path."""
+    path = tmp_path / "vendors.json"
+    monkeypatch.setattr(vendor_registry, "REGISTRY_PATH", path)
+    monkeypatch.setattr(vendor_registry, "_cache",
+                        JsonCache(path, on_missing=vendor_registry._missing_registry))
+    return path
 
 
 @pytest.fixture

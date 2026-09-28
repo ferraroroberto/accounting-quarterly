@@ -6,6 +6,7 @@ the network is always mocked.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date
 from unittest.mock import patch
@@ -22,6 +23,7 @@ from src.fx_rates import (
     SUPPORTED_CURRENCIES,
     get_exchange_differences,
     get_currencies_in_use,
+    recompute_stored_invoice_fx,
     record_exchange_difference,
     resolve_invoice_amounts,
     store_rates,
@@ -317,3 +319,126 @@ class TestBackfill:
         with patch("src.fx_rates.requests.get", side_effect=Exception("offline")):
             stored = backfill_to_today(db_path=db)
         assert stored == 0
+
+
+# ---------------------------------------------------------------------------
+# recompute_stored_invoice_fx: correcting invoices stored before the resolver
+# existed (or before a later fix to it) — the real follow-up to issue #93.
+# ---------------------------------------------------------------------------
+
+def _seed_wrong_invoice(db_path, filename="vendor/wrong.pdf", direction="in",
+                        wrong_total=90.0, invoice_date="2025-01-15",
+                        locked_fields=None) -> str:
+    """Insert an invoice the way pre-fix ingestion would have: the LLM's own
+    (wrong) EUR guess stored verbatim, no fx_* provenance — bypasses
+    `resolve_invoice_amounts` entirely, exactly like an invoice extracted
+    before the FX resolver existed."""
+    record = {
+        "filename": filename, "direction": direction, "invoice_date": invoice_date,
+        "vendor_nif": ES_CIF if direction == "in" else None,
+        "client_nif": None if direction == "in" else US_EIN,
+        "original_currency": "USD", "original_amount": 100.0,
+        "subtotal_eur": wrong_total, "iva_amount": 0.0, "total_eur": wrong_total,
+    }
+    rid = upsert_invoice(record, db_path=db_path)
+    if locked_fields:
+        conn = get_connection(db_path)
+        conn.execute("UPDATE invoices SET locked_fields = ? WHERE id = ?",
+                    (json.dumps(locked_fields), rid))
+        conn.commit()
+        conn.close()
+    return rid
+
+
+class TestRecomputeStoredInvoiceFx:
+    def test_dry_run_detects_change_and_writes_nothing(self, db):
+        _store_usd_rate(db)
+        rid = _seed_wrong_invoice(db)
+        expected = round(100.0 / 1.0280, 2)
+
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=True)
+        assert result.dry_run is True
+        assert result.scanned == 1
+        assert result.changed == 1
+        assert len(result.rows) == 1
+        assert result.rows[0].old_total_eur == 90.0
+        assert result.rows[0].new_total_eur == expected
+
+        # Nothing written — the stored row is still the wrong value.
+        row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
+        assert row["total_eur"] == 90.0
+        assert row["fx_source"] is None
+
+    def test_apply_corrects_the_stored_eur_value(self, db):
+        _store_usd_rate(db)
+        rid = _seed_wrong_invoice(db)
+        expected = round(100.0 / 1.0280, 2)
+
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=False)
+        assert result.changed == 1
+
+        row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
+        assert row["total_eur"] == expected
+        assert row["subtotal_eur"] == expected
+        assert row["fx_source"] == "ECB"
+        assert row["fx_rate_used"] == 1.0280
+        assert row["fx_stale"] == 0
+
+    def test_second_run_is_idempotent(self, db):
+        _store_usd_rate(db)
+        _seed_wrong_invoice(db)
+        recompute_stored_invoice_fx(db_path=db, dry_run=False)
+
+        second = recompute_stored_invoice_fx(db_path=db, dry_run=False)
+        assert second.scanned == 1
+        assert second.changed == 0
+        assert second.rows == []
+
+    def test_locked_total_eur_is_never_overwritten(self, db):
+        _store_usd_rate(db)
+        rid = _seed_wrong_invoice(db, locked_fields=["total_eur"])
+
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=False)
+        assert result.changed == 0
+        assert result.locked_skipped == 1
+        assert result.rows[0].locked_skipped is True
+
+        row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
+        assert row["total_eur"] == 90.0  # untouched
+
+    def test_locked_subtotal_or_iva_also_guards_the_row(self, db):
+        _store_usd_rate(db)
+        _seed_wrong_invoice(db, filename="vendor/wrong2.pdf", locked_fields=["subtotal_eur"])
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=False)
+        assert result.locked_skipped == 1
+
+    def test_eur_received_is_never_touched(self, db, conn):
+        _store_usd_rate(db)
+        rid = _seed_wrong_invoice(db, direction="out", wrong_total=90.0)
+        update_invoice_fields(rid, {"eur_received": 91.11}, db_path=db)
+
+        recompute_stored_invoice_fx(db_path=db, dry_run=False)
+
+        row = dict(get_connection(db).execute("SELECT * FROM invoices WHERE id = ?", (rid,)).fetchone())
+        assert row["eur_received"] == 91.11
+        # subtotal_eur is corrected, but eur_received (not this function's
+        # concern) still wins in the engine per `_income_invoice_eur`.
+        assert compute_modelo_130(2025, 1, conn).box_01_ingresos == pytest.approx(91.11)
+
+    def test_since_filters_by_invoice_date(self, db):
+        _store_usd_rate(db)
+        _seed_wrong_invoice(db, filename="vendor/old.pdf", invoice_date="2024-01-01")
+        _seed_wrong_invoice(db, filename="vendor/new.pdf", invoice_date="2025-01-15")
+
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=True, since="2025-01-01")
+        assert result.scanned == 1
+        assert result.rows[0].filename == "vendor/new.pdf"
+
+    def test_correct_invoice_is_not_reported_as_changed(self, db):
+        _store_usd_rate(db)
+        expected = round(100.0 / 1.0280, 2)
+        _seed_wrong_invoice(db, wrong_total=expected)  # already correct
+
+        result = recompute_stored_invoice_fx(db_path=db, dry_run=True)
+        assert result.changed == 0
+        assert result.rows == []

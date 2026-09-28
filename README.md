@@ -296,6 +296,7 @@ The dashboard includes a connection tester and permission checker under **Config
 .venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q          # regenerate the Excel report
 .venv/Scripts/python.exe scripts/close_quarter.py report --year Y --quarter Q --freeze # ...and freeze it as declared
 .venv/Scripts/python.exe scripts/close_quarter.py fx-backfill                          # backfill ECB FX rates to today
+.venv/Scripts/python.exe scripts/close_quarter.py fx-recompute [--dry-run] [--since D] # re-resolve stored invoices' EUR at the ECB rate
 ```
 
 - **`sweep`** diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
@@ -305,6 +306,7 @@ The dashboard includes a connection tester and permission checker under **Config
 - **`report`** first reclassifies the quarter's stored rows (so a stale row can never be exported), then writes the Excel report. The exporter also refuses — `StaleClassificationError` — to write a non-EUR charge whose geography came from a EUR rule. With **`--freeze`** the written file becomes the quarter's immutable declared report (`declared_reports`); freezing an already-declared quarter needs `--supersede` (a new version, for a corrected re-send). Once a quarter is declared, a plain `report` writes `Stripe_Report_Q<Q>_<Y>_live.xlsx` instead of overwriting the sent file, and prints how the live rows differ from the declared ones.
 - **`add-override`** appends to `classification_rules.json`'s `geographic_overrides` / `email_overrides` — the same mechanism as the Transaction Browser tab's "Add Geographic Override" form.
 - **`fx-backfill`** fetches and stores ECB rates from the last stored date up to today for every currency seen in stored invoices/transactions (`src.fx_rates.backfill_to_today`) — idempotent, safe to rerun every close.
+- **`fx-recompute`** re-runs `resolve_invoice_amounts` over every *already-stored* non-EUR invoice (`src.fx_rates.recompute_stored_invoice_fx`) — corrects invoices extracted before the FX resolver existed, or before a later fix to it, in place. Writes by default; pass `--dry-run` to preview (scanned/changed/stale/cross-check/locked-skipped counts plus a per-row old→new EUR list) without touching the DB. `--since YYYY-MM-DD` restricts the scan to invoices dated on/after that date. Never overwrites a row with `subtotal_eur`/`iva_amount`/`total_eur` in its `locked_fields` — those are reported as skipped, not silently kept or dropped — and never touches `eur_received`, which already wins over `subtotal_eur` in the tax engine regardless. Idempotent: a second run reports zero changes. The same recompute is available as a preview-then-apply button in the Currency tab.
 - All output lives under `tmp/close_quarter/` (git-ignored) — nothing is uploaded or sent anywhere by this script.
 
 ---
@@ -711,6 +713,14 @@ wins over the stored ECB figure in every tax computation that reads invoice
 income (Modelo 130 box 01, Modelo 303's export base). See
 [Exchange rate differences](#exchange-rate-differences) for what happens when
 a foreign-currency balance booked at the ECB rate is converted later.
+
+**Invoices stored before this resolver existed** (or before a later fix to
+it) keep whatever EUR figure the LLM originally guessed until corrected —
+resolution only runs at extraction time, not retroactively. Run
+`close_quarter.py fx-recompute` (or the Currency tab's **Recompute FX for
+stored invoices** button) to re-resolve every stored non-EUR invoice in
+place; see [Closing a Quarter](#closing-a-quarter) for the command and its
+guarantees (locked fields skipped, `eur_received` untouched, idempotent).
 
 ### All Records tab features
 

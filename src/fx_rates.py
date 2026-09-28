@@ -9,7 +9,7 @@ from typing import Optional
 
 import requests
 
-from src.database import get_connection, _get_table_columns, _create_fx_rates_table
+from src.database import get_connection, _get_table_columns, _create_fx_rates_table, parse_locked_fields
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -546,6 +546,193 @@ def resolve_invoice_amounts(
         fx_rate_used=fx_rate_used, fx_rate_date=rate_date_str, fx_source=fx_source,
         fx_stale=fx_stale, fx_cross_check_diff_pct=diff_pct, fx_warning=warning,
     )
+
+
+# ---------------------------------------------------------------------------
+# Recompute stored invoice FX (issue #93 follow-up): resolve_invoice_amounts
+# only ran at OCR-extraction time, so invoices already stored before this
+# feature shipped keep whatever EUR figure the LLM guessed. This re-runs the
+# resolver over stored non-EUR invoices and writes the corrected figures.
+# ---------------------------------------------------------------------------
+
+_FX_WRITE_FIELDS: tuple[str, ...] = (
+    "subtotal_eur", "iva_amount", "total_eur",
+    "fx_rate_used", "fx_rate_date", "fx_source", "fx_stale", "fx_cross_check_diff_pct",
+)
+# If a user has locked any of these on a row (a manual correction via the
+# Invoice Ledger), the whole row is skipped — its EUR figures are no longer
+# ours to touch. `eur_received` is deliberately not in this set: it already
+# wins over `subtotal_eur` in the tax engine (src.tax_engine._income_invoice_eur)
+# regardless of what this function does, and recomputing `subtotal_eur` here
+# never overwrites it.
+_FX_LOCK_GUARDS: frozenset[str] = frozenset({"subtotal_eur", "iva_amount", "total_eur"})
+
+
+@dataclass
+class InvoiceFxRecomputeRow:
+    """One invoice's outcome from `recompute_stored_invoice_fx`."""
+
+    invoice_id: str
+    filename: str
+    direction: str
+    currency: str
+    old_total_eur: Optional[float]
+    new_total_eur: Optional[float]
+    fx_source: str
+    fx_stale: bool
+    fx_cross_check_diff_pct: Optional[float]
+    locked_skipped: bool
+
+
+@dataclass
+class InvoiceFxRecomputeResult:
+    """Summary of a `recompute_stored_invoice_fx` run."""
+
+    scanned: int
+    changed: int
+    stale: int
+    cross_check_flagged: int
+    locked_skipped: int
+    dry_run: bool
+    rows: list[InvoiceFxRecomputeRow]  # only rows that changed or were locked-skipped
+
+
+def _floats_differ(a: Optional[float], b: Optional[float], tol: float = 0.01) -> bool:
+    if a is None and b is None:
+        return False
+    if a is None or b is None:
+        return True
+    return abs(a - b) > tol
+
+
+def recompute_stored_invoice_fx(
+    db_path: Optional[str | Path] = None,
+    dry_run: bool = True,
+    since: Optional[str] = None,
+) -> InvoiceFxRecomputeResult:
+    """Re-run `resolve_invoice_amounts` over every stored non-EUR invoice.
+
+    Corrects invoices that were extracted before this feature shipped (or
+    whose stored figure otherwise drifted from the ECB rate) — the dry run
+    against the real DB (issue #93) found 134/135 foreign-currency invoices
+    needed a new figure. Idempotent: a second run over already-correct rows
+    reports zero changes.
+
+    Never overwrites a row with any of `subtotal_eur` / `iva_amount` /
+    `total_eur` in its `locked_fields` (a user's manual correction always
+    wins) — such rows are skipped and reported in `locked_skipped`, not
+    silently dropped. `eur_received` is never read or written here; the tax
+    engine already prefers it over `subtotal_eur` once set.
+
+    ``since`` (ISO date) restricts the scan to invoices with `invoice_date >=
+    since`. ``dry_run=True`` (the default) computes and reports without
+    writing.
+    """
+    conn = get_connection(db_path)
+    try:
+        query = (
+            "SELECT id, filename, direction, invoice_date, currency, original_currency, "
+            "original_amount, subtotal_eur, iva_amount, total_eur, charged_eur, "
+            "fx_rate_used, fx_rate_date, fx_source, fx_stale, fx_cross_check_diff_pct, locked_fields "
+            "FROM invoices WHERE original_currency IS NOT NULL AND original_currency != 'EUR'"
+        )
+        params: list = []
+        if since:
+            query += " AND invoice_date >= ?"
+            params.append(since)
+        rows = conn.execute(query, params).fetchall()
+
+        scanned = 0
+        changed = 0
+        stale = 0
+        cross_check_flagged = 0
+        locked_skipped = 0
+        result_rows: list[InvoiceFxRecomputeRow] = []
+
+        for row in rows:
+            scanned += 1
+            locked = set(parse_locked_fields(row["locked_fields"]))
+            if locked & _FX_LOCK_GUARDS:
+                locked_skipped += 1
+                result_rows.append(InvoiceFxRecomputeRow(
+                    invoice_id=row["id"], filename=row["filename"], direction=row["direction"],
+                    currency=row["original_currency"], old_total_eur=row["total_eur"],
+                    new_total_eur=row["total_eur"], fx_source=row["fx_source"] or "",
+                    fx_stale=bool(row["fx_stale"]), fx_cross_check_diff_pct=row["fx_cross_check_diff_pct"],
+                    locked_skipped=True,
+                ))
+                continue
+
+            data = {
+                "invoice_date": row["invoice_date"],
+                "currency": row["currency"],
+                "original_currency": row["original_currency"],
+                "original_amount": row["original_amount"],
+                "subtotal_eur": row["subtotal_eur"],
+                "iva_amount": row["iva_amount"],
+                "total_eur": row["total_eur"],
+                "charged_eur": row["charged_eur"],
+            }
+            fx = resolve_invoice_amounts(row["direction"], data, db_path)
+
+            if fx.fx_stale:
+                stale += 1
+            if fx.fx_cross_check_diff_pct is not None and fx.fx_cross_check_diff_pct > 1.0:
+                cross_check_flagged += 1
+
+            new_values = {
+                "subtotal_eur": fx.subtotal_eur, "iva_amount": fx.iva_amount, "total_eur": fx.total_eur,
+                "fx_rate_used": fx.fx_rate_used, "fx_rate_date": fx.fx_rate_date, "fx_source": fx.fx_source,
+                "fx_stale": fx.fx_stale, "fx_cross_check_diff_pct": fx.fx_cross_check_diff_pct,
+            }
+            old_values = {f: row[f] for f in _FX_WRITE_FIELDS}
+            # "Changed" tracks the EUR value itself, not the provenance columns:
+            # once a row has been corrected, its stored total_eur becomes the
+            # new baseline `resolve_invoice_amounts` cross-checks against, so a
+            # second pass naturally recomputes fx_cross_check_diff_pct as 0 —
+            # that alone must not count as a change, or a second run would
+            # never be idempotent. Only a genuine amount correction writes.
+            needs_write = (
+                _floats_differ(new_values["subtotal_eur"], old_values["subtotal_eur"])
+                or _floats_differ(new_values["iva_amount"], old_values["iva_amount"])
+                or _floats_differ(new_values["total_eur"], old_values["total_eur"])
+            )
+
+            if needs_write:
+                changed += 1
+                log.info(
+                    "ℹ️ FX recompute: %s (%s) %s total %.2f → %.2f EUR [%s]%s",
+                    row["filename"], row["direction"], row["original_currency"],
+                    old_values["total_eur"] or 0.0, new_values["total_eur"] or 0.0, fx.fx_source,
+                    " (dry-run, not written)" if dry_run else "",
+                )
+                result_rows.append(InvoiceFxRecomputeRow(
+                    invoice_id=row["id"], filename=row["filename"], direction=row["direction"],
+                    currency=row["original_currency"], old_total_eur=old_values["total_eur"],
+                    new_total_eur=new_values["total_eur"], fx_source=fx.fx_source,
+                    fx_stale=fx.fx_stale, fx_cross_check_diff_pct=fx.fx_cross_check_diff_pct,
+                    locked_skipped=False,
+                ))
+                if not dry_run:
+                    conn.execute(
+                        """UPDATE invoices SET
+                               subtotal_eur = :subtotal_eur, iva_amount = :iva_amount,
+                               total_eur = :total_eur, fx_rate_used = :fx_rate_used,
+                               fx_rate_date = :fx_rate_date, fx_source = :fx_source,
+                               fx_stale = :fx_stale, fx_cross_check_diff_pct = :fx_cross_check_diff_pct
+                           WHERE id = :id""",
+                        {**new_values, "fx_stale": 1 if new_values["fx_stale"] else 0, "id": row["id"]},
+                    )
+
+        if not dry_run:
+            conn.commit()
+
+        return InvoiceFxRecomputeResult(
+            scanned=scanned, changed=changed, stale=stale, cross_check_flagged=cross_check_flagged,
+            locked_skipped=locked_skipped, dry_run=dry_run, rows=result_rows,
+        )
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

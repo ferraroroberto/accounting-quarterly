@@ -14,9 +14,11 @@
     "bank_export_file": "tmp/social_security_bank_export.xlsx",
     "date_column": "Fecha",
     "amount_column": "Importe",
-    "description_column": "Concepto",
+    "description_column": "Más datos",
+    "concept_column": "Movimiento",
+    "concept_patterns": ["TGSS", "SEG.SOCIAL", "SEGURIDAD SOCIAL", "AUTONOMOS"],
     "sheet_name": 0,
-    "skiprows": 0
+    "skiprows": null
   },
   "tax": {
     "regime": "estimacion_directa_simplificada",

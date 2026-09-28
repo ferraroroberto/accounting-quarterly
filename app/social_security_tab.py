@@ -1,7 +1,9 @@
 """Social Security (Seguridad Social) tab — import bank export and view cuotas."""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -11,10 +13,14 @@ ROOT = Path(__file__).parent.parent
 from src.config import load_config
 from src.logger import get_logger
 from src.social_security import (
+    DEFAULT_CONCEPT_PATTERNS,
+    add_manual_ss_entry,
     clear_ss_payments,
     delete_ss_payment,
+    detect_header_row,
     get_ss_payments,
     load_bank_export,
+    read_raw_preview,
     upsert_ss_payments,
 )
 
@@ -46,8 +52,10 @@ def render() -> None:
     default_date_col = ss_cfg.get("date_column", "Fecha")
     default_amount_col = ss_cfg.get("amount_column", "Importe")
     default_desc_col = ss_cfg.get("description_column", "")
+    default_concept_col = ss_cfg.get("concept_column", "")
+    default_concept_patterns = ss_cfg.get("concept_patterns", DEFAULT_CONCEPT_PATTERNS)
     default_sheet = ss_cfg.get("sheet_name", 0)
-    default_skiprows = int(ss_cfg.get("skiprows", 0))
+    default_skiprows = ss_cfg.get("skiprows")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -60,17 +68,46 @@ def render() -> None:
         )
         date_column = st.text_input("Date column name", value=default_date_col, key="ss_date_col")
         amount_column = st.text_input("Amount column name", value=default_amount_col, key="ss_amount_col")
-    with col2:
         description_column = st.text_input(
             "Description column name (optional)", value=default_desc_col, key="ss_desc_col"
         )
+    with col2:
         sheet_name_input = st.text_input(
             "Sheet name or index (0-based)",
             value=str(default_sheet),
             key="ss_sheet_name",
             help="Use a sheet name like 'Sheet1' or a zero-based index like '0'.",
         )
-        skiprows = st.number_input("Skip rows at top of file", min_value=0, value=default_skiprows, step=1, key="ss_skiprows")
+        auto_detect_header = st.checkbox(
+            "Auto-detect header row",
+            value=default_skiprows is None,
+            key="ss_auto_header",
+            help="Scans the first rows for the one containing both the date and amount "
+                 "column names — handles exports with title rows above the header. "
+                 "Uncheck to specify the header row index manually.",
+        )
+        skiprows: Optional[int] = None
+        if not auto_detect_header:
+            skiprows = st.number_input(
+                "Header row index (0-based)",
+                min_value=0,
+                value=int(default_skiprows) if default_skiprows is not None else 0,
+                step=1,
+                key="ss_skiprows",
+            )
+        concept_column = st.text_input(
+            "Concept/movement column name (optional filter)",
+            value=default_concept_col,
+            key="ss_concept_col",
+            help="When set, only rows whose value in this column matches one of the "
+                 "concept patterns below are imported (e.g. TGSS contribution rows).",
+        )
+
+    concept_patterns_str = st.text_input(
+        "Concept match patterns (comma-separated, only used with the concept column above)",
+        value=", ".join(default_concept_patterns),
+        key="ss_concept_patterns",
+    )
 
     # Resolve sheet name to int if numeric
     try:
@@ -79,6 +116,8 @@ def render() -> None:
         sheet_name = sheet_name_input.strip()
 
     desc_col_clean = description_column.strip() or None
+    concept_col_clean = concept_column.strip() or None
+    concept_patterns = [p.strip() for p in concept_patterns_str.split(",") if p.strip()]
 
     file_path = _resolve(file_path_str)
 
@@ -88,14 +127,16 @@ def render() -> None:
             st.error(f"File not found: `{file_path}`")
         else:
             try:
-                suffix = file_path.suffix.lower()
-                if suffix in (".xlsx", ".xls", ".xlsm"):
-                    df_preview = pd.read_excel(file_path, sheet_name=sheet_name, nrows=5, skiprows=skiprows, dtype=str)
-                else:
-                    df_preview = pd.read_csv(file_path, nrows=5, skiprows=skiprows, dtype=str)
-                df_preview.columns = [str(c).strip() for c in df_preview.columns]
-                st.markdown(f"**Columns found:** {list(df_preview.columns)}")
-                st.dataframe(df_preview, width="stretch")
+                df_scan = read_raw_preview(file_path, sheet_name=sheet_name, nrows=25)
+                st.markdown("**Raw rows (no header applied):**")
+                st.dataframe(df_scan.head(10), width="stretch")
+                try:
+                    header_idx = skiprows if skiprows is not None else detect_header_row(
+                        df_scan, date_column, amount_column
+                    )
+                    st.success(f"Header row detected at index **{header_idx}**.")
+                except ValueError as exc:
+                    st.warning(str(exc))
             except Exception as exc:
                 st.error(f"Could not read file: {exc}")
 
@@ -113,8 +154,10 @@ def render() -> None:
                         date_column=date_column,
                         amount_column=amount_column,
                         description_column=desc_col_clean,
+                        concept_column=concept_col_clean,
+                        concept_patterns=concept_patterns or None,
                         sheet_name=sheet_name,
-                        skiprows=int(skiprows),
+                        skiprows=skiprows,
                     )
                     if not rows:
                         st.warning("No valid rows found in the file. Check the column names and date/amount format.")
@@ -134,6 +177,44 @@ def render() -> None:
             clear_ss_payments()
             st.success("All Social Security payment rows cleared.")
             st.rerun()
+
+    # -------------------------------------------------------------------------
+    # Manual entry fallback
+    # -------------------------------------------------------------------------
+    with st.expander("Add a manual entry (month not covered by a bank export)"):
+        st.markdown(
+            "Use this for a month missing from the bank export, or to record a refund "
+            "(e.g. *pluriactividad* excess-contribution refund) as a **negative** amount."
+        )
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            manual_date = st.date_input("Payment date", value=date.today(), key="ss_manual_date")
+        with col_m2:
+            manual_amount = st.number_input(
+                "Amount (€) — positive for a contribution, negative for a refund",
+                value=0.0,
+                step=0.01,
+                format="%.2f",
+                key="ss_manual_amount",
+            )
+        with col_m3:
+            manual_description = st.text_input(
+                "Description (optional)", value="", key="ss_manual_description"
+            )
+        if st.button("Add manual entry", type="secondary", key="ss_manual_add"):
+            if manual_amount == 0.0:
+                st.error("Amount cannot be zero.")
+            else:
+                inserted = add_manual_ss_entry(
+                    payment_date=manual_date.strftime("%Y-%m-%d"),
+                    amount_eur=manual_amount,
+                    description=manual_description.strip(),
+                )
+                if inserted:
+                    st.success("Manual entry added.")
+                    st.rerun()
+                else:
+                    st.warning("An identical entry (same date, amount and description) already exists.")
 
     # -------------------------------------------------------------------------
     # Summary by year

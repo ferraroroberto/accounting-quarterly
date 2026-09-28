@@ -210,7 +210,7 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **fx_rates** — Daily ECB exchange rates (EUR/USD, EUR/GBP, EUR/CHF)
 - **upload_log** — Invoice upload tracking to prevent duplicates
 - **invoices** — AI-extracted invoice records (vendor, client, IVA/IRPF breakdown, totals, Spanish AEAT fields). Includes `geo_region`, `vat_treatment`, `activity_type`, and `supply_country` columns auto-derived from the vendor/client NIF at insert time — mirroring the `transactions` table so both sources feed the tax engine uniformly
-- **social_security_payments** — Seguridad Social cuota payments imported from bank account exports. Deduplication key: `(payment_date, amount_eur)`. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
+- **social_security_payments** — Seguridad Social cuota payments imported from bank account exports (or entered manually). Deduplication key: `(payment_date, amount_eur, description)`. Refunds are stored as negative amounts. Automatically included as deductible expenses in Modelo 130 box 02 (YTD)
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
@@ -261,11 +261,11 @@ The **Seguridad Social** tab imports monthly autónomo quota payments debited fr
 
 ### Data source
 
-Cuota payments are not issued as invoices — they appear as bank debits. Export your bank statement (the rows corresponding to Seguridad Social payments) to Excel or CSV and import via this tab.
+Cuota payments are not issued as invoices — they appear as bank debits. Export your bank statement (the rows corresponding to Seguridad Social payments, or the full statement filtered by concept) to Excel (`.xlsx` or legacy `.xls`) or CSV and import via this tab.
 
 ### Setup
 
-1. Export the relevant rows from your bank's online portal to `.xlsx` or `.csv`.
+1. Export the relevant rows from your bank's online portal to `.xlsx`, `.xls`, or `.csv`.
 2. Place the file anywhere accessible (default: `tmp/social_security_bank_export.xlsx`).
 3. Configure the column names in `config.json`:
 
@@ -275,21 +275,29 @@ Cuota payments are not issued as invoices — they appear as bank debits. Export
     "bank_export_file": "tmp/social_security_bank_export.xlsx",
     "date_column": "Fecha",
     "amount_column": "Importe",
-    "description_column": "Concepto",
+    "description_column": "Más datos",
+    "concept_column": "Movimiento",
+    "concept_patterns": ["TGSS", "SEG.SOCIAL", "SEGURIDAD SOCIAL", "AUTONOMOS"],
     "sheet_name": 0,
-    "skiprows": 0
+    "skiprows": null
   }
 }
 ```
 
-4. Open the **Seguridad Social** tab, verify the column mapping with **Preview file columns**, then click **Import from file**.
+- `skiprows`: leave `null` (or omit) to auto-detect the header row — the importer scans the first rows for the one containing both `date_column` and `amount_column`, so title rows above the header (e.g. "Movimientos de la cuenta ...") are skipped automatically. Set an explicit row index to override.
+- `concept_column` / `concept_patterns`: optional. When `concept_column` is set, only rows whose value in that column matches one of `concept_patterns` (case/accent-insensitive substring match) are imported — useful when the export contains all bank movements rather than pre-filtered Social Security rows. Leave `concept_column` unset to import every row in the file (e.g. when the bank export is already filtered to Social Security movements only).
+
+4. Open the **Seguridad Social** tab, verify the column mapping and detected header row with **Preview file columns**, then click **Import from file**.
 
 ### How it works
 
-- Amounts are stored as **positive values** in the `social_security_payments` table (debits from the bank export are negative; the importer takes the absolute value).
-- Deduplication is by `(payment_date, amount_eur)` — re-importing the same file is safe.
+- Legacy `.xls` (BIFF) files are supported via `xlrd`, in addition to `.xlsx`/`.xlsm` (`openpyxl`) and `.csv`.
+- Amounts are **sign-flipped and stored net of refunds**: a bank debit (negative in the export — a cuota payment) is stored as a positive contribution; a bank credit (positive in the export — e.g. the automatic *pluriactividad* excess-contribution refund) is stored as a **negative** contribution entry in the period it was received, so it nets off the total automatically.
+- Deduplication is by `(payment_date, amount_eur, description)` — re-importing the same file is safe, and a same-day/same-amount contribution and refund (or two distinct concepts) don't collide.
+- A **manual entry** fallback (expander below the import controls) lets you record a month missing from the bank export, or a refund, directly — subject to the same dedupe key.
 - The **Modelo 130** engine sums all SS payments from January 1 through the end of the selected quarter (YTD) and includes them in **box 02 — gastos deducibles**, alongside OCR-extracted expense invoices and manual entries. Legal basis: cuotas de autónomo are fully deductible under Art. 30 LIRPF (*régimen de estimación directa*).
 - The audit trail (Tax Audit tab) records `ss_gastos` and the full list of individual payments as named inputs to the `box_02_gastos` cell.
+- `src/social_security.py`'s `get_ss_period_totals()` returns quarterly + yearly totals net of refunds for a given year, for reporting or future use by the Modelo 130 engine.
 
 ### Quarterly breakdown
 

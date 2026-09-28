@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 
 from src.database import get_connection
+from src.filed_returns import import_pdf
 from src.tax_validator import (
     ModelValidationResult,
     ValidationLine,
@@ -27,6 +28,38 @@ def _cached_validations() -> list[ModelValidationResult]:
         return run_all_validations(conn)
     finally:
         conn.close()
+
+
+def _render_receipt_import() -> None:
+    """Upload filed AEAT receipt PDFs (303/130/349/390) into the database."""
+    with st.expander("📥 Import filed AEAT receipts (PDF)", expanded=False):
+        st.caption(
+            "Upload the official receipts downloaded from the AEAT Sede (Modelo 303, 130, "
+            "349, 390). Re-importing the same receipt is a no-op; a later receipt for the "
+            "same period (rectificativa) replaces the earlier one. For a whole folder use "
+            "`python -m src.filed_returns import <folder>`."
+        )
+        files = st.file_uploader(
+            "Receipt PDFs", type=["pdf"], accept_multiple_files=True, key="tv_receipt_upload"
+        )
+        if files and st.button("Import receipts", key="tv_receipt_import"):
+            conn = get_connection()
+            try:
+                results = [import_pdf(conn, f, f.name) for f in files]
+            finally:
+                conn.close()
+            for r in results:
+                if r.filed is None:
+                    st.warning(f"{r.source_file}: skipped ({r.detail})")
+                else:
+                    f = r.filed
+                    st.success(
+                        f"{r.source_file}: Modelo {f.model} {f.year} {f.period} — "
+                        f"{r.status} ({len(f.boxes)} boxes"
+                        + (f", {len(f.operators)} operators" if f.model == "349" else "")
+                        + ")"
+                    )
+            _cached_validations.clear()
 
 _STATUS_ICONS = {
     "OK":      "✅",
@@ -143,19 +176,28 @@ def render() -> None:
         if st.button("↺ Refresh", help="Clear cached results and re-run all validations", key="tv_refresh"):
             _cached_validations.clear()
 
+    _render_receipt_import()
+
     with st.spinner("Running validations…"):
         results = _cached_validations()
 
     if not results:
         st.warning(
-            "No filed declarations to compare against. Add the gestor-filed AEAT values to "
-            "`tmp/validation/validation.yaml` (see the README's **Tax Validation** section), "
-            "then hit ↺ Refresh."
+            "No filed declarations to compare against. Import the AEAT receipt PDFs above, "
+            "or add the gestor-filed values to `tmp/validation/validation.yaml` (see the "
+            "README's **Tax Validation** section), then hit ↺ Refresh."
         )
         return
 
-    periods = ", ".join(f"**{r.period}** (M{r.model})" for r in results)
-    st.info(f"Reference data loaded from `tmp/validation/validation.yaml`: {periods}.")
+    by_source: dict[str, list[str]] = {}
+    for r in results:
+        by_source.setdefault(r.source, []).append(f"**{r.period}** (M{r.model})")
+    labels = {"db": "imported AEAT receipts", "yaml": "`tmp/validation/validation.yaml`"}
+    st.info(
+        "Reference data loaded from "
+        + "; ".join(f"{labels.get(src, src)}: {', '.join(p)}" for src, p in by_source.items())
+        + "."
+    )
 
     # Top-level summary cards
     st.markdown("### Summary")

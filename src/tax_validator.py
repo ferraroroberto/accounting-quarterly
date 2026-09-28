@@ -1,8 +1,11 @@
 """Validation of computed tax figures vs gestor-filed AEAT declarations.
 
-Reference data is loaded from tmp/validation/validation.yaml (gitignored).
-Each entry in that file describes one filed period; this module compares the
-filed values against what our database computes.
+Reference data comes first from the filed AEAT receipts imported into the
+database (`src/filed_returns.py`, tables `filed_returns` /
+`filed_349_operators`). `tmp/validation/validation.yaml` (gitignored) is a
+fallback for periods whose receipt has not been imported. Each filing
+describes one filed period; this module compares the filed values against
+what our database computes.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from typing import Optional
 
 import yaml
 
+from src.filed_returns import load_filings as load_db_filings
 from src.tax_engine import (
     compute_modelo_130,
     compute_modelo_303,
@@ -21,6 +25,7 @@ from src.tax_engine import (
 )
 
 _YAML_PATH = Path(__file__).parent.parent / "tmp" / "validation" / "validation.yaml"
+_NO_FILING = "No filed data for this period (import the AEAT receipt, or add it to validation.yaml)"
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +67,7 @@ class ModelValidationResult:
     period: str      # e.g. "2025 Q4" or "2025 Annual"
     filed_date: str
     lines: list[ValidationLine] = field(default_factory=list)
+    source: str = ""  # "db" (imported AEAT receipt) or "yaml" (validation.yaml)
 
     @property
     def has_differences(self) -> bool:
@@ -77,10 +83,10 @@ class ModelValidationResult:
 
 
 # ---------------------------------------------------------------------------
-# YAML loader
+# Reference-data loaders
 # ---------------------------------------------------------------------------
 
-def _load_filings() -> list[dict]:
+def _load_yaml_filings() -> list[dict]:
     """Load all filed declarations from the YAML reference file."""
     if not _YAML_PATH.exists():
         return []
@@ -89,11 +95,27 @@ def _load_filings() -> list[dict]:
     return data.get("filings", []) if data else []
 
 
+def _filing_key(f: dict) -> tuple[str, int, Optional[int]]:
+    return (str(f.get("model")), int(f.get("year", 0)), f.get("quarter"))
+
+
+def _load_filings(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
+    """Filed declarations: imported AEAT receipts first, YAML as fallback.
+
+    A YAML entry is used only for a (model, year, quarter) that has no
+    imported receipt in the database.
+    """
+    db_filings = load_db_filings(conn) if conn is not None else []
+    have = {_filing_key(f) for f in db_filings}
+    yaml_filings = [
+        {**f, "source": "yaml"} for f in _load_yaml_filings() if _filing_key(f) not in have
+    ]
+    return db_filings + yaml_filings
+
+
 def _find_filing(filings: list[dict], model: str, year: int, quarter: int | None) -> dict | None:
     for f in filings:
-        if (str(f.get("model")) == model
-                and int(f.get("year", 0)) == year
-                and f.get("quarter") == quarter):
+        if _filing_key(f) == (model, year, quarter):
             return f
     return None
 
@@ -112,12 +134,13 @@ def validate_modelo_130(
     if filing is None:
         return ModelValidationResult(
             model="130", period=period, filed_date="—",
-            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
+            lines=[ValidationLine("—", _NO_FILING, None, None)],
         )
 
     v = filing.get("values", {})
     result = ModelValidationResult(
-        model="130", period=period, filed_date=filing["filed_date"]
+        model="130", period=period, filed_date=filing["filed_date"],
+        source=filing.get("source", "yaml"),
     )
     # box_05_base in code = casilla 04 in PDF (20% of rendimiento)
     # box_07_retenciones in code = casilla 06 in PDF
@@ -158,12 +181,13 @@ def validate_modelo_303(
     if filing is None:
         return ModelValidationResult(
             model="303", period=period, filed_date="—",
-            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
+            lines=[ValidationLine("—", _NO_FILING, None, None)],
         )
 
     v = filing.get("values", {})
     result = ModelValidationResult(
-        model="303", period=period, filed_date=filing["filed_date"]
+        model="303", period=period, filed_date=filing["filed_date"],
+        source=filing.get("source", "yaml"),
     )
     result.lines = [
         ValidationLine("07/08", "Base imponible régimen general @ 21%",
@@ -196,12 +220,13 @@ def validate_modelo_349(
     if filing is None:
         return ModelValidationResult(
             model="349", period=period, filed_date="—",
-            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
+            lines=[ValidationLine("—", _NO_FILING, None, None)],
         )
 
     v = filing.get("values", {})
     result = ModelValidationResult(
-        model="349", period=period, filed_date=filing["filed_date"]
+        model="349", period=period, filed_date=filing["filed_date"],
+        source=filing.get("source", "yaml"),
     )
     lines = [
         ValidationLine("01", "Número total de operadores intracomunitarios",
@@ -234,7 +259,7 @@ def validate_modelo_390(
     if filing is None:
         return ModelValidationResult(
             model="390", period=period, filed_date="—",
-            lines=[ValidationLine("—", "No filed data in validation.yaml for this period", None, None)],
+            lines=[ValidationLine("—", _NO_FILING, None, None)],
         )
 
     config = load_app_config()
@@ -268,7 +293,8 @@ def validate_modelo_390(
 
     v = filing.get("values", {})
     result = ModelValidationResult(
-        model="390", period=period, filed_date=filing["filed_date"]
+        model="390", period=period, filed_date=filing["filed_date"],
+        source=filing.get("source", "yaml"),
     )
     result.lines = [
         ValidationLine("05",     "Base régimen ordinario @ 21%",
@@ -308,8 +334,8 @@ def validate_modelo_390(
 # ---------------------------------------------------------------------------
 
 def run_all_validations(conn: sqlite3.Connection) -> list[ModelValidationResult]:
-    """Run all validations defined in validation.yaml, in filing order."""
-    filings = _load_filings()
+    """Run a validation for every filed period (imported receipts, then YAML)."""
+    filings = _load_filings(conn)
     results = []
     seen = set()
 

@@ -98,6 +98,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
+│   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
 │   ├── logger.py                  # Rotating file logger
@@ -130,7 +131,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
-│   └── test_tax_validator.py      # Gestor-filed vs DB-computed validation
+│   ├── test_tax_validator.py      # Gestor-filed vs DB-computed validation
+│   └── test_filed_returns.py      # AEAT receipt parser/import (synthetic PDFs only)
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
@@ -141,7 +143,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 ├── tmp/
 │   ├── social_security_bank_export.xlsx  # Bank export for SS cuotas (git-ignored, configurable)
 │   ├── validation/
-│   │   └── validation.yaml        # Gestor-filed AEAT reference data (git-ignored)
+│   │   └── validation.yaml        # Fallback gestor-filed reference data (git-ignored)
 │   └── close_quarter/             # Output of scripts/close_quarter.py (git-ignored)
 │       ├── invoice_copy_log.json  # Cumulative "already swept" invoice manifest
 │       └── <year>_Q<quarter>/     # Swept invoices + Stripe_Report_Q<quarter>_<year>.xlsx
@@ -222,6 +224,8 @@ Transaction data is stored in a SQLite database (`data/accounting.db`):
 - **quarterly_tax_entries** — Manual tax inputs (IVA soportado, gastos deducibles, retenciones)
 - **tax_filing_status** — Filing status and computed amounts per model/quarter
 - **tax_computation_snapshots** — JSON snapshots of tax engine outputs (Modelo 303/130/OSS/349/347) written when you click **Calculate tax** in Tax Obligations
+- **filed_returns** — One row per non-empty box (casilla) of each filed AEAT return imported from its receipt PDF (model, year, period, box, value, justificante, CSV, presentation timestamp, source file). Reference data for Tax Validation — see "Importing filed AEAT receipts"
+- **filed_349_operators** — Operator rows (country, VAT id, name, clave, base) of each imported Modelo 349 receipt
 - **tax_audit_log** — Per-cell calculation audit entries: every box in every model records the formula applied, named inputs, and computed value. Written alongside snapshots; queryable by year/quarter/model/run timestamp
 - **declared_reports** / **declared_report_lines** — The Stripe report actually sent to the gestor, frozen by `close_quarter.py report --freeze`: quarter, version, file name, SHA-256 of the `.xlsx`, and per-transaction EUR amounts. Insert-only (SQLite triggers reject UPDATE/DELETE); a corrected re-send is a new version. The tax engine uses the latest version's EUR amounts for every transaction it contains, so later FX re-conversions cannot move a declared quarter
 
@@ -431,8 +435,8 @@ The **Tax Validation** tab cross-checks the figures your gestor filed with AEAT 
 
 ### How it works
 
-1. Filed reference data is stored in `tmp/validation/validation.yaml` (gitignored — never committed).
-2. The tab loads that file, runs the same tax-engine computations as in Tax Obligations (against your current SQLite data), and builds a line-by-line comparison for each casilla (PDF box).
+1. Filed reference data comes from the **AEAT receipts imported into the database** (tables `filed_returns` / `filed_349_operators`, see below). `tmp/validation/validation.yaml` (gitignored — never committed) is a fallback, used only for periods whose receipt has not been imported. On an imported return a blank box counts as 0.
+2. The tab loads the filings, runs the same tax-engine computations as in Tax Obligations (against your current SQLite data), and builds a line-by-line comparison for each casilla (PDF box).
 3. Each line gets a status:
 
 | Status | Icon | Meaning |
@@ -453,7 +457,23 @@ The **Tax Validation** tab cross-checks the figures your gestor filed with AEAT 
 | Modelo 349 | Intracomunitarias — operator count and total amount |
 | Modelo 390 | Annual IVA summary — all major casillas |
 
-### Adding a new filing period
+### Importing filed AEAT receipts
+
+Download the official receipt PDF of each presentation (Modelo 303, 130, 349 and the annual 390) from the AEAT Sede or BILOOP — the gestor does not email them — and import them:
+
+```bash
+# Windows — folders are scanned recursively; non-receipt PDFs and unsupported models are skipped
+.\.venv\Scripts\python.exe -m src.filed_returns import <folder-or-pdf> [...]
+```
+
+It prints one line per file (`imported`, `replaced`, `unchanged`, `superseded` or `skipped`). The same can be done from the **📥 Import filed AEAT receipts** expander at the top of the Tax Validation tab.
+
+- **What is read:** header (model, fiscal year, period, justificante, CSV, presentation timestamp, presenter) and every non-empty box — 303 pages 2–4 (including 60, 64–72 and 110/78/87), 130 boxes 01–19, 349 summary boxes plus every operator row, and the 390 boxes. The 303 "Tipo %" boxes are pre-printed rates and are not stored.
+- **How:** `pdfplumber` word coordinates; each amount is paired with the nearest box number to its left on the same row (±7 pt). Text printed in the form-template font (e.g. the 130's "máximo 660,14 euros" note) is ignored. `pdftotext -layout` is deliberately not used — it misaligns the 303 rows.
+- **Idempotent:** re-importing a receipt already stored (same justificante) is a no-op. A different receipt for the same model/year/period replaces the stored one if it was presented later (rectificativa) and is ignored if older.
+- **Privacy:** receipts contain the taxpayer's and the presenter's NIF. They stay local (the database is git-ignored); never commit a receipt or anything derived from one — tests use synthetic PDFs only.
+
+### Adding a new filing period by hand (fallback)
 
 Uncomment and fill in the appropriate template block in `tmp/validation/validation.yaml`. No code changes are required — the tab reads all entries dynamically.
 

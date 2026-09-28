@@ -19,7 +19,7 @@ from src.declared_reports import (
     freeze_report,
     get_declared_report,
 )
-from src.excel_exporter import create_excel_report
+from src.excel_exporter import assert_currency_geo_consistent, create_excel_report
 from src.exceptions import ReportAlreadyFrozenError, StaleClassificationError
 from src.models import Payment
 from src.reclassify import reclassify_stored
@@ -157,6 +157,55 @@ class TestNonEurNeverExportedAsEu:
         row = dict(zip(header, [c.value for c in ws[2]]))
         assert row["Currency"] == currency.upper()
         assert row["Geo Region"] == "OUTSIDE_EU"
+
+
+# ---------------------------------------------------------------------------
+# EU non-euro currencies classified by charge country (#111)
+# ---------------------------------------------------------------------------
+
+class TestEuNonEuroCurrencyByCountry:
+    @pytest.mark.parametrize("currency", ["dkk", "sek", "pln"])
+    def test_eu_non_euro_newsletter_with_eu_card_is_eu_b2c_es21(self, sample_rules, currency):
+        # A DKK/SEK/PLN newsletter charge from an EU card is an EU B2C sale,
+        # not outside the EU — Spanish 21% (art. 73 LIVA, not OSS-registered).
+        cp = classify_payment(
+            _payment("ch_eu_nc", "2026-02-10T10:00:00", 121.0, currency=currency, card_country="DE"),
+            sample_rules,
+        )
+        assert cp.geo_region == "EU_NOT_SPAIN"
+        assert cp.geo_rule == "country:DE"
+        treatment = vat_treatment(cp.activity_type, cp.geo_region)
+        assert treatment == "EU_B2C_ES21"
+        base = vat_base_from_inclusive(cp.net_amount, treatment)
+        assert base == pytest.approx(100.0)
+        assert vat_amount_on_base(base, treatment) == pytest.approx(21.0)
+
+    def test_usd_with_us_card_still_outside_eu(self, sample_rules):
+        cp = classify_payment(
+            _payment("ch_us_card", "2026-02-11T10:00:00", 60.0, currency="usd", card_country="US"),
+            sample_rules,
+        )
+        assert cp.geo_region == "OUTSIDE_EU"
+        assert cp.geo_rule == "country:US"
+        assert vat_treatment(cp.activity_type, cp.geo_region) == "IVA_EXPORT"
+
+    def test_export_accepts_country_rule_on_non_eur_row(self, sample_rules):
+        # A non-EUR row classified via the new charge-country rule is a
+        # legitimate, currency-agnostic classification — not a stale one.
+        cp = classify_payment(
+            _payment("ch_dkk_eu", "2026-02-12T10:00:00", 100.0, currency="dkk", card_country="DK"),
+            sample_rules,
+        )
+        assert cp.geo_rule == "country:DK"
+        assert_currency_geo_consistent([cp])  # must not raise
+
+    def test_export_still_rejects_eur_default_on_non_eur_row(self, sample_rules):
+        # #94's original protection still holds: a genuinely stale EUR-branch
+        # rule on a non-EUR row is refused.
+        cp = classify_payment(_payment("ch_stale", "2026-02-13T10:00:00", 100.0), sample_rules)
+        stale = cp.model_copy(update={"currency": "usd", "geo_rule": "eur_default"})
+        with pytest.raises(StaleClassificationError):
+            assert_currency_geo_consistent([stale])
 
 
 # ---------------------------------------------------------------------------

@@ -183,15 +183,20 @@ def _write_import_sheet(ws, payments: list[ClassifiedPayment]):
 def assert_currency_geo_consistent(payments: list[ClassifiedPayment]) -> None:
     """Refuse to export a non-EUR charge carrying a EUR-branch geo classification.
 
-    The classifier decides non-EUR charges on currency alone (``non_eur_currency:*``
-    geo rule), so a non-EUR row with any other geo rule was classified while its
-    currency was still recorded as EUR (e.g. before a re-fetch corrected it) and
-    never reclassified. Exporting it would label a USD/AUD sale as EUR / EU or
+    The classifier decides non-EUR charges currency-agnostically — by charge
+    country (``country:*``) or, when no country is known, by currency
+    (``non_eur_currency:*`` / ``non_eur_currency_eu_review:*``, see
+    ``src.classifier.classify_geography``, #111) — so a non-EUR row with any
+    other geo rule (``eur_default``, ``eur_newsletter_default``, an override
+    matched only on the EUR path, …) was classified while its currency was
+    still recorded as EUR (e.g. before a re-fetch corrected it) and never
+    reclassified. Exporting it would label a USD/AUD sale as EUR / EU or
     Spain — raise instead, pointing at ``reclassify``.
     """
+    _non_eur_rule_prefixes = ("non_eur_currency", "country:")
     stale = [
         p for p in payments
-        if p.currency != "eur" and not (p.geo_rule or "").startswith("non_eur_currency")
+        if p.currency != "eur" and not (p.geo_rule or "").startswith(_non_eur_rule_prefixes)
     ]
     if stale:
         detail = ", ".join(

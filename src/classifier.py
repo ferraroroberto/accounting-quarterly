@@ -77,34 +77,109 @@ def classify_geography(
     rules: Optional[dict] = None,
     activity_type: Optional[str] = None,
 ) -> tuple[GeoRegion, str]:
-    """Return (GeoRegion, rule_description) using rules from JSON."""
+    """Return (GeoRegion, rule_description) using rules from JSON.
+
+    EUR charges are classified as before: an explicit name/email override
+    wins, otherwise the activity-based default (``eur_default`` /
+    ``eur_newsletter_default``) applies.
+
+    Non-EUR charges are classified by the charge country first — card
+    issuing country, then billing address, then customer address (see
+    :func:`_charge_country`) — since currency alone says nothing about EU
+    membership (#111: DKK/SEK/PLN/... are EU currencies). Only when no
+    country is known does currency act as a fallback: an EU non-euro
+    currency (:data:`_EU_NON_EURO_CURRENCIES`) maps to ``EU_NOT_SPAIN`` and
+    is flagged for review (``non_eur_currency_eu_review:*``), anything else
+    falls to ``non_eur_default`` (``OUTSIDE_EU``), same as before.
+    """
     rules = rules or load_rules()
     geo_rules = rules.get("geographic_rules", {})
     defaults = geo_rules.get("defaults", {})
     geo_overrides = geo_rules.get("geographic_overrides", {})
     email_overrides = geo_rules.get("email_overrides", {})
 
-    if payment.currency != "eur":
-        non_eur_default: GeoRegion = defaults.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
-        return non_eur_default, f"non_eur_currency:{payment.currency}"
+    if payment.currency == "eur":
+        override = _match_geo_override(
+            payment.description,
+            payment.email_meta,
+            geo_overrides,
+            email_overrides,
+        )
+        if override:
+            region_str, rule = override
+            region: GeoRegion = region_str  # type: ignore[assignment]
+            return region, rule
 
-    override = _match_geo_override(
-        payment.description,
-        payment.email_meta,
-        geo_overrides,
-        email_overrides,
-    )
-    if override:
-        region_str, rule = override
-        region: GeoRegion = region_str  # type: ignore[assignment]
-        return region, rule
+        if activity_type == "NEWSLETTER":
+            eur_newsletter_default: GeoRegion = defaults.get("eur_newsletter_default", "EU_NOT_SPAIN")  # type: ignore[assignment]
+            return eur_newsletter_default, "eur_newsletter_default"
 
-    if activity_type == "NEWSLETTER":
-        eur_newsletter_default: GeoRegion = defaults.get("eur_newsletter_default", "EU_NOT_SPAIN")  # type: ignore[assignment]
-        return eur_newsletter_default, "eur_newsletter_default"
+        eur_default: GeoRegion = defaults.get("eur_default", "SPAIN")  # type: ignore[assignment]
+        return eur_default, "eur_default"
 
-    eur_default: GeoRegion = defaults.get("eur_default", "SPAIN")  # type: ignore[assignment]
-    return eur_default, "eur_default"
+    country = _charge_country(payment)
+    if country:
+        if country == "ES":
+            return "SPAIN", f"country:{country}"
+        if country in _EU_COUNTRY_CODES:
+            return "EU_NOT_SPAIN", f"country:{country}"
+        return "OUTSIDE_EU", f"country:{country}"
+
+    if payment.currency in _EU_NON_EURO_CURRENCIES:
+        return "EU_NOT_SPAIN", f"non_eur_currency_eu_review:{payment.currency}"
+
+    non_eur_default: GeoRegion = defaults.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
+    return non_eur_default, f"non_eur_currency:{payment.currency}"
+
+
+# ISO-2 codes of EU member states, Spain excluded (checked separately as the
+# taxpayer's home country). Mirrors ``src.database._EU_VAT_PREFIXES`` — kept
+# as its own copy here since classifier.py must not import from database.py.
+_EU_COUNTRY_CODES: frozenset[str] = frozenset({
+    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "FI", "FR",
+    "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL",
+    "PL", "PT", "RO", "SE", "SI", "SK",
+})
+
+# EU member states that don't use the euro. A charge in one of these
+# currencies with no known country is still probably an EU B2C sale, not
+# outside the EU — but currency is a weaker signal than country, so it is
+# flagged for review rather than trusted outright (#111).
+_EU_NON_EURO_CURRENCIES: frozenset[str] = frozenset({
+    "dkk", "sek", "pln", "czk", "huf", "ron", "bgn",
+})
+
+
+def _address_country(details: Optional[dict]) -> str:
+    """Return the upper-cased ``address.country`` of a Stripe-shaped dict, or ``""``."""
+    if not details:
+        return ""
+    return str((details.get("address") or {}).get("country") or "").strip().upper()
+
+
+def _charge_country(payment: Payment) -> Optional[str]:
+    """Best-known charge country: card issuing country -> billing -> customer address.
+
+    Same Stripe fields :func:`foreign_customer_hint` (#94) inspects, read in
+    priority order so the first known country wins. Returns ``None`` when
+    none of them is set.
+    """
+    card_cc = (payment.card_country or "").strip().upper()
+    if card_cc:
+        return card_cc
+
+    raw = payment.raw_source or {}
+    billing_cc = _address_country(raw.get("billing_details"))
+    if billing_cc:
+        return billing_cc
+
+    customer = raw.get("customer")
+    if isinstance(customer, dict):
+        customer_cc = _address_country(customer)
+        if customer_cc:
+            return customer_cc
+
+    return None
 
 
 # Two-letter TLDs that are marketed as generic domains (.io, .co, .me, …) and so
@@ -132,7 +207,7 @@ def foreign_customer_hint(payment: Payment) -> Optional[str]:
     if card_cc and card_cc != "ES":
         reasons.append(f"card country {card_cc}")
     billing = ((payment.raw_source or {}).get("billing_details") or {})
-    billing_cc = str((billing.get("address") or {}).get("country") or "").strip().upper()
+    billing_cc = _address_country(billing)
     if billing_cc and billing_cc != "ES" and billing_cc != card_cc:
         reasons.append(f"billing country {billing_cc}")
     text = f"{payment.email_meta or ''} {billing.get('email') or ''} {payment.description or ''}"

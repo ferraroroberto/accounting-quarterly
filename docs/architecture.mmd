@@ -40,13 +40,13 @@ flowchart TB
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
     LOADER["data_loader.py"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
-    INVTABS["invoice_upload · invoice_ocr_tab · invoice_explorer"]
+    INVTABS["invoice_upload · invoice_ocr_tab ·\ninvoice_ledger · invoice_explorer"]
     SSTAB["social_security_tab"]
     TAXTABS["tax_obligations · tax_validation · tax_audit"]
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]

@@ -126,22 +126,26 @@ def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
 def _load_expense_invoices_range(
     start: str, end: str, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Expense invoices (direction='in') in ``[start, end]``, keyed by supply_date || invoice_date.
+    """Expense invoices (direction='in') in ``[start, end]``, keyed by ``invoice_date``.
 
-    Shared loader for the quarter- and YTD-scoped wrappers below: the 14-column
-    projection, ``direction='in'`` filter, COALESCE date keying and ordering are
-    identical — only the ``start`` bound differs.
+    The accounting date is the invoice date (``supply_date`` is informational
+    only), and rows marked ``excluded`` (duplicates, receipts, …) are skipped.
+    Shared loader for the quarter- and YTD-scoped wrappers below: the projection,
+    ``direction='in'`` filter, date keying and ordering are identical — only the
+    ``start`` bound differs.
     """
     rows = conn.execute(
-        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+        """SELECT id, invoice_date AS tx_date,
                   subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
                   total_eur, category, geo_region, vat_treatment,
-                  COALESCE(deductible_pct, 100.0) AS deductible_pct,
+                  COALESCE(deductible_pct_vat, deductible_pct, 100.0) AS deductible_pct_vat,
+                  COALESCE(deductible_pct_irpf, deductible_pct, 100.0) AS deductible_pct_irpf,
                   vendor_nif, vendor_name, description
            FROM invoices
            WHERE direction = 'in'
-             AND COALESCE(supply_date, invoice_date) >= ?
-             AND COALESCE(supply_date, invoice_date) <= ?
+             AND COALESCE(excluded, 0) = 0
+             AND invoice_date >= ?
+             AND invoice_date <= ?
            ORDER BY tx_date""",
         (start, end),
     ).fetchall()
@@ -151,7 +155,7 @@ def _load_expense_invoices_range(
 def _load_expense_invoices_for_quarter(
     year: int, quarter: int, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Expense invoices (direction='in') for the quarter, keyed by supply_date || invoice_date."""
+    """Expense invoices (direction='in') for the quarter, keyed by invoice_date."""
     start, end = _invoice_date_range(year, quarter)
     return _load_expense_invoices_range(start, end, conn)
 
@@ -167,25 +171,27 @@ def _load_expense_invoices_ytd(
 def _load_income_invoices_range(
     start: str, end: str, conn: sqlite3.Connection
 ) -> list[dict]:
-    """Income invoices (direction='out') in ``[start, end]``, keyed by supply_date || invoice_date.
+    """Income invoices (direction='out') in ``[start, end]``, keyed by ``invoice_date``.
 
     These are manually-issued invoices (bank transfer, etc.) NOT processed through
     Stripe — Stripe income already lives in the ``transactions`` table.
 
     Shared loader for the quarter- and YTD-scoped wrappers below: the projection,
-    ``direction='out'`` filter, COALESCE date keying and ordering are identical —
-    only the ``start`` bound differs. Kept separate from the expense loader
-    because the projection differs (client_nif/client_name vs vendor_nif/vendor_name).
+    ``direction='out'`` filter, invoice-date keying, ``excluded`` filter and
+    ordering are identical — only the ``start`` bound differs. Kept separate from
+    the expense loader because the projection differs (client_nif/client_name vs
+    vendor_nif/vendor_name).
     """
     rows = conn.execute(
-        """SELECT id, COALESCE(supply_date, invoice_date) AS tx_date,
+        """SELECT id, invoice_date AS tx_date,
                   subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
                   total_eur, category, geo_region, vat_treatment,
                   client_nif, client_name, description
            FROM invoices
            WHERE direction = 'out'
-             AND COALESCE(supply_date, invoice_date) >= ?
-             AND COALESCE(supply_date, invoice_date) <= ?
+             AND COALESCE(excluded, 0) = 0
+             AND invoice_date >= ?
+             AND invoice_date <= ?
            ORDER BY tx_date""",
         (start, end),
     ).fetchall()
@@ -372,7 +378,7 @@ def compute_modelo_303(
     for inv in expense_invs:
         iva = inv.get("iva_amount") or 0.0
         base = inv.get("subtotal_eur") or 0.0
-        ded_pct = (inv.get("deductible_pct") or 100.0) / 100.0
+        ded_pct = inv["deductible_pct_vat"] / 100.0
         _rec = {
             "source": "invoice_in",
             "date": str(inv.get("tx_date", ""))[:10],
@@ -380,7 +386,7 @@ def compute_modelo_303(
             "description": str(inv.get("description") or "")[:50],
             "subtotal_eur": round(base, 2),
             "iva_amount": round(iva, 2),
-            "deductible_pct": inv.get("deductible_pct") or 100.0,
+            "deductible_pct": inv["deductible_pct_vat"],
             "iva_deductible": round(iva * ded_pct, 2),
             "geo_region": inv.get("geo_region") or "",
         }
@@ -467,13 +473,13 @@ def compute_modelo_303(
            records=recs_eu_b2b),
         _a("box_28_base_soportado",
            "Base IVA soportado (facturas + estimación 21% para entradas manuales, × prorrata)",
-           "(SUM(subtotal_eur * deductible_pct/100) FROM invoices + manual_IVA / 0.21) × prorrata",
+           "(SUM(subtotal_eur * deductible_pct_vat/100) FROM invoices + manual_IVA / 0.21) × prorrata",
            result.box_28_base_soportado,
            inv_base_sum=round(inv_base_soportado, 2),
            vat_registered=vat_registered, proration_pct=round(proration * 100, 2)),
         _a("box_29_cuota_soportado",
            "IVA soportado deducible — facturas recibidas + entradas manuales (× prorrata)",
-           "(SUM(iva_amount * deductible_pct/100) FROM invoices WHERE direction='in' AND quarter=Q "
+           "(SUM(iva_amount * deductible_pct_vat/100) FROM invoices WHERE direction='in' AND excluded=0 AND quarter=Q "
            "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='IVA_SOPORTADO' AND quarter=Q) "
            "× prorrata  [0 if not IVA-registered]",
            result.box_29_cuota_soportado,
@@ -539,7 +545,7 @@ def compute_modelo_130(
     # Expenses from invoices (direction='in'), YTD
     expense_invs_ytd = _load_expense_invoices_ytd(year, quarter, db_conn)
     inv_gastos = sum(
-        (inv.get("subtotal_eur") or 0.0) * (inv.get("deductible_pct") or 100.0) / 100.0
+        (inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0
         for inv in expense_invs_ytd
     )
     n_expense_invs = len(expense_invs_ytd)
@@ -658,9 +664,9 @@ def compute_modelo_130(
             "vendor": str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40],
             "description": str(inv.get("description") or "")[:50],
             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-            "deductible_pct": inv.get("deductible_pct") or 100.0,
+            "deductible_pct": inv["deductible_pct_irpf"],
             "deductible_amount": round(
-                (inv.get("subtotal_eur") or 0.0) * (inv.get("deductible_pct") or 100.0) / 100.0, 2
+                (inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0, 2
             ),
             "geo_region": inv.get("geo_region") or "",
         }
@@ -678,7 +684,7 @@ def compute_modelo_130(
            records=stripe_income_records + income_inv_records),
         _a("box_02_gastos",
            "Gastos deducibles acumulados (Q1–Qn) — facturas recibidas + SS cuotas + entradas manuales",
-           f"SUM(subtotal_eur * deductible_pct/100) FROM invoices WHERE direction='in' YTD "
+           f"SUM(subtotal_eur * deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 YTD "
            f"+ SUM(amount_eur) FROM social_security_payments YTD "
            f"+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES' AND quarter<=Q{quarter}",
            result.box_02_gastos,
@@ -930,12 +936,13 @@ def compute_modelo_347(year: int, db_conn: sqlite3.Connection) -> Modelo347Resul
                   client_nif,
                   subtotal_eur,
                   iva_amount,
-                  strftime('%m', COALESCE(supply_date, invoice_date)) AS month
+                  strftime('%m', invoice_date) AS month
            FROM invoices
            WHERE direction = 'out'
              AND geo_region = 'SPAIN'
-             AND COALESCE(supply_date, invoice_date) >= ?
-             AND COALESCE(supply_date, invoice_date) <= ?
+             AND COALESCE(excluded, 0) = 0
+             AND invoice_date >= ?
+             AND invoice_date <= ?
              AND subtotal_eur IS NOT NULL""",
         (f"{year}-01-01", f"{year}-12-31"),
     ).fetchall()

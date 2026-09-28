@@ -15,6 +15,7 @@ from src.database import (
     get_invoice_by_filename,
     get_invoice_hash,
     get_invoices,
+    parse_locked_fields,
     upsert_invoice,
 )
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
@@ -214,9 +215,15 @@ def _render_invoice_fields(rec: dict) -> None:
         st.text(f"Total:        {_fmt(rec.get('total_eur'))} EUR")
         if rec.get("original_currency") and rec.get("original_currency") != "EUR":
             st.text(f"Original:     {_fmt(rec.get('original_amount'))} {rec.get('original_currency')}")
-        ded = rec.get("deductible_pct")
-        if ded is not None and ded != 100:
-            st.text(f"Deductible:   {ded}%")
+        st.markdown("**Tax treatment**")
+        st.text(f"Treatment:    {rec.get('tax_treatment') or '— (unset)'}")
+        st.text(f"Business use: VAT {_fmt_pct(rec.get('deductible_pct_vat'))} · "
+                f"IRPF {_fmt_pct(rec.get('deductible_pct_irpf'))}")
+        if rec.get("excluded"):
+            st.warning(f"Excluded from tax computations — {rec.get('excluded_reason') or 'no reason given'}")
+        locked = parse_locked_fields(rec.get("locked_fields"))
+        if locked:
+            st.caption(f"🔒 Locked (kept on re-extract): {', '.join(locked)}")
         if rec.get("vat_exempt_reason"):
             st.text(f"VAT exempt:  {rec['vat_exempt_reason']}")
 
@@ -279,7 +286,8 @@ def render() -> None:
     st.info(
         "Upload invoices (PDFs) to the `data/invoices/in` or `data/invoices/out` directories, "
         "then click **Extract** to parse them via the configured OCR backend and store the accounting data in the "
-        "`invoices` table.\n\n"
+        "`invoices` table. Correct fields in the **Invoice Ledger** tab: corrected fields are locked and "
+        "survive re-extraction.\n\n"
         "- **In (expenses):** invoices you received — IVA soportado, deductible costs.\n"
         "- **Out (income):** invoices you issued — IVA repercutido, income."
     )
@@ -352,7 +360,8 @@ def render() -> None:
                 "subtotal_eur", "iva_rate", "iva_amount",
                 "irpf_rate", "irpf_amount", "total_eur",
                 "currency", "category", "payment_method",
-                "supply_date", "due_date", "deductible_pct",
+                "supply_date", "due_date", "tax_treatment",
+                "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
                 "is_rectificativa", "vat_exempt_reason", "notes",
             ]
             df = pd.DataFrame(all_invoices)

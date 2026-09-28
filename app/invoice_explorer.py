@@ -163,7 +163,8 @@ def render() -> None:
         "description", "subtotal_eur", "iva_rate", "iva_amount",
         "irpf_rate", "irpf_amount", "total_eur", "currency",
         "category", "payment_method",
-        "supply_date", "due_date", "deductible_pct",
+        "supply_date", "due_date", "tax_treatment",
+        "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
         "is_rectificativa", "vat_exempt_reason", "notes",
     ]
     visible = [c for c in display_cols if c in filtered.columns]

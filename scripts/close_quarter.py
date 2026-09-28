@@ -20,6 +20,10 @@ Subcommands:
     reclassify    Re-run the classifier over STORED transactions from a date
                   (after a rule change), logging every change; --dry-run
                   only reports.
+    backfill-emails
+                  Fill empty stored email_meta / billing_country from each
+                  row's already-saved raw Stripe charge JSON, no API call;
+                  never overwrites a non-empty value. --dry-run only reports.
     report        Reclassify the quarter's stored rows, regenerate its Excel
                   report from the DB and save it into the same
                   tmp/close_quarter/<year>_Q<quarter>/ folder as the swept
@@ -225,6 +229,17 @@ def cmd_reclassify(args: argparse.Namespace) -> None:
     _print_reclassify(reclassify_stored(start, end, dry_run=args.dry_run))
 
 
+def cmd_backfill_emails(args: argparse.Namespace) -> None:
+    from src.stripe_client import backfill_billing_details_from_raw_source
+
+    result = backfill_billing_details_from_raw_source(dry_run=args.dry_run)
+    verb = "would update" if result.dry_run else "updated"
+    print(
+        f"Backfill billing details: scanned {result.scanned}, {verb} {result.updated} "
+        f"({result.email_filled} emails, {result.country_filled} countries)."
+    )
+
+
 def cmd_add_override(args: argparse.Namespace) -> None:
     rules = load_rules()
     geo = rules.setdefault("geographic_rules", {})
@@ -318,6 +333,13 @@ def main() -> None:
     p_reclassify.add_argument("--to", dest="to_date", help="YYYY-MM-DD (inclusive, default: latest)")
     p_reclassify.add_argument("--dry-run", action="store_true", help="Report changes without writing")
     p_reclassify.set_defaults(func=cmd_reclassify)
+
+    p_backfill_emails = sub.add_parser(
+        "backfill-emails",
+        help="Fill empty stored email/billing country from each row's saved raw Stripe charge",
+    )
+    p_backfill_emails.add_argument("--dry-run", action="store_true", help="Report changes without writing")
+    p_backfill_emails.set_defaults(func=cmd_backfill_emails)
 
     p_report = sub.add_parser("report", help="Regenerate the quarter's Excel report")
     add_yq(p_report)

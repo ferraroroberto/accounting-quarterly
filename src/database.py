@@ -17,6 +17,7 @@ _DB_PATH = Path(__file__).parent.parent / "data" / "accounting.db"
 
 _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "card_country": "TEXT",
+    "billing_country": "TEXT",
     "amount_original": "REAL",
     "fx_rate": "REAL",
     "activity_type": "TEXT",
@@ -651,7 +652,8 @@ def upsert_payments(payments: list[Payment], source: str = "api",
         for p in payments:
             existing = conn.execute(
                 "SELECT id, converted_amount, converted_amount_refunded, description, fee, currency, "
-                "payment_type_meta, event_api_id_meta, email_meta, card_country, amount_original, fx_rate, "
+                "payment_type_meta, event_api_id_meta, email_meta, card_country, billing_country, "
+                "amount_original, fx_rate, "
                 "stripe_customer_id, stripe_payment_intent_id, stripe_balance_transaction_id, stripe_invoice_id, "
                 "raw_source_type, raw_source_json "
                 "FROM transactions WHERE id = ?",
@@ -664,13 +666,13 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     INSERT INTO transactions
                         (id, created_date, converted_amount, converted_amount_refunded,
                          description, fee, currency, payment_type_meta,
-                         event_api_id_meta, email_meta, card_country,
+                         event_api_id_meta, email_meta, card_country, billing_country,
                          amount_original, fx_rate,
                          stripe_customer_id, stripe_payment_intent_id,
                          stripe_balance_transaction_id, stripe_invoice_id,
                          raw_source_type, raw_source_json,
                          source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     p.id,
                     p.created_date.isoformat(),
@@ -683,6 +685,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     p.event_api_id_meta,
                     p.email_meta,
                     p.card_country,
+                    p.billing_country,
                     p.amount_original,
                     p.fx_rate,
                     p.stripe_customer_id,
@@ -706,6 +709,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                     or existing["event_api_id_meta"] != p.event_api_id_meta
                     or existing["email_meta"] != p.email_meta
                     or existing["card_country"] != p.card_country
+                    or existing["billing_country"] != p.billing_country
                     or existing["amount_original"] != p.amount_original
                     or existing["fx_rate"] != p.fx_rate
                     or existing["stripe_customer_id"] != p.stripe_customer_id
@@ -721,7 +725,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                             converted_amount = ?, converted_amount_refunded = ?,
                             description = ?, fee = ?, currency = ?,
                             payment_type_meta = ?, event_api_id_meta = ?,
-                            email_meta = ?, card_country = ?,
+                            email_meta = ?, card_country = ?, billing_country = ?,
                             amount_original = ?, fx_rate = ?,
                             stripe_customer_id = ?, stripe_payment_intent_id = ?,
                             stripe_balance_transaction_id = ?, stripe_invoice_id = ?,
@@ -732,7 +736,7 @@ def upsert_payments(payments: list[Payment], source: str = "api",
                         p.converted_amount, p.converted_amount_refunded,
                         p.description, p.fee, p.currency,
                         p.payment_type_meta, p.event_api_id_meta,
-                        p.email_meta, p.card_country,
+                        p.email_meta, p.card_country, p.billing_country,
                         p.amount_original, p.fx_rate,
                         p.stripe_customer_id, p.stripe_payment_intent_id,
                         p.stripe_balance_transaction_id, p.stripe_invoice_id,
@@ -806,6 +810,7 @@ def load_classified_payments(
                 event_api_id_meta=row["event_api_id_meta"],
                 email_meta=row["email_meta"],
                 card_country=row["card_country"],
+                billing_country=row["billing_country"],
                 amount_original=row["amount_original"],
                 fx_rate=row["fx_rate"],
                 activity_type=row["activity_type"] or "UNKNOWN",
@@ -957,6 +962,7 @@ def search_transactions_raw(
             "description",
             "email_meta",
             "card_country",
+            "billing_country",
             "currency",
             "converted_amount",
             "converted_amount_refunded",

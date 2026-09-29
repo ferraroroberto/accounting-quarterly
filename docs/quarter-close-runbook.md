@@ -134,8 +134,10 @@ Only reclassify a quarter that has **not** been filed; a filed quarter is correc
 ### Step 7: reta
 
 ```bash
-.venv/Scripts/python.exe scripts/close_quarter.py reta --file <bank export .xls/.xlsx/.csv>
+.venv/Scripts/python.exe scripts/close_quarter.py reta [--file <bank export .xls/.xlsx/.csv>]
 ```
+
+Without `--file`, the export is read from `social_security.bank_export_file` in `config.json`.
 
 Imports the Social Security (TGSS) debits; column names come from `config.json → social_security`. Rows already stored are skipped. A refund (a credit in the export) is stored negative. `⚠ no RETA payment` means the export does not cover the quarter. A missing month or a refund can be added by hand in the **Seguridad Social** tab.
 
@@ -282,10 +284,11 @@ Now that the quarter's receipt is imported, this compares the quarter itself. Fo
 
 ### Step 19: archive
 
-Copy into your private archive folder for the quarter (outside the repo, backed up):
-- the justificantes (step 16);
-- `tmp/close_quarter/<Y>_Q<Q>/`: filing sheet, reconciliation, accountant's pack if any, swept invoice copies;
-- a fresh database backup (pre-flight command).
+```bash
+.venv/Scripts/python.exe scripts/close_quarter.py archive
+```
+
+Copies `tmp/close_quarter/<Y>_Q<Q>/` (filing sheet, reconciliation, accountant's pack if any, swept invoice copies) and a dated database snapshot into `app.archive_dir/<Y>T<Q>/`, your private archive folder outside the repo, which should be backed up. It only adds or updates copies and never deletes. Put the justificantes (step 16) in the same folder.
 
 Keep them at least as long as the returns can be reviewed: four years from the end of the filing period (art. 66 LGT), and longer for anything that still affects later years (a capital good's regularisation period, an asset still being depreciated, a credit still being compensated). Record the definitive pro-rata % under `tax.prorrata.definitive_pct_by_year` after the Q4 303.
 
@@ -315,6 +318,7 @@ Keep them at least as long as the returns can be reviewed: four years from the e
 | `freeze-sent --file <xlsx> [--supersede]` | Freeze a Stripe report file sent before freezing existed (its EUR amounts become the declared basis) |
 | `fx-backfill` | ECB rates up to today |
 | `fx-recompute [--dry-run] [--since YYYY-MM-DD]` | Re-resolve every stored non-EUR invoice at the ECB rate |
+| `relink [--manifest <csv>] [--old-in-dir D] [--old-out-dir D] [--apply]` | Re-point invoice records after the PDFs were moved or renamed (see README, "Moving or renaming the invoice archive") |
 
 ---
 

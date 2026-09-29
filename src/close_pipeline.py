@@ -896,6 +896,50 @@ def step_gestor_pack(ctx: CloseContext, freeze: bool = False) -> StepResult:
 
 
 # ---------------------------------------------------------------------------
+# archive (after filing)
+# ---------------------------------------------------------------------------
+
+def _same_file(a: Path, b: Path) -> bool:
+    return b.exists() and a.stat().st_size == b.stat().st_size and a.read_bytes() == b.read_bytes()
+
+
+def step_archive(ctx: CloseContext) -> StepResult:
+    """Copy the quarter folder and a dated database snapshot into ``app.archive_dir/<Y>T<Q>/``.
+
+    Runbook step 19. It only adds or updates copies, and never deletes from the
+    archive. A re-run on the same day with nothing new reports no changes.
+    """
+    res = StepResult("archive")
+    raw = ((ctx.config or {}).get("app") or {}).get("archive_dir")
+    if not raw:
+        res.errors.append("app.archive_dir is not set in config.json — nowhere to archive the quarter")
+        return res
+    root = Path(raw) if Path(raw).is_absolute() else ROOT / raw
+    dest = root / f"{ctx.year}T{ctx.quarter}"
+    src_dir = ctx.quarter_dir
+    for f in sorted(p for p in src_dir.rglob("*") if p.is_file()):
+        target = dest / f.relative_to(src_dir)
+        if _same_file(f, target):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(f, target)
+        res.changes.append(f"copied {f.relative_to(src_dir)}")
+    snapshot = dest / "database" / f"accounting_{date.today():%Y%m%d}.db"
+    if not snapshot.exists():
+        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        conn = ctx.connect()
+        try:
+            with sqlite3.connect(snapshot) as out:
+                conn.backup(out)
+        finally:
+            conn.close()
+        res.changes.append(f"database snapshot {snapshot.name}")
+    res.info.append(f"Archive folder: {dest}")
+    log.info("ℹ️ Archive %s: %d change(s) into %s", ctx.period, len(res.changes), dest)
+    return res
+
+
+# ---------------------------------------------------------------------------
 # all
 # ---------------------------------------------------------------------------
 

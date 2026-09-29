@@ -58,6 +58,11 @@ Other subcommands:
                   quarter's declared basis (--supersede if already declared).
     fx-backfill   Backfill ECB FX rates up to today.
     fx-recompute  Re-resolve every stored non-EUR invoice at the ECB rate.
+    archive       After filing: copy the quarter folder and a dated database
+                  snapshot into app.archive_dir/<year>T<quarter>/ (runbook step 19).
+    relink        After moving or renaming invoice PDFs: re-point the stored
+                  invoice records at their files (--manifest move records,
+                  content-hash fallback). Dry run unless --apply (#151).
 
 All outputs are written under tmp/, which is git-ignored.
 """
@@ -87,6 +92,7 @@ from src.close_pipeline import (  # noqa: E402
     step_dedupe,
     step_fx,
     step_gestor_pack,
+    step_archive,
     step_ocr,
     step_reconcile,
     step_reta,
@@ -169,7 +175,14 @@ def cmd_stripe(args: argparse.Namespace) -> int:
 
 
 def cmd_reta(args: argparse.Namespace) -> int:
-    return _emit(step_reta(_context(args), args.file))
+    ctx = _context(args)
+    export = args.file or ((ctx.config or {}).get("social_security") or {}).get("bank_export_file")
+    if not export:
+        raise SystemExit("No bank export: pass --file or set social_security.bank_export_file in config.json")
+    path = Path(export) if Path(export).is_absolute() else ROOT / export
+    if not path.exists():
+        raise SystemExit(f"Bank export not found: {path}")
+    return _emit(step_reta(ctx, path))
 
 
 def cmd_compute(args: argparse.Namespace) -> int:
@@ -356,6 +369,24 @@ def cmd_freeze_sent(args: argparse.Namespace) -> int:
     return _emit(result)
 
 
+def cmd_archive(args: argparse.Namespace) -> int:
+    return _emit(step_archive(_context(args)))
+
+
+def cmd_relink(args: argparse.Namespace) -> int:
+    """Re-point invoice records at moved/renamed PDFs (#151). Exit 1 while anything is unresolved."""
+    from src.relink import apply_relink, load_manifests, plan_relink
+
+    init_db()
+    old_roots = {"in": args.old_in_dir, "out": args.old_out_dir}
+    plan = plan_relink(load_manifests(args.manifest), old_roots=old_roots)
+    print(("APPLY" if args.apply else "DRY RUN — nothing written") + ": " + plan.render())
+    if args.apply and plan.moves:
+        backup = apply_relink(plan)
+        print(f"Wrote {len(plan.moves)} move(s); backup: {backup}")
+    return 0 if plan.clean else 1
+
+
 def cmd_fx_backfill(args: argparse.Namespace) -> int:
     """Fetch and store ECB rates from the last stored date up to today (#93).
 
@@ -428,7 +459,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_step("stripe", cmd_stripe, "6. Stripe fetch + backfill-emails + reclassify + override warnings")
 
     p_reta = add_step("reta", cmd_reta, "7. Import RETA (TGSS) debits from a bank export")
-    p_reta.add_argument("--file", required=True, help="Bank export (.xls/.xlsx/.csv)")
+    p_reta.add_argument("--file", default=None,
+                        help="Bank export (.xls/.xlsx/.csv); default social_security.bank_export_file")
 
     add_step("compute", cmd_compute, "8. Compute and snapshot Modelo 303/130/349 (+ OSS, 347)")
     add_step("reconcile", cmd_reconcile, "9. Filed vs app (this quarter if filed, else the previous)")
@@ -486,6 +518,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_freeze_sent.add_argument("--file", required=True, help="The sent Stripe_Report_Q<Q>_<Y>.xlsx")
     p_freeze_sent.add_argument("--supersede", action="store_true",
                                help="Add a new declared version when the quarter is already declared")
+
+    add_step("archive", cmd_archive, "19. After filing: copy the quarter folder + a DB snapshot to app.archive_dir")
+
+    p_relink = sub.add_parser("relink", help="Re-point invoice records after the PDFs were moved or renamed")
+    p_relink.add_argument("--manifest", action="append", default=[],
+                          help="Move record CSV with src,dst absolute paths (repeatable)")
+    p_relink.add_argument("--old-in-dir", default=None,
+                          help="Received-invoices root the stored names refer to (default: the current one)")
+    p_relink.add_argument("--old-out-dir", default=None,
+                          help="Issued-invoices root the stored names refer to (default: the current one)")
+    p_relink.add_argument("--apply", action="store_true", help="Back up the DB, then write the moves")
+    p_relink.set_defaults(func=cmd_relink)
 
     p_fx = sub.add_parser("fx-backfill", help="Backfill ECB FX rates up to today")
     p_fx.set_defaults(func=cmd_fx_backfill)

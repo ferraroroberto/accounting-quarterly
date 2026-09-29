@@ -108,11 +108,12 @@ Keep looping until the user confirms. Don't guess a region from currency or
 card metadata yourself — always ask. (`backfill-emails [--dry-run]` is the
 same billing backfill on its own, for all periods.)
 
-### 7. RETA — `reta --file <export>`
+### 7. RETA — `reta [--file <export>]`
 
 Ask the user for the bank export of the Social Security (TGSS) debits
 (`.xls`/`.xlsx`/`.csv`; column names from `config.json → social_security`,
-defaults `Fecha` / `Importe`). Rows already stored are skipped. Report the
+defaults `Fecha` / `Importe`). Without `--file` the step reads
+`social_security.bank_export_file`. Rows already stored are skipped. Report the
 quarter's RETA total; a `⚠ no RETA payment` line means the export does not
 cover the quarter. Skip the step if the user has no new export.
 
@@ -166,6 +167,13 @@ file's EUR amounts instead (same `--supersede` rule); it aborts, storing
 nothing, on a row dated outside the quarter or a duplicate id, and lists file
 ids missing from the live table. `fx-backfill` and
 `fx-recompute [--dry-run] [--since D]` remain as the stand-alone FX commands.
+
+After the returns are filed (not part of this guided close), `archive` copies
+the quarter folder and a dated database snapshot into `app.archive_dir`. If the
+user has moved or renamed invoice PDFs, run
+`relink [--manifest <csv>] [--old-in-dir D] [--old-out-dir D]` first, as a dry
+run. Only re-run it with `--apply` once it reports no unmatched or ambiguous
+rows, and never while `ocr` would still see the renamed files as new.
 
 ### 12. Summarize
 

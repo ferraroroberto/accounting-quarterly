@@ -119,6 +119,27 @@ def test_duplicate_content_resolves_with_manifest(env):
     assert _plan(env, rows).clean
 
 
+def test_manifest_match_wins_over_a_hash_match_on_the_same_file(env):
+    # An old record whose file vanished long ago shares content with a newer record
+    # that the move record places exactly: the move record is the evidence.
+    stale = _record(env, "V/gone.pdf", "same")
+    (env["old_in"] / "V/gone.pdf").unlink()
+    owner = _record(env, "V/old/kept.pdf", "same")
+    move = _move(env, "V/old/kept.pdf", "V/old/2024 - kept.pdf")
+    plan = _plan(env, [move])
+    assert [m[0] for m in plan.moves] == [owner]
+    assert [a[0] for a in plan.ambiguous] == [stale]
+
+
+def test_two_hash_matches_on_one_file_stay_ambiguous(env):
+    _record(env, "V/a.pdf", "same")
+    _record(env, "V/b.pdf", "same")
+    (env["old_in"] / "V/b.pdf").unlink()
+    _move(env, "V/a.pdf", "V/2024 - a.pdf")
+    plan = _plan(env)
+    assert not plan.moves and len(plan.ambiguous) == 2
+
+
 def test_folder_move_keeps_relative_name_unchanged(env):
     _record(env, "Example Cloud/x.pdf", "d")
     _move(env, "Example Cloud/x.pdf", "Example Cloud/x.pdf")  # new root, same relative path

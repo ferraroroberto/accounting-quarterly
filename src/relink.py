@@ -155,16 +155,24 @@ def plan_relink(
             plan.unmatched.append((rid, d, name))
 
     # Two rows may not end up on the same file, nor on a file another row keeps.
-    targets: dict[tuple[str, str], list[str]] = {}
-    for rid, d, _old, new, _how in plan.moves:
-        targets.setdefault((d, _key(new)), []).append(rid)
+    # A move-record match is evidence of ownership; a hash match only an inference:
+    # when exactly one claimant came from the move record, it keeps the file.
+    targets: dict[tuple[str, str], list[tuple[str, str, str, str, str]]] = {}
+    for m in plan.moves:
+        targets.setdefault((m[1], _key(m[3])), []).append(m)
     moved_ids = {m[0] for m in plan.moves}
     kept = {(r["direction"], _key(r["filename"])) for r in rows if r["id"] not in moved_ids}
-    clash = {rid for key, ids in targets.items() if len(ids) > 1 or key in kept for rid in ids}
-    if clash:
-        for m in [m for m in plan.moves if m[0] in clash]:
+    for key, claimants in targets.items():
+        if len(claimants) == 1 and key not in kept:
+            continue
+        by_manifest = [m for m in claimants if m[4] == "manifest"]
+        winner = by_manifest[0] if len(by_manifest) == 1 and key not in kept else None
+        for m in claimants:
+            if m is winner:
+                continue
             plan.moves.remove(m)
-            plan.ambiguous.append((m[0], m[1], m[2], f"target {m[3]} is claimed by another row"))
+            owner = f"row #{winner[0]} (move record)" if winner else "another row"
+            plan.ambiguous.append((m[0], m[1], m[2], f"target {m[3]} is claimed by {owner}"))
     return plan
 
 

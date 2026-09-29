@@ -23,7 +23,8 @@ flowchart TB
     OCR["invoice_ocr.py\nhub (default) or direct Gemini/Vertex fallback"]
     INGEST["invoice_ingest.py\nOCR -> FX -> vendor registry -> DB save path\n(hash-based new/changed detection)"]
     SCANNER["invoice_scanner.py\ninvoice folder resolution + recursive PDF scan"]
-    PIPELINE["close_pipeline.py\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack\n(idempotent, each reports its changes)"]
+    RELINK["relink.py\nre-point invoice records after PDFs move or rename\n(move record, then content hash; unmatched/ambiguous reported)"]
+    PIPELINE["close_pipeline.py\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack, archive\n(idempotent, each reports its changes)"]
     VENDORS["vendor_registry.py\nvendor match (folder, VAT id, name) + tax defaults"]
     ACCCLIENT["accounting_api_client.py"]
     SOCSEC["social_security.py\nbank-export cuota import"]
@@ -65,7 +66,7 @@ flowchart TB
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_modelo_130 · test_close_pipeline ·\ntest_invoice_ocr_tab · test_modelo_349 · test_filing_sheet ·\ntest_filing_sheet_tab · test_annual_pack · test_stripe_client"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_modelo_130 · test_close_pipeline ·\ntest_invoice_ocr_tab · test_modelo_349 · test_filing_sheet ·\ntest_filing_sheet_tab · test_annual_pack · test_stripe_client ·\ntest_relink"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]
@@ -85,6 +86,9 @@ flowchart TB
   INGEST --> VENDORS
   INGEST --> SCANNER
   PIPELINE --> SCANNER
+  RELINK --> SCANNER
+  RELINK --> DB
+  CLOSEQ --> RELINK
   PIPELINE --> INGEST
   PIPELINE --> DEDUPE
   PIPELINE --> RECLASSIFY

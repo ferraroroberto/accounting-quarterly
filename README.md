@@ -134,6 +134,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
 │   ├── invoice_ingest.py          # OCR → FX → vendor registry → DB save path (OCR tab + close_quarter.py ocr)
 │   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
+│   ├── relink.py                  # Re-point invoice records after PDFs move/rename (move record, then content hash)
 │   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
 │   ├── logger.py                  # Rotating file logger
@@ -185,6 +186,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
 │   ├── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
 │   ├── test_close_pipeline.py     # Every close step on a temp DB (OCR/ECB/Stripe mocked), idempotence, skill ↔ CLI
+│   ├── test_relink.py             # Relink matching (move record, hash, unmatched, ambiguous, swap) + archive step
 │   ├── test_filing_sheet.py       # Filing sheet boxes, deadlines, filed-version freeze, triggers, migration
 │   ├── test_filing_sheet_tab.py   # Filing Sheet tab (AppTest)
 │   └── test_invoice_ocr_tab.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
@@ -389,6 +391,8 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 .venv/Scripts/python.exe scripts/close_quarter.py freeze-sent --year Y --quarter Q --file <sent.xlsx> [--supersede]  # freeze a report sent earlier
 .venv/Scripts/python.exe scripts/close_quarter.py fx-backfill                          # backfill ECB FX rates to today
 .venv/Scripts/python.exe scripts/close_quarter.py fx-recompute [--dry-run] [--since D] # re-resolve stored invoices' EUR at the ECB rate
+.venv/Scripts/python.exe scripts/close_quarter.py archive --year Y --quarter Q         # after filing: quarter folder + DB snapshot -> app.archive_dir
+.venv/Scripts/python.exe scripts/close_quarter.py relink [--manifest moves.csv] [--apply] # after moving/renaming invoice PDFs
 ```
 
 - **`sweep`** (pipeline step 1) diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
@@ -400,7 +404,31 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 - **`add-override`** appends to `classification_rules.json`'s `geographic_overrides` / `email_overrides` — the same mechanism as the Transaction Browser tab's "Add Geographic Override" form.
 - **`fx-backfill`** fetches and stores ECB rates from the last stored date up to today for every currency seen in stored invoices/transactions (`src.fx_rates.backfill_to_today`) — idempotent, safe to rerun every close.
 - **`fx-recompute`** re-runs `resolve_invoice_amounts` over every *already-stored* non-EUR invoice (`src.fx_rates.recompute_stored_invoice_fx`) — corrects invoices extracted before the FX resolver existed, or before a later fix to it, in place. Writes by default; pass `--dry-run` to preview (scanned/changed/stale/cross-check/locked-skipped counts plus a per-row old→new EUR list) without touching the DB. `--since YYYY-MM-DD` restricts the scan to invoices dated on/after that date. Never overwrites a row with `subtotal_eur`/`iva_amount`/`total_eur` in its `locked_fields` — those are reported as skipped, not silently kept or dropped — and never touches `eur_received`, which already wins over `subtotal_eur` in the tax engine regardless. Idempotent: a second run reports zero changes. The same recompute is available as a preview-then-apply button in the Currency tab.
-- All output lives under `tmp/close_quarter/` (git-ignored) — nothing is uploaded or sent anywhere by this script.
+- **`archive`** (runbook step 19) copies the quarter folder and a dated database snapshot into `app.archive_dir/<year>T<quarter>/`. It only adds or updates copies, never deletes, and reports no changes on a same-day re-run. It fails with a clear error when `app.archive_dir` is not set.
+- **`relink`**: see "Moving or renaming the invoice archive" below.
+- All output lives under `tmp/close_quarter/` (git-ignored), apart from `archive`'s copies. Nothing is uploaded or sent anywhere by this script.
+
+### Moving or renaming the invoice archive
+
+An invoice record is keyed on its PDF's path **relative to** `invoice_in_dir` / `invoice_out_dir`. Moving a whole root therefore only needs the config change. **Renaming** files, or moving them between sub-folders, needs a relink, or every renamed PDF looks new to `ocr` and the old record, with its OCR result, locks, exclusions and fixed-asset link, is orphaned.
+
+1. Back up the database (the runbook's pre-flight command).
+2. Move or rename the files. Keep a move record: a CSV with `src` and `dst` absolute paths (other columns are ignored), such as the log a re-sorting tool writes.
+3. Point `invoice_in_dir` / `invoice_out_dir` at the new roots.
+4. Dry run:
+
+   ```bash
+   .venv/Scripts/python.exe scripts/close_quarter.py relink --manifest moves.csv --old-in-dir <old in root> --old-out-dir <old out root>
+   ```
+
+   Every record is reported as one of:
+   - **moved:** matched by the move record, or by content hash when there is no move row;
+   - **unchanged:** still at its path with the same content;
+   - **⚠ unmatched:** no file found;
+   - **⚠ ambiguous:** several files share its content, or two records would land on one file.
+
+   The exit code is 1 while anything is unmatched or ambiguous.
+5. Resolve the ⚠ rows, then repeat with `--apply`. It backs up the database to `data/backups/` and rewrites the paths in one transaction; row ids and every other field are kept.
 
 ---
 

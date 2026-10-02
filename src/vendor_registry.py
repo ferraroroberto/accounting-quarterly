@@ -52,6 +52,7 @@ from src.database import (
     TAX_TREATMENTS_IN,
     _EU_VAT_PREFIXES,  # the one EU-country list; shared rather than duplicated
     derive_geo_region_from_nif,
+    filed_snapshot_periods,
     get_connection,
     init_db,
     legacy_vat_treatment_for,
@@ -356,6 +357,29 @@ class ApplyResult:
     rows_updated: int = 0
     by_signal: dict[str, int] = field(default_factory=dict)
     field_updates: dict[str, int] = field(default_factory=dict)
+    by_period: dict[str, int] = field(default_factory=dict)  # rows updated per "YYYY Qn" of invoice_date
+    filed_periods: set[tuple[int, int]] = field(default_factory=set)  # (year, quarter) with a FILED snapshot
+
+    def period_summary(self) -> str:
+        """``"2024 Q4: 3, 2025 Q1 (FILED): 1"`` — rows updated per period, oldest first."""
+        parts = []
+        for label in sorted(self.by_period):
+            tag = ""
+            if label != "undated":
+                year, quarter = label.split(" Q")
+                tag = " (FILED)" if (int(year), int(quarter)) in self.filed_periods else ""
+            parts.append(f"{label}{tag}: {self.by_period[label]}")
+        return ", ".join(parts)
+
+
+def _period_label(invoice_date: Optional[str]) -> str:
+    """``"YYYY Qn"`` of an ISO date, ``"undated"`` when missing or unparseable."""
+    text = str(invoice_date or "")[:10]
+    try:
+        month = int(text[5:7])
+        return f"{int(text[:4])} Q{(month - 1) // 3 + 1}"
+    except ValueError:
+        return "undated"
 
 
 def registry_updates_for(row: dict[str, Any], vendor: Vendor) -> dict[str, Any]:
@@ -421,6 +445,7 @@ def apply_vendor_registry(
     result = ApplyResult()
     conn = get_connection(db_path)
     try:
+        result.filed_periods = filed_snapshot_periods(conn)
         for row in _load_expense_rows(conn, invoice_ids):
             result.scanned += 1
             match = registry.match_invoice(row)
@@ -435,6 +460,8 @@ def apply_vendor_registry(
             sets = ", ".join(f"{c} = :{c}" for c in updates)
             conn.execute(f"UPDATE invoices SET {sets} WHERE id = :_id", {**updates, "_id": row["id"]})
             result.rows_updated += 1
+            period = _period_label(row.get("invoice_date"))
+            result.by_period[period] = result.by_period.get(period, 0) + 1
             for column in updates:
                 result.field_updates[column] = result.field_updates.get(column, 0) + 1
         conn.commit()
@@ -588,7 +615,8 @@ def _cmd_seed(args: argparse.Namespace) -> None:
 def _cmd_apply(args: argparse.Namespace) -> None:
     registry = load_registry(Path(args.registry) if args.registry else None)
     init_db(args.db)  # same startup migrations the app runs, so ledger columns exist
-    apply_vendor_registry(registry, db_path=args.db)
+    applied = apply_vendor_registry(registry, db_path=args.db)
+    log.info("ℹ️ Rows updated per period: %s", applied.period_summary() or "none")
     unmatched = find_unmatched_invoices(registry, db_path=args.db)
     folders: dict[str, int] = {}
     for row in unmatched:

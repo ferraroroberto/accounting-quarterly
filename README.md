@@ -353,7 +353,7 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 ```bash
 .venv/Scripts/python.exe scripts/close_quarter.py sweep                       # 1. copy new invoice PDFs
 .venv/Scripts/python.exe scripts/close_quarter.py ocr [--direction in|out|both] [--dry-run] [--model ID]  # 2. extract new/changed PDFs
-.venv/Scripts/python.exe scripts/close_quarter.py vendors                     # 3. vendor registry + unknown vendors ⚠
+.venv/Scripts/python.exe scripts/close_quarter.py vendors [--all-periods]     # 3. vendor registry + unknown vendors ⚠
 .venv/Scripts/python.exe scripts/close_quarter.py dedupe [--apply]            # 4. duplicates / out-of-period
 .venv/Scripts/python.exe scripts/close_quarter.py fx [--apply]                # 5. ECB backfill + invoice FX recompute
 .venv/Scripts/python.exe scripts/close_quarter.py stripe                      # 6. fetch + backfill-emails + reclassify + warnings
@@ -366,7 +366,7 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 ```
 
 - **`ocr`** extracts every PDF under `invoice_in_dir` / `invoice_out_dir` that is new or changed since its last extraction (MD5 against the stored `file_hash`) through `src/invoice_ingest.extract_and_save` — the same save path as the Invoice OCR tab: OCR, FX resolution, vendor-registry defaults. A failing file is reported (`❌`) and the rest continue; it stays pending and is retried next run. `--dry-run` lists the pending files. `--model` overrides the hub model (else the `LLM_HUB_MODEL` env var, else `gemini_pro`) — use it when the hub no longer serves the default alias.
-- **`vendors`** applies `vendors.json` to stored expense invoices and lists the quarter's invoices with an unknown vendor.
+- **`vendors`** applies `vendors.json` to the expense invoices dated in the quarter, and lists the quarter's invoices with an unknown vendor. A quarter with a FILED snapshot is not written (⚠). Invoices of other periods are never touched, so a later registry edit cannot re-treat a filed year. `--all-periods` is the explicit opt-in to re-apply the registry to every stored expense invoice, filed periods included; it prints the rows written per year/quarter, marking filed ones `(FILED)`.
 - **`dedupe`** runs the five detectors of [Duplicate review](#duplicate-review) (out-of-period over the files swept into the quarter folder); `--apply` writes the exclusions, never over a locked row.
 - **`fx`** backfills ECB rates up to today (warns when the stored rates stop short of the quarter end, e.g. network failure) and re-resolves the quarter's stored non-EUR invoices; the recompute writes only with `--apply`.
 - **`stripe`** fetches the quarter from Stripe, fills billing email/country from saved raw charges, reclassifies the quarter, and reports new/changed transactions plus the review warnings of `stripe-fetch` (foreign-looking `eur_default`, EU B2C threshold). Use `stripe-fetch` for the full per-transaction table.
@@ -1148,7 +1148,7 @@ Leave a default empty to keep the invoice's own (heuristic) value — e.g. for a
 
 **Matching** (first hit wins): (1) the invoice's **sub-folder** (first component of `filename`) against `key` / `aliases`; (2) the normalised **vendor VAT id** against `vat_id` / `alt_vat_ids`; (3) the **vendor name** against `key` / `aliases` / `legal_entity` (whole-word, longest alias first).
 
-**Applying.** Every OCR extraction applies the registry to the new row, and the **Vendors** tab's **Apply registry** button (or the CLI below) re-applies it to all stored expense invoices — idempotent:
+**Applying.** Every OCR extraction applies the registry to the new row, and `close_quarter.py vendors` applies it to the quarter being closed. The **Vendors** tab's **Apply registry** button, the CLI below and `close_quarter.py vendors --all-periods` re-apply it to all stored expense invoices, filed periods included, and report the rows written per year/quarter (filed ones marked `(FILED)`). All of them are idempotent:
 
 - `tax_treatment` (legacy `vat_treatment` kept in sync), `deductible_pct_vat`, `deductible_pct_irpf`, `activity_type` and `asset_class` take the registry default, **except 🔒 locked fields** — a Ledger edit always wins.
 - `vendor_vat_id_norm`, `geo_region` (only when `UNKNOWN`) and `supply_country` are filled only when missing: an id read from the document wins.

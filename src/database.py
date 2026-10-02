@@ -1815,6 +1815,22 @@ def load_tax_snapshot_versions(
     ).fetchall()
 
 
+def filed_snapshot_periods(conn: sqlite3.Connection) -> set[tuple[int, int]]:
+    """(year, quarter) of every period with a FILED snapshot.
+
+    An annual one (quarter ``TAX_SNAPSHOT_QUARTER_ANNUAL``) covers its year's four quarters.
+    """
+    periods: set[tuple[int, int]] = set()
+    for year, quarter in conn.execute(
+        "SELECT DISTINCT year, quarter FROM tax_computation_snapshots WHERE status = ?", (SNAPSHOT_FILED,)
+    ):
+        if quarter == TAX_SNAPSHOT_QUARTER_ANNUAL:
+            periods.update((year, q) for q in (1, 2, 3, 4))
+        else:
+            periods.add((year, quarter))
+    return periods
+
+
 def insert_filed_tax_snapshot_conn(
     conn: sqlite3.Connection,
     year: int,

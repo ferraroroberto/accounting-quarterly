@@ -109,7 +109,7 @@ def _render_apply(registry: VendorRegistry) -> None:
     st.markdown("**Apply to stored expense invoices**")
     st.caption(
         "Writes the registry defaults (treatment, business-use %, activity, asset class) onto matched "
-        "expense invoices, and fills a missing VAT id, region and country. 🔒 Locked fields are never "
+        "expense invoices of every period, filed ones included, and fills a missing VAT id, region and country. 🔒 Locked fields are never "
         "touched, and nothing gets locked. New OCR extractions apply the registry automatically."
     )
     if st.button("Apply registry", key="vendors_apply", disabled=not registry.vendors):
@@ -117,7 +117,8 @@ def _render_apply(registry: VendorRegistry) -> None:
         _flash("success",
                f"Matched {result.matched} of {result.scanned} expense invoice(s) "
                f"({', '.join(f'{k}: {v}' for k, v in result.by_signal.items()) or 'none'}); "
-               f"updated {result.rows_updated}; {result.unmatched} unknown vendor(s).")
+               f"updated {result.rows_updated}; {result.unmatched} unknown vendor(s)."
+               + (f" Updated per period: {result.period_summary()}." if result.rows_updated else ""))
         st.rerun()
 
 

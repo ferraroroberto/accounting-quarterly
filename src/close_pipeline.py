@@ -7,7 +7,8 @@
 1. ``sweep``       copy new invoice PDFs into ``tmp/close_quarter/<Y>_Q<Q>/``.
 2. ``ocr``         extract new/changed PDFs (MD5 vs stored ``file_hash``) through
                    ``src.invoice_ingest``; a failing file is reported, never fatal.
-3. ``vendors``     apply the vendor registry; list the quarter's unknown vendors.
+3. ``vendors``     apply the vendor registry to the quarter (``all_periods``: everywhere);
+                   list the quarter's unknown vendors.
 4. ``dedupe``      duplicate / receipt / out-of-period groups; writes only with ``apply``.
 5. ``fx``          ECB backfill + stored-invoice recompute; recompute writes only with ``apply``.
 6. ``stripe``      Stripe fetch (injected callable) + billing backfill + reclassify + review warnings.
@@ -36,6 +37,7 @@ from typing import Any, Callable, Optional
 
 from src.classifier import eur_default_foreign_warning, validate_classifications
 from src.database import (
+    filed_snapshot_periods,
     get_connection,
     get_invoices,
     load_classified_payments,
@@ -313,15 +315,43 @@ def step_ocr(
 # 3. vendors
 # ---------------------------------------------------------------------------
 
-def step_vendors(ctx: CloseContext) -> StepResult:
-    """Apply the vendor registry to stored expenses; warn about the quarter's unknown vendors."""
+def step_vendors(ctx: CloseContext, all_periods: bool = False) -> StepResult:
+    """Apply the vendor registry to the quarter's expenses; warn about its unknown vendors.
+
+    Only expense invoices dated in the quarter are written, and none when the
+    quarter has a FILED snapshot, so a later registry edit never silently
+    re-treats a filed period. ``all_periods`` is the explicit opt-in to apply
+    it to every stored expense invoice, filed periods included; it reports the
+    rows written per year/quarter.
+    """
     res = StepResult("vendors")
-    applied = apply_vendor_registry(db_path=ctx.db_path)
-    if applied.rows_updated:
-        fields = ", ".join(f"{k}×{v}" for k, v in sorted(applied.field_updates.items()))
-        res.changes.append(f"registry defaults written on {applied.rows_updated} expense invoice(s): {fields}")
-    res.info.append(f"Expense invoices: {applied.scanned} scanned, {applied.matched} matched, "
-                    f"{applied.unmatched} unknown vendor(s) in total.")
+    conn = ctx.connect()
+    try:
+        filed = filed_snapshot_periods(conn)
+        quarter_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM invoices WHERE direction = 'in' AND substr(invoice_date, 1, 10) BETWEEN ? AND ?",
+            ctx.date_bounds)]
+    finally:
+        conn.close()
+
+    applied = None
+    if all_periods:
+        applied = apply_vendor_registry(db_path=ctx.db_path)
+        scope = "all periods"
+    elif (ctx.year, ctx.quarter) in filed:
+        res.warnings.append(f"{ctx.period} has a FILED return — registry defaults not written. "
+                            f"Re-applying them needs `vendors --all-periods`.")
+    else:
+        applied = apply_vendor_registry(db_path=ctx.db_path, invoice_ids=quarter_ids)
+        scope = ctx.period
+    if applied is not None:
+        if applied.rows_updated:
+            fields = ", ".join(f"{k}×{v}" for k, v in sorted(applied.field_updates.items()))
+            res.changes.append(f"registry defaults written on {applied.rows_updated} expense invoice(s): {fields}")
+            if all_periods:
+                res.changes.append(f"per period: {applied.period_summary()}")
+        res.info.append(f"Expense invoices ({scope}): {applied.scanned} scanned, {applied.matched} matched, "
+                        f"{applied.unmatched} unknown vendor(s).")
 
     unmatched = find_unmatched_invoices(db_path=ctx.db_path)
     in_quarter = [r for r in unmatched if _in_quarter(ctx, r.get("invoice_date"))]

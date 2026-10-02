@@ -77,7 +77,7 @@ curl -s http://127.0.0.1:8000/v1/models
 .venv/Scripts/python.exe scripts/close_quarter.py vendors
 ```
 
-Applies `vendors.json` to the stored expense invoices and lists the quarter's invoices with an unknown vendor (`⚠`). Add each vendor in the app's **Vendors** tab (country, VAT id, default tax treatment, business-use %, activity), then re-run `vendors`.
+Applies `vendors.json` to the expense invoices dated in the quarter and lists the quarter's invoices with an unknown vendor (`⚠`). Invoices of other periods are not touched, and a quarter that already has a FILED return is not written at all. To re-apply a changed vendor default to every period on purpose, filed ones included, run `vendors --all-periods`: it prints the rows written per year/quarter, with filed periods marked `(FILED)`. Add each vendor in the app's **Vendors** tab (country, VAT id, default tax treatment, business-use %, activity), then re-run `vendors`.
 
 ### Step 4: dedupe
 

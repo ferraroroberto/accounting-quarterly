@@ -147,8 +147,10 @@ date) and imports the receipt PDF (`python -m src.filed_returns import <pdf>`).
 
 ### 11. Accountant's pack — `gestor-pack`
 
-While an external accountant is still engaged: writes the Stripe report
-(`Stripe_Report_Q<Q>_<Y>.xlsx`, reclassified first), the notes file
+While an external accountant is still engaged: copies the quarter's
+non-excluded invoices from the ledger into `invoices/` in the quarter folder
+(including ones OCR'd before the close — not the `sweep` copies), writes the
+Stripe report (`Stripe_Report_Q<Q>_<Y>.xlsx`, reclassified first), the notes file
 `gestor_notes_<Y>_Q<Q>.md` (the user's own notes from the git-ignored
 `gestor_notes.md` at the repo root, else a template, plus the special
 treatments detected in the ledger — partial business use, exclusions,

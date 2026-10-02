@@ -63,6 +63,18 @@ def test_apply_all_excludes_the_loser(dedupe_db):
     assert excluded[0]["excluded_reason"] == "duplicate"
 
 
+def test_shared_number_with_different_totals_is_a_numbering_warning(dedupe_db):
+    for fname, total in (("F-5a.pdf", 50.0), ("F-5b.pdf", 80.0)):
+        upsert_invoice({"filename": fname, "direction": "out", "invoice_number": "F-5",
+                        "invoice_date": "2025-02-10", "vendor_name": "Own Name", "total_eur": total},
+                       db_path=dedupe_db)
+    at = AppTest.from_function(_render_dedupe).run()
+    at.button(key="dedupe_scan").click().run()
+    assert not at.exception, f"Duplicate Review tab raised: {at.exception}"
+    assert any("Numbering, not a duplicate" in w.value and "F-5" in w.value for w in at.warning)
+    assert at.metric[0].value == "1"  # still only the file-hash group
+
+
 def test_empty_db_shows_guidance(tmp_path, monkeypatch):
     path = tmp_path / "empty.db"
     init_db(path)

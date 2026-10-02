@@ -69,13 +69,17 @@ invoices of every period, filed ones included.
 
 ### 4. Duplicates — `dedupe`
 
-Lists duplicate groups (same file, same invoice number, invoice + receipt
-pair, email copy) and swept files dated outside the quarter
-(out-of-period). Without `--apply` nothing is written.
+Lists duplicate groups, numbered `#1`, `#2`… (same file, same invoice number,
+invoice + receipt pair, email copy) and swept files dated outside the quarter
+(out-of-period). Without `--apply` nothing is written. A shared invoice number
+with a different total or date is a numbering ⚠, never excluded — tell the
+user to fix the numbering.
 
 **STOP (review 1).** Show the user the `ocr`, `vendors` and `dedupe` results.
 Wait for them to fix unknown vendors / extraction errors and to confirm the
-proposed exclusions. Only on their OK run `dedupe --apply`.
+proposed exclusions. Only on their OK run `dedupe --apply`; when they
+confirm only some groups, run `dedupe --apply --group N` for each confirmed
+number (re-run `dedupe` between applies, numbers shift).
 
 ### 5. FX — `fx`
 

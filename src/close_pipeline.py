@@ -9,7 +9,8 @@
                    ``src.invoice_ingest``; a failing file is reported, never fatal.
 3. ``vendors``     apply the vendor registry to the quarter (``all_periods``: everywhere);
                    list the quarter's unknown vendors.
-4. ``dedupe``      duplicate / receipt / out-of-period groups; writes only with ``apply``.
+4. ``dedupe``      duplicate / receipt / out-of-period groups; writes only with ``apply``
+                   (all groups, or the ``groups`` numbers); numbering conflicts are warnings.
 5. ``fx``          ECB backfill + stored-invoice recompute; recompute writes only with ``apply``.
 6. ``stripe``      Stripe fetch (injected callable) + billing backfill + reclassify + review warnings.
 7. ``reta``        import a bank export of RETA (TGSS) debits.
@@ -62,6 +63,7 @@ from src.fx_rates import (
 from src.invoice_dedupe import (
     apply_groups,
     find_duplicate_groups,
+    find_numbering_conflicts,
     load_sweep_rows,
     quarter_bounds,
 )
@@ -372,37 +374,52 @@ def step_vendors(ctx: CloseContext, all_periods: bool = False) -> StepResult:
 # 4. dedupe
 # ---------------------------------------------------------------------------
 
-def step_dedupe(ctx: CloseContext, apply: bool = False) -> StepResult:
+def step_dedupe(ctx: CloseContext, apply: bool = False, groups: Optional[list[int]] = None) -> StepResult:
     """Detect duplicate / receipt / out-of-period groups; exclude the losers only with ``apply``.
 
-    Out-of-period only looks at the invoices swept into this quarter's folder.
-    Excluded (or exclusion-locked) rows are never proposed again, so a second
-    run after ``apply`` finds nothing.
+    Groups are numbered ``#1``, ``#2``… in the review; ``groups`` limits
+    ``apply`` to those numbers (an unknown number applies nothing). Out-of-period
+    only looks at the invoices swept into this quarter's folder. Excluded (or
+    exclusion-locked) rows are never proposed again, so a second run after
+    ``apply`` finds nothing. A shared invoice number with a different total or
+    date is reported as a numbering warning and never excluded.
     """
     res = StepResult("dedupe")
     rows = get_invoices(db_path=ctx.db_path)
     names = {r["id"]: r.get("filename") or r["id"] for r in rows}
+    for conflict in find_numbering_conflicts(rows):
+        res.warnings.append(f"numbering, not a duplicate (nothing excluded): {conflict.note}")
     sweep_rows = load_sweep_rows(ctx.year, ctx.quarter, db_path=ctx.db_path, sweep_dir=ctx.quarter_dir)
-    groups = find_duplicate_groups(rows, sweep_rows=sweep_rows, year=ctx.year, quarter=ctx.quarter)
-    if not groups:
+    found = find_duplicate_groups(rows, sweep_rows=sweep_rows, year=ctx.year, quarter=ctx.quarter)
+    if not found:
         res.info.append("No duplicate/receipt/out-of-period groups found.")
         return res
 
-    for g in groups:
+    for n, g in enumerate(found, start=1):
         keeper = f" (keeps {names.get(g.keeper_id, g.keeper_id)})" if g.keeper_id else ""
         losers = ", ".join(names.get(i, i) for i in g.loser_ids)
-        res.info.append(f"[{g.detector}/{g.reason}] exclude {losers}{keeper} — {g.note}")
-    n_losers = sum(len(g.loser_ids) for g in groups)
+        res.info.append(f"#{n} [{g.detector}/{g.reason}] exclude {losers}{keeper} — {g.note}")
+    n_losers = sum(len(g.loser_ids) for g in found)
     if not apply:
-        res.warnings.append(f"{n_losers} exclusion(s) proposed in {len(groups)} group(s) — "
-                            f"review, then rerun with --apply")
+        res.warnings.append(f"{n_losers} exclusion(s) proposed in {len(found)} group(s) — review, then "
+                            f"rerun with --apply (all) or --apply --group N (only group #N)")
         return res
-    out = apply_groups(groups, db_path=ctx.db_path)
+    if groups:
+        unknown = sorted({n for n in groups if not 1 <= n <= len(found)})
+        if unknown:
+            res.errors.append(f"no group {', '.join(f'#{n}' for n in unknown)} (there are {len(found)}) "
+                              f"— nothing applied; review again, numbers shift after each apply")
+            return res
+        found = [found[n - 1] for n in sorted(set(groups))]
+    out = apply_groups(found, db_path=ctx.db_path)
     if out["applied"]:
         by = ", ".join(f"{k}×{v}" for k, v in sorted(out["by_detector"].items()))
         res.changes.append(f"excluded {out['applied']} invoice(s): {by}")
     if out["skipped_locked"]:
         res.warnings.append(f"{out['skipped_locked']} row(s) skipped: exclusion locked by a manual edit")
+    for g, why in out["skipped_groups"]:
+        res.warnings.append(f"group [{g.detector}] keeping {names.get(g.keeper_id, g.keeper_id)} skipped: "
+                            f"{why}, so excluding the rest would leave no active row")
     return res
 
 

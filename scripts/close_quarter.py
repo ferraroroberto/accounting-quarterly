@@ -17,7 +17,10 @@ step is idempotent and prints what it changed ("no changes" on a re-run):
                   when the quarter is FILED); list its unknown vendors (⚠).
                   --all-periods re-applies it everywhere, with per-period counts.
     dedupe        Duplicate / receipt / out-of-period groups (out-of-period =
-                  swept files dated outside the quarter). Writes only with --apply.
+                  swept files dated outside the quarter), numbered #1, #2...
+                  Writes only with --apply; --apply --group N writes group #N
+                  only. A shared invoice number with a different total or date
+                  is a numbering warning, never excluded.
     fx            Backfill ECB rates to today, then re-resolve the quarter's
                   stored non-EUR invoices. The recompute writes only with --apply.
     stripe        Stripe fetch + billing-email backfill + reclassify the quarter,
@@ -165,7 +168,10 @@ def cmd_vendors(args: argparse.Namespace) -> int:
 
 
 def cmd_dedupe(args: argparse.Namespace) -> int:
-    return _emit(step_dedupe(_context(args), apply=args.apply))
+    if args.group and not args.apply:
+        print("--group selects which groups --apply writes; add --apply", file=sys.stderr)
+        return 2
+    return _emit(step_dedupe(_context(args), apply=args.apply, groups=args.group))
 
 
 def cmd_fx(args: argparse.Namespace) -> int:
@@ -457,6 +463,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_dedupe = add_step("dedupe", cmd_dedupe, "4. Duplicate/receipt/out-of-period review")
     p_dedupe.add_argument("--apply", action="store_true", help="Write the proposed exclusions")
+    p_dedupe.add_argument("--group", type=int, action="append", metavar="N",
+                          help="With --apply: write only group #N of the review (repeatable)")
 
     p_fx_step = add_step("fx", cmd_fx, "5. ECB backfill + recompute the quarter's stored non-EUR invoices")
     p_fx_step.add_argument("--apply", action="store_true", help="Write the recomputed EUR figures")

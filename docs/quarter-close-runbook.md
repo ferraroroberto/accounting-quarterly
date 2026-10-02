@@ -85,7 +85,7 @@ Applies `vendors.json` to the expense invoices dated in the quarter and lists th
 .venv/Scripts/python.exe scripts/close_quarter.py dedupe
 ```
 
-Lists duplicate groups (same file, same invoice number, invoice + receipt, email-folder copy) and swept files dated outside the quarter. Nothing is written without `--apply`.
+Lists duplicate groups (same file, same invoice number, invoice + receipt, email-folder copy) and swept files dated outside the quarter, numbered `#1`, `#2`… Nothing is written without `--apply`. A shared invoice number with a different total or date (typically two issued invoices numbered the same by mistake) is a numbering ⚠: fix the numbering, nothing is excluded.
 
 ### Review 1: invoices
 
@@ -95,8 +95,11 @@ Before going on, in the app:
 - Confirm the proposed exclusions, then:
 
 ```bash
-.venv/Scripts/python.exe scripts/close_quarter.py dedupe --apply
+.venv/Scripts/python.exe scripts/close_quarter.py dedupe --apply              # every proposed group
+.venv/Scripts/python.exe scripts/close_quarter.py dedupe --apply --group 2    # only group #2 (repeatable)
 ```
+
+When only some proposals are right, apply those groups by number and handle the rest in the **Duplicate Review** tab (pick another keeper, or **Ignore**). Group numbers shift after an apply, so re-run `dedupe` before applying another number. A group whose kept row is already excluded is skipped with a ⚠: applying it would leave no active row.
 
 ### Step 5: fx
 

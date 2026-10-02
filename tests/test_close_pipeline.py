@@ -298,6 +298,26 @@ def test_dedupe_proposes_then_applies_once(ctx):
     _assert_noop(cp.step_dedupe(ctx, apply=True))
 
 
+def test_dedupe_applies_one_group_on_its_own(ctx):
+    """#156: one correct proposal can be applied without the others."""
+    for name, digest in (("a.pdf", "H1"), ("b.pdf", "H1"), ("c.pdf", "H2"), ("d.pdf", "H2")):
+        upsert_invoice({"filename": name, "direction": "in", "file_hash": digest, "invoice_number": name,
+                        "invoice_date": "2025-02-10", "vendor_name": "Sample Supplies SL",
+                        "total_eur": 10.0}, db_path=ctx.db_path)
+    review = cp.step_dedupe(ctx)
+    assert [line[:4] for line in review.info] == ["#1 [", "#2 ["]
+    second_group = review.info[1]
+
+    bad = cp.step_dedupe(ctx, apply=True, groups=[3])
+    assert bad.errors and not any(r["excluded"] for r in _rows(ctx).values())
+
+    applied = cp.step_dedupe(ctx, apply=True, groups=[2])
+    assert applied.changes == ["excluded 1 invoice(s): file_hash×1"]
+    excluded = [name for name, r in _rows(ctx).items() if r["excluded"]]
+    assert len(excluded) == 1 and excluded[0] in second_group
+    assert len(cp.step_dedupe(ctx).info) == 1  # the other group is still proposed
+
+
 # ---------------------------------------------------------------------------
 # 5. fx
 # ---------------------------------------------------------------------------

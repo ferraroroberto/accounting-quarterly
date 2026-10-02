@@ -309,7 +309,8 @@ class TestLockedRowsRespected:
         group = DuplicateGroup(detector="file_hash", reason="duplicate",
                                loser_ids=(b, c), keeper_id=a)
         result = apply_groups([group], db_path=db)
-        assert result == {"applied": 1, "skipped_locked": 1, "by_detector": {"file_hash": 1}}
+        assert result == {"applied": 1, "skipped_locked": 1, "by_detector": {"file_hash": 1},
+                          "skipped_groups": []}
         rows = {r["id"]: r for r in _rows(db)}
         assert rows[b]["excluded"] == 0  # untouched
         assert rows[c]["excluded"] == 1 and rows[c]["excluded_reason"] == "duplicate"
@@ -320,6 +321,78 @@ class TestLockedRowsRespected:
         rows = {r["id"]: r for r in _rows(db)}
         assert rows[a]["excluded"] == 1
         assert rows[a]["locked_fields"] is None  # not locked — re-extract may still change it
+
+
+# ---------------------------------------------------------------------------
+# #156: a group never ends up with every row excluded; numbering errors are warnings
+# ---------------------------------------------------------------------------
+
+def _set_extracted_at(db, ids_in_order: list[str]) -> None:
+    c = get_connection(db)
+    for n, rid in enumerate(ids_in_order):
+        c.execute("UPDATE invoices SET extracted_at = ? WHERE id = ?", (f"2025-01-01T00:00:0{n}", rid))
+    c.commit()
+    c.close()
+
+
+class TestNeverExcludeAWholeGroup:
+    def test_keeper_is_the_row_already_active(self, db):
+        # The statement was ingested first (normally the keeper) but is already
+        # excluded; the invoice is the only active row, so it must be kept.
+        statement = _add(db, filename="vendor/statement.pdf", invoice_number="N7", file_hash="H-s")
+        invoice = _add(db, filename="vendor/invoice.pdf", invoice_number="N7", file_hash="H-i")
+        _set_extracted_at(db, [statement, invoice])
+        set_invoice_exclusion(statement, True, "duplicate", db_path=db)
+        assert find_duplicate_groups(_rows(db)) == []
+
+    def test_receipt_pair_with_the_invoice_excluded_is_not_proposed(self, db):
+        invoice = _add(db, filename="vendor/inv.pdf", invoice_number=None, file_hash="H-i")
+        _add(db, filename="vendor/receipt.pdf", invoice_number=None, invoice_type="recibo",
+             invoice_date="2025-02-11", file_hash="H-r")
+        set_invoice_exclusion(invoice, True, "duplicate", db_path=db)
+        assert detect_receipt_pairs(_rows(db)) == []
+
+    def test_apply_refuses_a_group_whose_keeper_is_excluded(self, db):
+        from src.invoice_dedupe import DuplicateGroup
+        keeper = _add(db, filename="a.pdf", file_hash="H1", invoice_number="N1")
+        loser = _add(db, filename="b.pdf", file_hash="H1", invoice_number="N2")
+        group = DuplicateGroup("file_hash", "duplicate", (loser,), keeper)
+        set_invoice_exclusion(keeper, True, "duplicate", db_path=db)  # state moved since the scan
+        result = apply_groups([group], db_path=db)
+        assert result["applied"] == 0 and len(result["skipped_groups"]) == 1
+        assert {r["id"]: r["excluded"] for r in _rows(db)}[loser] == 0
+
+    def test_apply_refuses_a_keeper_excluded_earlier_in_the_same_apply(self, db):
+        from src.invoice_dedupe import DuplicateGroup
+        a = _add(db, filename="a.pdf", file_hash="H1", invoice_number="N1")
+        b = _add(db, filename="b.pdf", file_hash="H2", invoice_number="N2")
+        c = _add(db, filename="c.pdf", file_hash="H3", invoice_number="N3")
+        result = apply_groups([DuplicateGroup("file_hash", "duplicate", (b,), a),
+                               DuplicateGroup("file_hash", "duplicate", (c,), b)], db_path=db)
+        assert result["applied"] == 1 and len(result["skipped_groups"]) == 1
+        assert {r["id"]: r["excluded"] for r in _rows(db)} == {a: 0, b: 1, c: 0}
+
+
+class TestNumberingConflicts:
+    def test_issued_invoices_sharing_a_number_are_a_numbering_warning(self, db):
+        _add(db, filename="out/F-12a.pdf", direction="out", invoice_number="F-12", vendor_name="Own Name",
+             vendor_nif=None, client_name="Client One SL", total_eur=242.0, invoice_date="2025-02-01",
+             file_hash="H-a")
+        _add(db, filename="out/F-12b.pdf", direction="out", invoice_number="F-12", vendor_name="Own Name",
+             vendor_nif=None, client_name="Client Two SL", total_eur=500.0, invoice_date="2025-03-15",
+             file_hash="H-b")
+        assert find_duplicate_groups(_rows(db)) == []
+        from src.invoice_dedupe import find_numbering_conflicts
+        conflicts = find_numbering_conflicts(_rows(db))
+        assert len(conflicts) == 1 and len(conflicts[0].row_ids) == 2
+        assert "F-12" in conflicts[0].note
+
+    def test_same_number_amount_and_date_is_still_a_duplicate(self, db):
+        from src.invoice_dedupe import find_numbering_conflicts
+        _add(db, filename="out/F-3.pdf", direction="out", invoice_number="F-3", file_hash="H-a")
+        _add(db, filename="out/copy/F-3.pdf", direction="out", invoice_number="F-3", file_hash="H-b")
+        assert [g.detector for g in find_duplicate_groups(_rows(db))] == ["invoice_number"]
+        assert find_numbering_conflicts(_rows(db)) == []
 
 
 # ---------------------------------------------------------------------------

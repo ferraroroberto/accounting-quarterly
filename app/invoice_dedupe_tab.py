@@ -19,6 +19,7 @@ from src.invoice_dedupe import (
     DuplicateGroup,
     apply_groups,
     find_duplicate_groups,
+    find_numbering_conflicts,
     load_sweep_rows,
 )
 from src.logger import get_logger
@@ -48,6 +49,12 @@ def _row_label(row: dict) -> str:
     total = row.get("total_eur")
     total_txt = f"{total:,.2f}" if isinstance(total, (int, float)) else "-"
     return f"{row.get('invoice_date') or 'no date'} · {who} · {total_txt} · {row.get('filename')}"
+
+
+def _flash_skipped_groups(result: dict) -> None:
+    if result["skipped_groups"]:
+        _flash("warning", f"Skipped {len(result['skipped_groups'])} group(s) whose kept row is excluded: "
+                          "excluding the rest would leave no active invoice. Pick an active row to keep.")
 
 
 def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> None:
@@ -83,17 +90,13 @@ def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> No
                 )
         with col_apply:
             if st.button("Exclude the rest", key=f"dedupe_apply_{idx}", type="primary"):
-                losers = [r["id"] for r in rows if r["id"] != keep_id]
-                applied, skipped = 0, 0
-                for loser_id in losers:
-                    if set_invoice_exclusion(loser_id, True, group.reason):
-                        applied += 1
-                    else:
-                        skipped += 1
-                if applied:
-                    _flash("success", f"Excluded {applied} invoice(s) as {group.reason!r}.")
-                if skipped:
-                    _flash("warning", f"Skipped {skipped} row(s) with a locked `excluded` field.")
+                losers = tuple(r["id"] for r in rows if r["id"] != keep_id)
+                result = apply_groups([DuplicateGroup(group.detector, group.reason, losers, keep_id, group.note)])
+                if result["applied"]:
+                    _flash("success", f"Excluded {result['applied']} invoice(s) as {group.reason!r}.")
+                if result["skipped_locked"]:
+                    _flash("warning", f"Skipped {result['skipped_locked']} row(s) with a locked `excluded` field.")
+                _flash_skipped_groups(result)
                 st.rerun()
         with col_skip:
             if st.button("Ignore", key=f"dedupe_skip_{idx}"):
@@ -176,10 +179,13 @@ def render() -> None:
             quarter=int(quarter) if scope_period else None,
         )
         ignored = st.session_state.get("dedupe_ignored", set())
+        st.session_state["dedupe_numbering"] = [c.note for c in find_numbering_conflicts(rows)]
         st.session_state["dedupe_groups"] = [
             g for g in groups if (g.detector, g.loser_ids) not in ignored
         ]
 
+    for note in st.session_state.get("dedupe_numbering", []):
+        st.warning(f"Numbering, not a duplicate (nothing excluded): {note}")
     groups: list[DuplicateGroup] = st.session_state.get("dedupe_groups", [])
     if groups:
         m1, m2 = st.columns(2)
@@ -191,6 +197,7 @@ def render() -> None:
             _flash("success",
                    f"Applied {result['applied']} exclusion(s); skipped {result['skipped_locked']} "
                    "locked row(s).")
+            _flash_skipped_groups(result)
             st.session_state["dedupe_groups"] = []
             st.rerun()
 

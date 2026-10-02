@@ -5,7 +5,10 @@ Five detectors, each a pure function over invoice-row dicts (as returned by
 and — where the rule has one — the keeper that wins:
 
 1. ``detect_hash_duplicates`` — same ``file_hash`` (byte-identical PDF).
-2. ``detect_number_duplicates`` — same (vendor, ``invoice_number``).
+2. ``detect_number_duplicates`` — same (direction, vendor, ``invoice_number``)
+   *and* the same total and date. Rows sharing a number but not the amount or
+   date are a numbering error, not a duplicate: ``find_numbering_conflicts``
+   reports them as warnings and nothing is excluded.
 3. ``detect_receipt_pairs`` — an invoice/receipt pair: same vendor, same
    total, dates within +/-3 days. The invoice always wins over the receipt.
 4. ``detect_email_copies`` — a file under an ``email`` subfolder that
@@ -18,6 +21,11 @@ which refuses to touch a row whose ``excluded`` field the user already
 locked (a manual decision on a row's exclusion always wins over an automated
 one). ``find_duplicate_groups`` runs all detectors in priority order and
 never proposes the same row twice.
+
+The keeper is always an active row when the group has one, and
+``apply_groups`` re-reads each keeper and skips a group whose keeper is
+excluded by then, so no apply can leave a duplicate group with every row
+excluded.
 
 CLI: ``python -m src.invoice_dedupe scan [--direction in|out] [--apply]
 [--year Y --quarter Q]``.
@@ -32,6 +40,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Optional
 
 from src.database import (
+    get_connection,
     get_invoices,
     parse_locked_fields,
     set_invoice_exclusion,
@@ -56,6 +65,14 @@ class DuplicateGroup:
     loser_ids: tuple[str, ...]
     keeper_id: Optional[str] = None
     note: str = ""
+
+
+@dataclass(frozen=True)
+class NumberingConflict:
+    """Active rows sharing (direction, vendor, invoice number) with a different total or date."""
+
+    row_ids: tuple[str, ...]
+    note: str
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +118,16 @@ def _is_receipt(row: dict) -> bool:
 
 
 def _pick_keeper(rows: list[dict]) -> dict:
-    """An invoice always beats a receipt; among the rest, non-``email``-path and
-    earliest-ingested wins (S5's tie-break rule). Applies to every detector that
-    groups more than a strict invoice/receipt pair (1, 2, 4) so a receipt sharing
-    a ``file_hash``/``invoice_number``/email-copy with its invoice is never kept
+    """An active row always beats an excluded one, so the current exclusion state
+    is respected and the group keeps a live row (#156). Then an invoice beats a
+    receipt; among the rest, non-``email``-path and earliest-ingested wins (S5's
+    tie-break rule). Applies to every detector that groups more than a strict
+    invoice/receipt pair (1, 2, 4) so a receipt sharing a
+    ``file_hash``/``invoice_number``/email-copy with its invoice is never kept
     over the invoice by accident of ingestion order.
     """
-    return min(rows, key=lambda r: (_is_receipt(r), _is_email_path(r.get("filename")), r.get("extracted_at") or ""))
+    return min(rows, key=lambda r: (bool(r.get("excluded")), _is_receipt(r),
+                                    _is_email_path(r.get("filename")), r.get("extracted_at") or ""))
 
 
 def _eligible_losers(keeper: dict, rows: list[dict]) -> list[dict]:
@@ -152,27 +172,69 @@ def detect_hash_duplicates(rows: list[dict]) -> list[DuplicateGroup]:
     return groups
 
 
-def detect_number_duplicates(rows: list[dict]) -> list[DuplicateGroup]:
-    """Same (vendor key, ``invoice_number``) — the same invoice ingested twice."""
-    buckets: dict[tuple[str, str], list[dict]] = {}
+def _number_buckets(rows: list[dict]) -> dict[tuple[str, str, str], list[dict]]:
+    """Rows keyed by (direction, vendor key, upper-cased ``invoice_number``)."""
+    buckets: dict[tuple[str, str, str], list[dict]] = {}
     for row in rows:
         number = (row.get("invoice_number") or "").strip()
         vendor = _vendor_key(row)
         if number and vendor:
-            buckets.setdefault((vendor, number.upper()), []).append(row)
+            buckets.setdefault((row.get("direction", "in"), vendor, number.upper()), []).append(row)
+    return buckets
+
+
+def _amount_and_date(row: dict) -> tuple[Optional[float], str]:
+    total = row.get("total_eur")
+    return (None if total is None else round(float(total), 2), str(row.get("invoice_date") or "")[:10])
+
+
+def detect_number_duplicates(rows: list[dict]) -> list[DuplicateGroup]:
+    """Same (direction, vendor key, ``invoice_number``, total, date) — the same invoice ingested twice.
+
+    Rows sharing only the number are left to ``find_numbering_conflicts``.
+    """
     groups: list[DuplicateGroup] = []
-    for (vendor, number), members in buckets.items():
-        if len(members) < 2:
-            continue
-        keeper = _pick_keeper(members)
-        losers = _eligible_losers(keeper, members)
-        if losers:
-            groups.append(DuplicateGroup(
-                detector="invoice_number", reason="duplicate",
-                loser_ids=tuple(r["id"] for r in losers), keeper_id=keeper["id"],
-                note=f"{len(members)} rows share vendor {vendor} / invoice number {number}",
-            ))
+    for (_, vendor, number), bucket in _number_buckets(rows).items():
+        by_signature: dict[tuple[Optional[float], str], list[dict]] = {}
+        for row in bucket:
+            by_signature.setdefault(_amount_and_date(row), []).append(row)
+        for members in by_signature.values():
+            if len(members) < 2:
+                continue
+            keeper = _pick_keeper(members)
+            losers = _eligible_losers(keeper, members)
+            if losers:
+                groups.append(DuplicateGroup(
+                    detector="invoice_number", reason="duplicate",
+                    loser_ids=tuple(r["id"] for r in losers), keeper_id=keeper["id"],
+                    note=f"{len(members)} rows share vendor {vendor} / invoice number {number}",
+                ))
     return groups
+
+
+def _eur(total: Optional[float]) -> str:
+    return "? EUR" if total is None else f"{float(total):.2f} EUR"
+
+
+def find_numbering_conflicts(rows: list[dict]) -> list[NumberingConflict]:
+    """Active rows sharing (direction, vendor key, ``invoice_number``) with a different total or date.
+
+    A numbering error (e.g. two issued invoices given the same number), not a
+    duplicate: reported for review, never excluded.
+    """
+    conflicts: list[NumberingConflict] = []
+    for (direction, vendor, number), bucket in _number_buckets(rows).items():
+        active = [r for r in bucket if not r.get("excluded")]
+        if len({_amount_and_date(r) for r in active}) < 2:
+            continue
+        detail = "; ".join(f"{r.get('filename')} {r.get('invoice_date') or '?'} {_eur(r.get('total_eur'))}"
+                           for r in active)
+        conflicts.append(NumberingConflict(
+            row_ids=tuple(r["id"] for r in active),
+            note=f"{direction.upper()} invoice number {number} ({vendor}) is used by {len(active)} "
+                 f"invoices with a different total or date: {detail}",
+        ))
+    return conflicts
 
 
 def detect_receipt_pairs(rows: list[dict]) -> list[DuplicateGroup]:
@@ -207,8 +269,8 @@ def detect_receipt_pairs(rows: list[dict]) -> list[DuplicateGroup]:
                 if a_is_receipt == b_is_receipt:
                     continue  # need exactly one receipt side to call it a pair
                 invoice_row, receipt_row = (b, a) if a_is_receipt else (a, b)
-                if _is_settled(receipt_row):
-                    continue
+                if _is_settled(receipt_row) or invoice_row.get("excluded"):
+                    continue  # excluding the receipt would leave the pair with no active row
                 groups.append(DuplicateGroup(
                     detector="invoice_receipt_pair", reason="receipt",
                     loser_ids=(receipt_row["id"],), keeper_id=invoice_row["id"],
@@ -322,20 +384,45 @@ def find_duplicate_groups(
     return groups
 
 
-def apply_groups(groups: list[DuplicateGroup], db_path: Optional[str] = None) -> dict:
+def _excluded_state(ids: list[str], db_path: Optional[str | Path]) -> dict[str, bool]:
+    """Current ``excluded`` flag of each id that exists in ``invoices``."""
+    if not ids:
+        return {}
+    conn = get_connection(db_path)
+    try:
+        marks = ", ".join("?" for _ in ids)
+        return {r["id"]: bool(r["excluded"]) for r in conn.execute(
+            f"SELECT id, excluded FROM invoices WHERE id IN ({marks})", ids)}
+    finally:
+        conn.close()
+
+
+def apply_groups(groups: list[DuplicateGroup], db_path: Optional[str | Path] = None) -> dict:
     """Write each group's losers as ``excluded`` (ledger-only, unlocked).
 
-    Returns ``{"applied": n, "skipped_locked": n, "by_detector": {...}}``.
-    Never overrides a row the user already locked — ``set_invoice_exclusion``
-    enforces that per row.
+    Returns ``{"applied": n, "skipped_locked": n, "by_detector": {...},
+    "skipped_groups": [(group, why), ...]}``. Never overrides a row the user
+    already locked — ``set_invoice_exclusion`` enforces that per row. A group
+    whose keeper is excluded (or gone) by the time it is applied is skipped
+    whole: excluding its losers would leave no active row (#156).
     """
     applied = 0
     skipped = 0
     by_detector: dict[str, int] = {}
+    skipped_groups: list[tuple[DuplicateGroup, str]] = []
+    keepers = _excluded_state([g.keeper_id for g in groups if g.keeper_id], db_path)
     for g in groups:
+        if g.keeper_id and keepers.get(g.keeper_id, True):
+            why = "keeper not found" if g.keeper_id not in keepers else "keeper is excluded"
+            skipped_groups.append((g, why))
+            log.warning("⚠️ Skipped dedupe group %s/%s (%s): %s — excluding its losers would leave "
+                        "no active row", g.detector, g.keeper_id, why, g.note)
+            continue
         for loser_id in g.loser_ids:
             ok = set_invoice_exclusion(loser_id, True, g.reason, db_path=db_path)
             if ok:
+                if loser_id in keepers:
+                    keepers[loser_id] = True  # a later group keeping this row is now unsafe
                 applied += 1
                 by_detector[g.detector] = by_detector.get(g.detector, 0) + 1
             else:
@@ -344,10 +431,11 @@ def apply_groups(groups: list[DuplicateGroup], db_path: Optional[str] = None) ->
                     "ℹ️ Skipped auto-exclusion of invoice %s (%s): "
                     "excluded is locked by a manual edit", loser_id, g.detector,
                 )
-    if applied or skipped:
-        log.info("ℹ️ Invoice dedupe applied %d exclusion(s), skipped %d locked row(s): %s",
-                  applied, skipped, by_detector)
-    return {"applied": applied, "skipped_locked": skipped, "by_detector": by_detector}
+    if applied or skipped or skipped_groups:
+        log.info("ℹ️ Invoice dedupe applied %d exclusion(s), skipped %d locked row(s) and %d group(s): %s",
+                 applied, skipped, len(skipped_groups), by_detector)
+    return {"applied": applied, "skipped_locked": skipped, "by_detector": by_detector,
+            "skipped_groups": skipped_groups}
 
 
 # ---------------------------------------------------------------------------
@@ -436,9 +524,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             sweep_rows = [r for r in sweep_rows if r["direction"] == args.direction]
     groups = find_duplicate_groups(rows, sweep_rows=sweep_rows, year=args.year, quarter=args.quarter)
     _print_groups(groups)
+    for conflict in find_numbering_conflicts(rows):
+        print(f"[numbering] {conflict.note}")
     if args.apply and groups:
         result = apply_groups(groups, db_path=args.db)
         print(f"\nApplied {result['applied']} exclusion(s); skipped {result['skipped_locked']} locked row(s).")
+        for g, why in result["skipped_groups"]:
+            print(f"Skipped group [{g.detector}] keeping {g.keeper_id}: {why}")
     return 0
 
 

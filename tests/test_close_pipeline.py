@@ -395,7 +395,7 @@ def test_gestor_pack_draft_then_freeze(ctx):
     upsert_invoice({"filename": "shared/device.pdf", "direction": "in", "invoice_date": "2025-02-01",
                     "vendor_name": "Gadget Store SL", "total_eur": 121.0, "tax_treatment": "DOMESTIC",
                     "deductible_pct_vat": 20.0, "deductible_pct_irpf": 20.0}, db_path=ctx.db_path)
-    (ctx.quarter_dir / "IN - shared - device.pdf").write_bytes(b"%PDF")
+    _pdf(ctx, "in", "shared/device.pdf")
 
     draft = cp.step_gestor_pack(ctx)
     report = ctx.quarter_dir / "Stripe_Report_Q1_2025.xlsx"
@@ -422,6 +422,48 @@ def test_gestor_pack_draft_then_freeze(ctx):
     finally:
         conn.close()
     _assert_noop(cp.step_gestor_pack(ctx, freeze=True))  # already declared: never re-frozen
+
+
+def test_gestor_pack_invoices_come_from_the_quarter_ledger(ctx):
+    """#157: invoices OCR'd before ``sweep`` ran still reach the pack; the email counts the pack."""
+    # Stored like src.invoice_ingest stores it: the path relative to the invoice dir, native separators.
+    def ingest(direction: str, rel: str, invoice_date: str, **kw) -> None:
+        _pdf(ctx, direction, rel)
+        upsert_invoice({"filename": str(Path(rel)), "direction": direction, "invoice_date": invoice_date,
+                        "total_eur": 10.0, **kw}, db_path=ctx.db_path)
+
+    ingest("in", "Example Cloud/early.pdf", "2025-01-10")      # ingested mid-quarter
+    ingest("in", "Sample Supplies/late.pdf", "2025-03-30")
+    ingest("out", "F-1.pdf", "2025-02-14")
+    ingest("in", "dup.pdf", "2025-02-02", excluded=1, excluded_reason="duplicate")
+    ingest("in", "previous.pdf", "2024-12-20")                  # other quarter
+    ingest("out", "next.pdf", "2025-04-01")                     # other quarter
+    ingest("in", "gone.pdf", "2025-02-03")
+    (_dir(ctx, "in") / "gone.pdf").unlink()                     # PDF missing on disk
+
+    _assert_noop(cp.step_sweep(ctx))  # every PDF is already catalogued: sweep copies nothing
+
+    res = cp.step_gestor_pack(ctx)
+    email = (ctx.quarter_dir / "gestor_email_2025_Q1.txt").read_text(encoding="utf-8")
+    assert "2 factura(s) recibida(s) y 1 factura(s) emitida(s)" in email
+    pack = ctx.quarter_dir / "invoices"
+    assert sorted(p.name for p in pack.iterdir()) == [
+        "IN - Example Cloud - early.pdf", "IN - Sample Supplies - late.pdf", "OUT - F-1.pdf"]
+    assert any("gone.pdf" in w for w in res.warnings)
+    _assert_noop(cp.step_gestor_pack(ctx))
+
+    # A row excluded after the first pack leaves it on the next run, and the counts follow.
+    conn = sqlite3.connect(str(ctx.db_path))
+    try:
+        conn.execute("UPDATE invoices SET excluded = 1 WHERE filename = ?", (str(Path("Sample Supplies/late.pdf")),))
+        conn.commit()
+    finally:
+        conn.close()
+    res = cp.step_gestor_pack(ctx)
+    assert any("Sample Supplies - late.pdf" in c for c in res.changes)
+    assert sorted(p.name for p in pack.iterdir()) == ["IN - Example Cloud - early.pdf", "OUT - F-1.pdf"]
+    email = (ctx.quarter_dir / "gestor_email_2025_Q1.txt").read_text(encoding="utf-8")
+    assert "1 factura(s) recibida(s) y 1 factura(s) emitida(s)" in email
 
 
 def test_freeze_sent_report_file(ctx, tmp_path):

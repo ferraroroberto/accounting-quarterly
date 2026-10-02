@@ -191,7 +191,7 @@ While an external accountant still files the returns, the app runs in parallel a
 .venv/Scripts/python.exe scripts/close_quarter.py gestor-pack --freeze
 ```
 
-Writes the Stripe report (`Stripe_Report_Q<Q>_<Y>.xlsx`, reclassified first), `gestor_notes_<Y>_Q<Q>.md` (your own notes from the git-ignored `gestor_notes.md` at the repo root, plus the special treatments found in the ledger) and a draft email `gestor_email_<Y>_Q<Q>.txt`. Send it yourself.
+Copies the quarter's invoices into `invoices/` inside the quarter folder: every non-excluded received and issued invoice dated in the quarter, taken from the ledger, so invoices OCR'd before the close are included (the `sweep` copies are only "what's new" and are not the pack). It also writes the Stripe report (`Stripe_Report_Q<Q>_<Y>.xlsx`, reclassified first), `gestor_notes_<Y>_Q<Q>.md` (your own notes from the git-ignored `gestor_notes.md` at the repo root, plus the special treatments found in the ledger) and a draft email `gestor_email_<Y>_Q<Q>.txt`, whose invoice counts are the files in `invoices/`. A ledger row whose PDF is missing on disk is a ⚠ and is left out. Send it yourself, attaching the `invoices/` folder.
 
 Run `--freeze` **only for the version you actually send**: it stores the report as the quarter's immutable declared report, and the tax engine then uses its EUR amounts. A corrected re-send is `report --freeze --supersede`.
 

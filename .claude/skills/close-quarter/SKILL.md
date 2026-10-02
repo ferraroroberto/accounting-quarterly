@@ -61,9 +61,11 @@ limits it to one folder.
 
 ### 3. Vendors — `vendors`
 
-Applies the vendor registry (`vendors.json`) to stored expense invoices and
-lists the quarter's invoices with an unknown vendor (`⚠`). For each, the user
-adds the vendor in the app's Vendors tab; then rerun `vendors`.
+Applies the vendor registry (`vendors.json`) to the quarter's expense invoices
+(none when the quarter is FILED) and lists its invoices with an unknown vendor
+(`⚠`). For each, the user adds the vendor in the app's Vendors tab; then rerun
+`vendors`. Never pass `--all-periods` unless the user asks for it: it rewrites
+invoices of every period, filed ones included.
 
 ### 4. Duplicates — `dedupe`
 

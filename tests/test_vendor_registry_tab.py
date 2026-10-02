@@ -61,7 +61,7 @@ def test_apply_button_writes_registry_defaults(vendors_db):
     assert row["tax_treatment"] == "INTRA_EU_RC"
     assert row["deductible_pct_irpf"] == 50.0
     assert row["activity_type"] == "NEWSLETTER"
-    assert any("Matched 1 of 2" in s.value for s in at.success)
+    assert any("Matched 1 of 2" in s.value and "Updated per period: 2025 Q1: 1" in s.value for s in at.success)
 
 
 def test_ledger_shows_unknown_vendor_metric(vendors_db):

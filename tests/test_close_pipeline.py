@@ -221,6 +221,55 @@ def test_vendors_applies_registry_and_lists_unknown(ctx, isolated_vendor_registr
     assert second.warnings == first.warnings  # the review list is repeated, not a change
 
 
+def _registry(path: Path, treatment: str) -> None:
+    path.write_text(json.dumps({"vendors": [{
+        "key": "example cloud", "country": "IE", "default_tax_treatment": treatment,
+    }]}), encoding="utf-8")
+
+
+def test_vendors_writes_only_the_selected_quarter(ctx, isolated_vendor_registry):
+    """#155: a changed vendor default must not re-treat invoices of other (filed) periods."""
+    for name, when in (("q1.pdf", "2025-02-10"), ("prev.pdf", "2024-11-05"), ("next.pdf", "2025-05-02")):
+        upsert_invoice({"filename": f"Example Cloud/{name}", "direction": "in", "invoice_date": when,
+                        "tax_treatment": "DOMESTIC"}, db_path=ctx.db_path)
+    _registry(isolated_vendor_registry, "INTRA_EU_RC")
+
+    res = cp.step_vendors(ctx)
+    rows = _rows(ctx)
+    assert rows["Example Cloud/q1.pdf"]["tax_treatment"] == "INTRA_EU_RC"
+    assert rows["Example Cloud/prev.pdf"]["tax_treatment"] == "DOMESTIC"
+    assert rows["Example Cloud/next.pdf"]["tax_treatment"] == "DOMESTIC"
+    assert len(res.changes) == 1 and "1 expense invoice(s)" in res.changes[0]
+
+    # Opt-in: every period, reported per year/quarter.
+    everywhere = cp.step_vendors(ctx, all_periods=True)
+    assert {r["tax_treatment"] for r in _rows(ctx).values()} == {"INTRA_EU_RC"}
+    assert any("2024 Q4: 1" in line and "2025 Q2: 1" in line for line in everywhere.changes)
+    _assert_noop(cp.step_vendors(ctx, all_periods=True))
+
+
+def test_vendors_never_rewrites_a_filed_quarter_without_opt_in(ctx, isolated_vendor_registry):
+    upsert_invoice({"filename": "Example Cloud/q1.pdf", "direction": "in", "invoice_date": "2025-02-10",
+                    "tax_treatment": "DOMESTIC"}, db_path=ctx.db_path)
+    conn = sqlite3.connect(str(ctx.db_path))
+    try:
+        conn.execute("INSERT INTO tax_computation_snapshots (year, quarter, model, status, payload_json) "
+                     "VALUES (2025, 1, '303', 'FILED', '{}')")
+        conn.commit()
+    finally:
+        conn.close()
+    _registry(isolated_vendor_registry, "INTRA_EU_RC")
+
+    res = cp.step_vendors(ctx)
+    _assert_noop(res)
+    assert any("FILED" in w and "--all-periods" in w for w in res.warnings)
+    assert _rows(ctx)["Example Cloud/q1.pdf"]["tax_treatment"] == "DOMESTIC"
+
+    forced = cp.step_vendors(ctx, all_periods=True)
+    assert any("2025 Q1 (FILED): 1" in c for c in forced.changes)
+    assert _rows(ctx)["Example Cloud/q1.pdf"]["tax_treatment"] == "INTRA_EU_RC"
+
+
 # ---------------------------------------------------------------------------
 # 4. dedupe
 # ---------------------------------------------------------------------------

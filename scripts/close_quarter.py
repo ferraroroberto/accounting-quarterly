@@ -13,7 +13,9 @@ step is idempotent and prints what it changed ("no changes" on a re-run):
                   the vendor registry. A failing file is reported and retried
                   next run. --dry-run lists them; --model overrides the hub
                   model (else LLM_HUB_MODEL, else gemini_pro).
-    vendors       Apply the vendor registry; list the quarter's unknown vendors (⚠).
+    vendors       Apply the vendor registry to the quarter's expense invoices (none
+                  when the quarter is FILED); list its unknown vendors (⚠).
+                  --all-periods re-applies it everywhere, with per-period counts.
     dedupe        Duplicate / receipt / out-of-period groups (out-of-period =
                   swept files dated outside the quarter). Writes only with --apply.
     fx            Backfill ECB rates to today, then re-resolve the quarter's
@@ -159,7 +161,7 @@ def cmd_ocr(args: argparse.Namespace) -> int:
 
 
 def cmd_vendors(args: argparse.Namespace) -> int:
-    return _emit(step_vendors(_context(args)))
+    return _emit(step_vendors(_context(args), all_periods=args.all_periods))
 
 
 def cmd_dedupe(args: argparse.Namespace) -> int:
@@ -448,7 +450,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ocr.add_argument("--model", default=None,
                        help="Hub model id/alias (overrides LLM_HUB_MODEL; default gemini_pro)")
 
-    add_step("vendors", cmd_vendors, "3. Apply the vendor registry and list unknown vendors")
+    p_vendors = add_step("vendors", cmd_vendors, "3. Apply the vendor registry to the quarter; list unknown vendors")
+    p_vendors.add_argument("--all-periods", action="store_true",
+                           help="Re-apply the registry to every period, filed ones included; "
+                                "prints the rows written per year/quarter")
 
     p_dedupe = add_step("dedupe", cmd_dedupe, "4. Duplicate/receipt/out-of-period review")
     p_dedupe.add_argument("--apply", action="store_true", help="Write the proposed exclusions")

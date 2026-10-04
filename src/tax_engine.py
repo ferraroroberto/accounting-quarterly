@@ -703,7 +703,9 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
                 continue
             else:
                 base_rest, iva_rest = base, iva
-            if iva_rest > 0:
+            # Only a zero-VAT remainder adds nothing; a negative one is a received
+            # rectificativa and must net off the quarter's 28/29 (#161).
+            if iva_rest != 0:
                 col.acc["c28_base"] += base_rest * pct
                 col.acc["c29_cuota"] += iva_rest * pct
                 col.records["c28_base"].append({**rec, "c29_cuota": round(iva_rest * pct, 2)})

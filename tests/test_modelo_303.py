@@ -309,6 +309,28 @@ def test_capital_good_at_20pct_in_30_31_not_in_28_29(conn):
     assert (r.c30_base, r.c31_cuota) == (pytest.approx(700.0), pytest.approx(147.0))
 
 
+def test_rectificativa_nets_into_28_29(conn):
+    # #161: a received credit note (negative base and VAT) reduces the deductible
+    # VAT of its quarter instead of being skipped.
+    _inv(conn, "inv", "in", "2025-05-02", 100.0, "DOMESTIC", iva=21.0, rate=21)
+    _inv(conn, "cn", "in", "2025-05-20", -50.0, "DOMESTIC", iva=-10.5, rate=21)
+    r = compute_modelo_303(2025, 2, conn)
+    assert (r.c28_base, r.c29_cuota) == (pytest.approx(50.0), pytest.approx(10.5))
+
+
+def test_rectificativa_applies_the_deductible_pct(conn):
+    _inv(conn, "inv", "in", "2025-05-02", 100.0, "DOMESTIC", iva=21.0, rate=21, pct=50)
+    _inv(conn, "cn", "in", "2025-05-20", -50.0, "DOMESTIC", iva=-10.5, rate=21, pct=50)
+    r = compute_modelo_303(2025, 2, conn)
+    assert (r.c28_base, r.c29_cuota) == (pytest.approx(25.0), pytest.approx(5.25))
+
+
+def test_zero_vat_domestic_row_adds_nothing_to_28_29(conn):
+    _inv(conn, "zero", "in", "2025-05-02", 100.0, "DOMESTIC", iva=0.0, rate=0)
+    r = compute_modelo_303(2025, 2, conn)
+    assert (r.c28_base, r.c29_cuota) == (0.0, 0.0)
+
+
 def test_unregistered_capital_invoice_uses_the_invoice(conn):
     _inv(conn, "cap", "in", "2025-06-09", 4000.0, "DOMESTIC_CAPITAL", iva=840.0, rate=21, pct=50)
     r = compute_modelo_303(2025, 2, conn)

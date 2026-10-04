@@ -166,6 +166,18 @@ class TestModelo390RateRows:
         assert (b["603"], b["604"]) == (200.0, 15.0)
         assert "7.5" in m.notes
 
+    def test_credit_note_lands_negative_on_its_invoices_rate_row(self, conn):
+        # #161: a received rectificativa nets off on the rate row of the invoice it
+        # corrects (here 10 %, in a later quarter), next to an untouched 21 % row.
+        _inv(conn, "ten", "in", "2025-02-10", 100.0, "DOMESTIC", iva=10.0, rate=10)
+        _inv(conn, "ten_cn", "in", "2025-05-10", -40.0, "DOMESTIC", iva=-4.0, rate=10)
+        _inv(conn, "twenty_one", "in", "2025-05-11", 200.0, "DOMESTIC", iva=42.0, rate=21)
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=quarters).aeat_boxes()
+        assert (b["603"], b["604"]) == (60.0, 6.0)
+        assert (b["605"], b["606"]) == (200.0, 42.0)
+        assert (b["48"], b["49"]) == (260.0, 48.0)
+
     def test_platform_fees_in_reverse_charge_and_deductible_21_rows(self, conn):
         # #147: Stripe application fees are a NON_EU_RC purchase — 27/28 and the 21 % deductible row,
         # next to a 10 % domestic invoice that must stay in its own row.

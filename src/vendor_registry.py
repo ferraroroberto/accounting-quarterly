@@ -49,18 +49,20 @@ from typing import IO, Any, Iterable, Optional
 
 from src._json_store import JsonCache
 from src.database import (
-    TAX_TREATMENTS_IN,
-    _EU_VAT_PREFIXES,  # the one EU-country list; shared rather than duplicated
-    derive_geo_region_from_nif,
     filed_snapshot_periods,
     get_connection,
     init_db,
-    legacy_vat_treatment_for,
-    normalize_vat_id,
     parse_locked_fields,
     upsert_invoice,
 )
 from src.logger import get_logger
+from src.tax_codes import (
+    EU_VAT_PREFIXES,  # the one EU-country list; shared rather than duplicated
+    TAX_TREATMENTS_IN,
+    derive_geo_region_from_nif,
+    legacy_vat_treatment_for,
+    normalize_vat_id,
+)
 
 log = get_logger(__name__)
 
@@ -216,7 +218,7 @@ class Vendor:
         if self.country:
             if self.country == "ES":
                 return "SPAIN"
-            return "EU_NOT_SPAIN" if self.country in _EU_VAT_PREFIXES else "OUTSIDE_EU"
+            return "EU_NOT_SPAIN" if self.country in EU_VAT_PREFIXES else "OUTSIDE_EU"
         return derive_geo_region_from_nif(self.vat_id) if self.vat_id else None
 
 

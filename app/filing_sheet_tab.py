@@ -13,6 +13,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from app.year_picker import year_input
 from src.database import get_connection
 from src.filing_sheet import (
     SOURCES,
@@ -64,7 +65,7 @@ def _render_period_picker() -> tuple[int, int, bool]:
     year0, q0 = _default_period()
     col_year, col_quarter, col_zero = st.columns([1, 1, 2])
     with col_year:
-        year = int(st.number_input("Year", min_value=2020, max_value=2035, value=year0, step=1, key="fs_year"))
+        year = year_input("fs_year", year0)
     with col_quarter:
         quarter = st.selectbox("Quarter", options=[1, 2, 3, 4], index=q0 - 1,
                                format_func=lambda q: f"Q{q}", key="fs_quarter")

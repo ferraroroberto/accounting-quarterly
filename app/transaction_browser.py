@@ -6,7 +6,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import first_data_year, get_classified_for_period, invalidate_cache
+from app.data_loader import get_classified_for_period, invalidate_cache
+from app.year_picker import year_choices
 from src.periods import quarter_datetime_bounds
 from src.classifier import eur_default_foreign_warning
 from src.database import (
@@ -21,13 +22,12 @@ def render() -> None:
     """Render the Transaction Browser tab."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
-    first_year = first_data_year()
-    year_choices = list(range(first_year, current_year + 2))
+    year_options = year_choices()
     with col1:
         year = st.selectbox(
             "Year",
-            year_choices,
-            index=year_choices.index(current_year) if current_year in year_choices else 0,
+            year_options,
+            index=year_options.index(current_year) if current_year in year_options else 0,
             key="tb_year",
         )
     with col2:

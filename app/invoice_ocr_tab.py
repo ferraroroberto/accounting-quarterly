@@ -17,7 +17,7 @@ from src.database import (
     get_invoices,
     parse_locked_fields,
 )
-from src.fx_rates import STALE_TOLERANCE_DAYS
+from src.fx_rates import FX_CROSS_CHECK_THRESHOLD_PCT, STALE_TOLERANCE_DAYS
 from src.invoice_ingest import extract_and_save, list_invoice_files, needs_extraction
 from src.logger import get_logger
 from src.vendor_registry import load_registry
@@ -161,7 +161,7 @@ def _render_invoice_fields(rec: dict) -> None:
                 if rec.get("fx_stale"):
                     st.warning(f"⚠️ Stale FX rate (fallback more than {STALE_TOLERANCE_DAYS} days from the invoice date).")
                 diff_pct = rec.get("fx_cross_check_diff_pct")
-                if diff_pct is not None and diff_pct > 1.0:
+                if diff_pct is not None and diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
                     st.warning(f"⚠️ LLM's own EUR estimate differs from the {fx_source} conversion by {diff_pct:.1f}%.")
         st.markdown("**Tax treatment**")
         if rec.get("direction") == "in":

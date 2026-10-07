@@ -29,8 +29,8 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Optional
 
-from src.database import normalize_vat_id
 from src.logger import get_logger
+from src.tax_codes import normalize_vat_id
 from src.tax_models import AuditEntry
 
 log = get_logger(__name__)

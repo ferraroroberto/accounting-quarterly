@@ -54,6 +54,7 @@ from src.excel_exporter import create_excel_report, generate_report_filename
 from src.exceptions import ReportAlreadyFrozenError
 from src.filing_sheet import render_filing_sheet
 from src.fx_rates import (
+    FX_CROSS_CHECK_THRESHOLD_PCT,
     STALE_TOLERANCE_DAYS,
     backfill_to_today,
     get_rate_count,
@@ -461,7 +462,7 @@ def step_fx(ctx: CloseContext, apply: bool = False) -> StepResult:
     if rc.stale:
         res.warnings.append(f"{rc.stale} invoice(s) resolved on a stale ECB rate (> {STALE_TOLERANCE_DAYS} days away)")
     if rc.cross_check_flagged:
-        res.warnings.append(f"{rc.cross_check_flagged} invoice(s) differ > 1% from the document's own EUR figure")
+        res.warnings.append(f"{rc.cross_check_flagged} invoice(s) differ > {FX_CROSS_CHECK_THRESHOLD_PCT:g}% from the document's own EUR figure")
     return res
 
 

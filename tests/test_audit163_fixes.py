@@ -7,8 +7,9 @@ from streamlit.testing.v1 import AppTest
 import src.database as database
 from src import invoice_ocr
 from src.config import save_stripe_api_key
-from src.database import derive_geo_region_from_nif, get_uploaded_files, init_db, record_upload
+from src.database import get_uploaded_files, init_db, record_upload
 from src.exceptions import ConfigError, StaleClassificationError
+from src.tax_codes import derive_geo_region_from_nif
 
 
 # --- Greek VAT prefix -------------------------------------------------------
@@ -190,7 +191,9 @@ def test_transaction_browser_reloads_when_the_period_changes(monkeypatch):
         calls.append((year, quarter))
         return []
 
-    monkeypatch.setattr(tab, "first_data_year", lambda: 2024)
+    import app.year_picker as year_picker
+
+    monkeypatch.setattr(year_picker, "first_data_year", lambda: 2024)
     monkeypatch.setattr(tab, "get_classified_for_period", loader)
     monkeypatch.setattr(tab, "get_transaction_count_db", lambda *a, **k: 0)
     monkeypatch.setattr(tab, "search_transactions_raw", lambda *a, **k: [])

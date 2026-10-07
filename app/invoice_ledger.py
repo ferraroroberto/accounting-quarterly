@@ -15,16 +15,14 @@ import streamlit as st
 from app.fixed_assets_tab import render_register_from_invoice
 from app.flash import flash, show_flash
 from src.database import (
-    EXCLUDED_REASONS,
-    TAX_TREATMENTS_IN,
-    TAX_TREATMENTS_OUT,
     get_invoices,
     parse_locked_fields,
     unlock_invoice_fields,
     update_invoice_fields,
 )
-from src.fx_rates import get_exchange_differences, record_exchange_difference
+from src.fx_rates import FX_CROSS_CHECK_THRESHOLD_PCT, get_exchange_differences, record_exchange_difference
 from src.logger import get_logger
+from src.tax_codes import EXCLUDED_REASONS, TAX_TREATMENTS_IN, TAX_TREATMENTS_OUT
 from src.vendor_registry import load_registry
 
 log = get_logger(__name__)
@@ -160,7 +158,7 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
             "fx_source": st.column_config.TextColumn("FX source", help="How the EUR figure was resolved (#93)"),
             "fx_stale": st.column_config.CheckboxColumn("FX stale", help="ECB rate fell back to an old date"),
             "fx_cross_check_diff_pct": st.column_config.NumberColumn(
-                "FX diff %", format="%.1f", help="LLM estimate vs resolved EUR — flagged above 1%",
+                "FX diff %", format="%.1f", help=f"LLM estimate vs resolved EUR — flagged above {FX_CROSS_CHECK_THRESHOLD_PCT:g}%",
             ),
         },
     )
@@ -270,7 +268,7 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
                 if rec.get("fx_stale"):
                     st.warning("⚠️ Stale ECB fallback rate — review before relying on this figure.")
                 diff_pct = rec.get("fx_cross_check_diff_pct")
-                if diff_pct is not None and diff_pct > 1.0:
+                if diff_pct is not None and diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
                     st.warning(f"⚠️ LLM's own EUR estimate differs from the resolved amount by {diff_pct:.1f}%.")
         with c_tax:
             st.markdown("*Tax treatment*")
@@ -460,8 +458,8 @@ def render() -> None:
     m4.metric("Unreviewed", int(view["reviewed_at"].isna().sum()))
     n_unknown = int((view["vendor"] == UNKNOWN_VENDOR).sum()) if "vendor" in view else 0
     m5.metric("⚠ Unknown vendor", n_unknown if direction == "in" else "—")
-    fx_flagged = int(view["fx_stale"].sum()) + int((view["fx_cross_check_diff_pct"].fillna(0) > 1.0).sum())
-    m6.metric("FX flags", fx_flagged, help="Stale ECB fallback, or LLM estimate off by more than 1%")
+    fx_flagged = int(view["fx_stale"].sum()) + int((view["fx_cross_check_diff_pct"].fillna(0) > FX_CROSS_CHECK_THRESHOLD_PCT).sum())
+    m6.metric("FX flags", fx_flagged, help=f"Stale ECB fallback, or LLM estimate off by more than {FX_CROSS_CHECK_THRESHOLD_PCT:g}%")
 
     if view.empty:
         st.warning("No invoices match the current filters.")

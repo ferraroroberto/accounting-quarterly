@@ -48,6 +48,23 @@ _PERIOD_RE = re.compile(r"^(?:[1-4]T|0A|0[1-9]|1[0-2])$")
 # An amount and its box label count as the same row when their vertical
 # centres are within this many points (labels are 6.5pt, values 9pt).
 ROW_TOLERANCE_PT = 7.0
+# The other layout tolerances of the receipt parser, all in PDF points. Each is a slack that lets a word
+# still match its label or column when the printed positions are a hair off; widen one only to adapt the
+# parser to a new receipt layout.
+# A value may begin this far before the right edge of the label to its left (glyph boxes overlap slightly).
+LABEL_OVERLAP_PT = 2
+# A value may begin this far left of its label's left edge when the value sits below the label.
+LABEL_LEFT_SLACK_PT = 5
+# Vertical gap under which two words count as on the same text line.
+SAME_LINE_PT = 3
+# Farthest a value may sit below its label (one printed line of the form's value cell).
+VALUE_BELOW_MAX_PT = 16.0
+# 349 operator table: a word may start this far left of the NIF / name column header and still belong to it.
+OPERATOR_COLUMN_SLACK_PT = 2
+# Same, for the key and base columns.
+OPERATOR_KEY_BASE_SLACK_PT = 5
+# Words closer than this to the next block's header row belong to that block, not the current operator.
+OPERATOR_BLOCK_END_MARGIN_PT = 1
 
 # Modelo 303 "Tipo %" boxes: the form prints the fixed VAT/recargo rate in them
 # whether or not the row is used, so they carry no declared value.
@@ -159,7 +176,7 @@ def _label_left_of(value: dict, labels: list[dict], row_tolerance: float) -> Opt
     cy = _center_y(value)
     cands = [
         b for b in labels
-        if abs(_center_y(b) - cy) <= row_tolerance and b["x1"] <= value["x0"] + 2
+        if abs(_center_y(b) - cy) <= row_tolerance and b["x1"] <= value["x0"] + LABEL_OVERLAP_PT
     ]
     if not cands:
         return None
@@ -210,18 +227,18 @@ def pair_boxes(
 
 
 def find_value_near_label(
-    words: list[dict], label_re: re.Pattern, value_re: re.Pattern, max_below: float = 16.0
+    words: list[dict], label_re: re.Pattern, value_re: re.Pattern, max_below: float = VALUE_BELOW_MAX_PT
 ) -> Optional[str]:
     """First word matching ``value_re`` right of / just below a ``label_re`` word."""
     for label in (w for w in words if label_re.match(w["text"])):
         cands = [
             w for w in words
             if value_re.match(w["text"])
-            and w["x0"] >= label["x0"] - 5
-            and label["top"] - 3 <= w["top"] <= label["top"] + max_below
+            and w["x0"] >= label["x0"] - LABEL_LEFT_SLACK_PT
+            and label["top"] - SAME_LINE_PT <= w["top"] <= label["top"] + max_below
         ]
         if cands:
-            best = min(cands, key=lambda w: (abs(w["top"] - label["top"]) > 3, w["x0"] - label["x0"]))
+            best = min(cands, key=lambda w: (abs(w["top"] - label["top"]) > SAME_LINE_PT, w["x0"] - label["x0"]))
             return best["text"]
     return None
 
@@ -259,7 +276,7 @@ def parse_349_operators(words: list[dict]) -> list[Operator349]:
     ops: list[Operator349] = []
     headers = []
     for clave in (w for w in words if w["text"] == "Clave"):
-        row = [w for w in words if abs(_center_y(w) - _center_y(clave)) <= 3]
+        row = [w for w in words if abs(_center_y(w) - _center_y(clave)) <= SAME_LINE_PT]
         by_text = {w["text"]: w for w in row}
         if {"Base", "NIF", "Apellidos"} <= by_text.keys():
             headers.append((clave, by_text))
@@ -271,13 +288,13 @@ def parse_349_operators(words: list[dict]) -> list[Operator349]:
         start = max(w["bottom"] for w in hdr.values())
         end = next((s for s in stops if s > start), float("inf"))
         block = sorted(
-            (w for w in words if start < w["top"] < end - 1),
+            (w for w in words if start < w["top"] < end - OPERATOR_BLOCK_END_MARGIN_PT),
             key=lambda w: (round(w["top"]), w["x0"]),
         )
-        nif_x = hdr["NIF"]["x0"] - 2
-        name_x = hdr["Apellidos"]["x0"] - 2
-        key_x = clave["x0"] - 5
-        base_x = hdr["Base"]["x0"] - 5
+        nif_x = hdr["NIF"]["x0"] - OPERATOR_COLUMN_SLACK_PT
+        name_x = hdr["Apellidos"]["x0"] - OPERATOR_COLUMN_SLACK_PT
+        key_x = clave["x0"] - OPERATOR_KEY_BASE_SLACK_PT
+        base_x = hdr["Base"]["x0"] - OPERATOR_KEY_BASE_SLACK_PT
         cols: dict[str, list[str]] = {"country": [], "vat": [], "name": [], "key": [], "base": []}
         for w in block:
             x = w["x0"]

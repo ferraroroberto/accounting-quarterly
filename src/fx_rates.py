@@ -28,6 +28,10 @@ SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF", "AUD"]
 # nobody has loaded fresh data and the figure should be reviewed.
 STALE_TOLERANCE_DAYS = 5
 
+# The model's own EUR estimate is flagged when it differs from the resolved EUR figure by more than this
+# many percent: past it the gap is a real conversion error, below it just rounding between rate sources.
+FX_CROSS_CHECK_THRESHOLD_PCT = 1.0
+
 # The default start date used when backfilling a currency that has no stored
 # rates yet (mirrors the Currency tab's own default range start).
 _BACKFILL_DEFAULT_START = date(2023, 7, 1)
@@ -550,7 +554,7 @@ def resolve_invoice_amounts(
     warning = None
     if llm_total and total_new:
         diff_pct = round(abs(llm_total - total_new) / total_new * 100, 2)
-        if diff_pct > 1.0:
+        if diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
             warning = (
                 f"⚠️ LLM EUR estimate ({llm_total:.2f}) differs from the {fx_source} "
                 f"conversion ({total_new:.2f}) by {diff_pct:.1f}%"
@@ -693,7 +697,7 @@ def recompute_stored_invoice_fx(
 
             if fx.fx_stale:
                 stale += 1
-            if fx.fx_cross_check_diff_pct is not None and fx.fx_cross_check_diff_pct > 1.0:
+            if fx.fx_cross_check_diff_pct is not None and fx.fx_cross_check_diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
                 cross_check_flagged += 1
 
             new_values = {

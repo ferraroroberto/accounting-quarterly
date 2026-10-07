@@ -11,6 +11,7 @@ from typing import Optional
 
 from src.logger import get_logger
 from src.periods import quarter_iso_bounds
+from src.tax_deadlines import calendar_deadline
 from src.tax_codes import derive_tax_treatment_for_invoice
 from src.tax_data import (
     activity_start_date,
@@ -46,7 +47,6 @@ from src.tax_models import (
     OSSCountryRow,
     OSSReturnResult,
     TaxDeadline,
-    _tax_deadline_date,
 )
 from src.declared_reports import apply_frozen_amounts
 from src.fixed_assets import DepreciationResult, capital_asset_invoice_ids, depreciation_for_period
@@ -1650,7 +1650,7 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
     # Quarterly models
     for model in ("303", "130", "349", "OSS"):
         for q in range(1, 5):
-            ddl = _tax_deadline_date(model, year, q)
+            ddl = calendar_deadline(model, year, q)
             key = f"{model}_{q}"
             rec = filed_lookup.get(key, {})
             deadlines.append(TaxDeadline(
@@ -1665,7 +1665,7 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
 
     # Annual models
     for model in ("390", "347"):
-        ddl = _tax_deadline_date(model, year, 1)
+        ddl = calendar_deadline(model, year)
         key = f"{model}_annual"
         rec = filed_lookup.get(key, {})
         deadlines.append(TaxDeadline(

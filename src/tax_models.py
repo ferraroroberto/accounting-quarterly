@@ -24,24 +24,6 @@ OSS_RATES: dict[str, float] = {
     "DEFAULT_EU": 0.21,
 }
 
-# Deadline dates per model / quarter for status computation
-def _tax_deadline_date(model: str, year: int, quarter: int) -> date:
-    """Return the actual deadline date for a given tax model, year, and quarter."""
-    if model in ("303", "130", "349"):
-        ends = {1: date(year, 4, 20), 2: date(year, 7, 20),
-                3: date(year, 10, 20), 4: date(year + 1, 1, 30)}
-        return ends[quarter]
-    if model == "OSS":
-        ends = {1: date(year, 4, 30), 2: date(year, 7, 31),
-                3: date(year, 10, 31), 4: date(year + 1, 1, 31)}
-        return ends[quarter]
-    if model == "390":
-        return date(year + 1, 1, 30)
-    if model == "347":
-        return date(year + 1, 2, 28)
-    return date(year, 12, 31)
-
-
 Q4NegativeResult = Literal["compensate", "refund"]
 
 # AEAT Modelo 303 box number -> Modelo303Result field, in the order the boxes

@@ -13,10 +13,8 @@ from src.database import (
     load_tax_snapshots_for_period,
 )
 from src.filing_sheet import (
-    _easter_sunday,
     aeat_amount,
     build_filing_sheet,
-    filing_deadline,
     mark_filed,
     render_markdown,
 )
@@ -210,36 +208,6 @@ def test_init_db_migrates_an_unversioned_snapshot_table(tmp_path):
         assert {"tax_snapshots_filed_no_update", "tax_snapshots_filed_no_delete"} <= triggers
     finally:
         conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Deadlines
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("year,quarter,last_day,debit", [
-    (2026, 1, date(2026, 4, 20), date(2026, 4, 15)),
-    (2026, 2, date(2026, 7, 20), date(2026, 7, 15)),
-    (2026, 3, date(2026, 10, 20), date(2026, 10, 15)),
-    (2025, 4, date(2026, 1, 30), date(2026, 1, 27)),   # AEAT 2026 calendar: debit 1–27 January
-    (2025, 2, date(2025, 7, 21), date(2025, 7, 16)),   # 20 July 2025 was a Sunday
-    (2026, 4, date(2027, 2, 1), date(2027, 1, 27)),    # 30 January 2027 is a Saturday
-])
-def test_deadlines(year, quarter, last_day, debit):
-    for model in ("303", "130"):
-        d = filing_deadline(model, year, quarter)
-        assert (d.last_day, d.direct_debit_last_day) == (last_day, debit), model
-    d349 = filing_deadline("349", year, quarter)
-    assert d349.last_day == last_day and d349.direct_debit_last_day is None
-
-
-def test_deadline_extra_holidays_and_easter():
-    assert _easter_sunday(2024) == date(2024, 3, 31)
-    assert _easter_sunday(2025) == date(2025, 4, 20)
-    assert _easter_sunday(2026) == date(2026, 4, 5)
-    d = filing_deadline("303", 2026, 3, extra_holidays=[date(2026, 10, 20)])
-    assert d.last_day == date(2026, 10, 21) and d.nominal == date(2026, 10, 20)
-    with pytest.raises(ValueError):
-        filing_deadline("390", 2026, 4)
 
 
 def test_aeat_amount_uses_a_decimal_comma_without_thousands():

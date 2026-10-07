@@ -424,3 +424,35 @@ def test_pack_exports_and_cli(conn, db, tmp_path, capsys, monkeypatch):
     assert {p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in written} == {
         "annual_pack_2025.md", "modelo_390_2025.csv", "modelo_347_2025.csv",
         "pl_by_activity_2025.csv", "pl_by_activity_lines_2025.csv"}
+
+
+class TestActivityStartNotes:
+    """One audit note per return lists everything ``tax.activity_start_date`` left out (#165)."""
+    CFG = {"tax": {"activity_start_date": "2025-02-15"}}
+
+    @pytest.fixture
+    def before_start(self, conn):
+        _tx(conn, "early", "2025-01-10", 1000.0)
+        _inv(conn, "early_out", "out", "2025-01-20", 400.0, "ES_21", iva=84.0, rate=21)
+        _inv(conn, "early_in", "in", "2025-01-25", 150.0, "DOMESTIC", iva=31.5, rate=21)
+
+    def test_303_note_names_each_source_with_count_and_total(self, conn, before_start):
+        notes = compute_modelo_303(YEAR, 1, conn, self.CFG).notes
+        assert "Dated before the activity start (2025-02-15) and left out of the 303: " in notes
+        assert "1 Stripe transaction(s) (1,210.00 EUR)" in notes
+        assert "1 issued invoice(s) (400.00 EUR)" in notes
+        assert "1 received invoice(s) (150.00 EUR)" in notes
+
+    def test_130_note_names_each_source_with_count_and_total(self, conn, before_start):
+        notes = compute_modelo_130(YEAR, 1, conn, self.CFG).notes
+        assert "Dated before the activity start (2025-02-15) and left out of the 130: " in notes
+        assert "1 Stripe transaction(s) (1,210.00 EUR)" in notes
+        assert "1 issued invoice(s) (400.00 EUR)" in notes
+        assert "1 received invoice(s) (150.00 EUR)" in notes
+
+    def test_no_note_without_a_floor_or_when_nothing_is_excluded(self, conn, before_start):
+        assert "activity start" not in compute_modelo_303(YEAR, 1, conn, {"tax": {}}).notes
+        assert "activity start" not in compute_modelo_130(YEAR, 1, conn, {"tax": {}}).notes
+        late = {"tax": {"activity_start_date": "2025-01-01"}}
+        assert "activity start" not in compute_modelo_303(YEAR, 1, conn, late).notes
+

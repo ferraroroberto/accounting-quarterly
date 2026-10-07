@@ -26,7 +26,6 @@ an empty list means the run was a no-op. Outputs go to the git-ignored
 """
 from __future__ import annotations
 
-import calendar
 import hashlib
 import json
 import shutil
@@ -36,6 +35,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from src.periods import quarter_datetime_bounds, quarter_iso_bounds
 from src.classifier import eur_default_foreign_warning, validate_classifications
 from src.database import (
     filed_snapshot_periods,
@@ -65,7 +65,6 @@ from src.invoice_dedupe import (
     find_duplicate_groups,
     find_numbering_conflicts,
     load_sweep_rows,
-    quarter_bounds,
 )
 from src.invoice_ingest import extract_and_save, pending_files
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
@@ -185,15 +184,12 @@ class CloseContext:
     @property
     def date_bounds(self) -> tuple[str, str]:
         """Inclusive ISO date bounds of the quarter."""
-        return quarter_bounds(self.year, self.quarter)
+        return quarter_iso_bounds(self.year, self.quarter)
 
     @property
     def datetime_bounds(self) -> tuple[datetime, datetime]:
         """Quarter start 00:00:00 and end 23:59:59 (the Stripe transaction window)."""
-        end_month = self.quarter * 3
-        last_day = calendar.monthrange(self.year, end_month)[1]
-        return (datetime(self.year, end_month - 2, 1),
-                datetime(self.year, end_month, last_day, 23, 59, 59))
+        return quarter_datetime_bounds(self.year, self.quarter)
 
     def previous_period(self) -> tuple[int, int]:
         return (self.year - 1, 4) if self.quarter == 1 else (self.year, self.quarter - 1)

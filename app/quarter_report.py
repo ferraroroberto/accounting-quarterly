@@ -6,8 +6,9 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import first_data_year, get_classified_for_period, quarter_dates
+from app.data_loader import first_data_year, get_classified_for_period
 from app.excel_download import render_excel_download
+from src.periods import quarter_datetime_bounds
 from src.aggregator import (
     build_monthly_table,
     calculate_grand_totals,
@@ -59,7 +60,7 @@ def render() -> None:
         else:
             quarter = None if quarter_opt == "Full Year" else int(quarter_opt[1])
             if quarter:
-                start_dt, end_dt = quarter_dates(year_for_filters, quarter)
+                start_dt, end_dt = quarter_datetime_bounds(year_for_filters, quarter)
             else:
                 start_dt, end_dt = datetime(year_for_filters, 1, 1), datetime(year_for_filters, 12, 31, 23, 59, 59)
 

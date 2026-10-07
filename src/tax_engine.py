@@ -1,7 +1,6 @@
 """Tax computation engine for Spanish autónomo obligations."""
 from __future__ import annotations
 
-import calendar
 import math
 import sqlite3
 from collections import defaultdict
@@ -11,6 +10,7 @@ from functools import partial
 from typing import Optional
 
 from src.logger import get_logger
+from src.periods import quarter_iso_bounds
 from src.tax_models import (
     MODELO130_BOX_FIELDS,
     AuditEntry,
@@ -119,6 +119,44 @@ def _excluded_by_activity_start(
     return (n, float(row[1])) if n else None
 
 
+# The records ``tax.activity_start_date`` can leave out, per source: the audit-note label, the table,
+# its date column, the EUR amount SQL and the filter that mirrors the matching loader's WHERE clause
+# (``_load_classified_range`` / the invoice loaders). One table, so the three notes stay in step with them.
+_ACTIVITY_START_SOURCES: dict[str, tuple[str, str, str, str, str]] = {
+    "stripe": ("Stripe transaction(s)", "transactions", "created_date",
+               "converted_amount - converted_amount_refunded",
+               "AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'"),
+    "income": ("issued invoice(s)", "invoices", "invoice_date",
+               "COALESCE(eur_received, subtotal_eur, 0)",
+               "AND direction = 'out' AND COALESCE(excluded, 0) = 0"),
+    "expense": ("received invoice(s)", "invoices", "invoice_date", "subtotal_eur",
+                "AND direction = 'in' AND COALESCE(excluded, 0) = 0"),
+}
+
+
+def _activity_start_note(
+    conn: sqlite3.Connection, config: Optional[dict], natural_start: str, ends: dict[str, str], model: str,
+) -> Optional[str]:
+    """Audit note for the records ``tax.activity_start_date`` left out of a ``model`` return.
+
+    ``ends`` maps each source in ``_ACTIVITY_START_SOURCES`` that feeds the return to the end bound
+    of its query. ``None`` when nothing was left out.
+    """
+    parts = []
+    for key, (label, table, date_col, amount_sql, where_extra) in _ACTIVITY_START_SOURCES.items():
+        if key not in ends:
+            continue
+        excl = _excluded_by_activity_start(
+            conn, config, natural_start, ends[key], table, date_col, amount_sql, where_extra)
+        if excl:
+            n, total = excl
+            parts.append(f"{n} {label} ({total:,.2f} EUR)")
+    if not parts:
+        return None
+    return (f"Dated before the activity start ({_activity_start_date(config)}) and left out of the {model}: "
+            + "; ".join(parts) + ".")
+
+
 # ---------------------------------------------------------------------------
 # Internal DB helpers
 # ---------------------------------------------------------------------------
@@ -152,9 +190,7 @@ def _load_classified_range(
 
 def _classified_quarter_end(year: int, quarter: int) -> str:
     """End bound (inclusive, end-of-day) for transaction queries up to ``quarter``."""
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    return f"{year}-{month_end:02d}-{last_day:02d}T23:59:59"
+    return f"{quarter_iso_bounds(year, quarter)[1]}T23:59:59"
 
 
 def _load_classified_for_quarter(
@@ -182,16 +218,6 @@ def _load_classified_ytd(
     end = _classified_quarter_end(year, quarter)
     start = _clamp_start(f"{year}-01-01", config)
     return _load_classified_range(start, end, conn)
-
-
-def _invoice_date_range(year: int, quarter: int) -> tuple[str, str]:
-    month_start = (quarter - 1) * 3 + 1
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    return (
-        f"{year}-{month_start:02d}-01",
-        f"{year}-{month_end:02d}-{last_day:02d}",
-    )
 
 
 def _load_expense_invoices_range(
@@ -231,7 +257,7 @@ def _load_expense_invoices_for_quarter(
     ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
     when set and later than the quarter start.
     """
-    start, end = _invoice_date_range(year, quarter)
+    start, end = quarter_iso_bounds(year, quarter)
     return _load_expense_invoices_range(_clamp_start(start, config), end, conn)
 
 
@@ -243,7 +269,7 @@ def _load_expense_invoices_ytd(
     ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
     from 1 January when set and later.
     """
-    _, end = _invoice_date_range(year, quarter)
+    _, end = quarter_iso_bounds(year, quarter)
     return _load_expense_invoices_range(_clamp_start(f"{year}-01-01", config), end, conn)
 
 
@@ -285,7 +311,7 @@ def _load_income_invoices_ytd(
     ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
     from 1 January when set and later.
     """
-    _, end = _invoice_date_range(year, quarter)
+    _, end = quarter_iso_bounds(year, quarter)
     return _load_income_invoices_range(_clamp_start(f"{year}-01-01", config), end, conn)
 
 
@@ -297,7 +323,7 @@ def _load_income_invoices_for_quarter(
     ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
     when set and later than the quarter start.
     """
-    start, end = _invoice_date_range(year, quarter)
+    start, end = quarter_iso_bounds(year, quarter)
     return _load_income_invoices_range(_clamp_start(start, config), end, conn)
 
 
@@ -570,26 +596,12 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
             "set one in the invoice ledger."
         )
 
-    month_start = (quarter - 1) * 3 + 1
-    natural_start = f"{year}-{month_start:02d}-01"
-    excl_stripe = _excluded_by_activity_start(
-        conn, config, natural_start, _classified_quarter_end(year, quarter),
-        "transactions", "created_date", "converted_amount - converted_amount_refunded",
-        "AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'")
-    excl_income = _excluded_by_activity_start(
-        conn, config, natural_start, _invoice_date_range(year, quarter)[1],
-        "invoices", "invoice_date", "COALESCE(eur_received, subtotal_eur, 0)",
-        "AND direction = 'out' AND COALESCE(excluded, 0) = 0")
-    parts = []
-    for label, excl in (("Stripe transaction(s)", excl_stripe), ("issued invoice(s)", excl_income)):
-        if excl:
-            n, total = excl
-            parts.append(f"{n} {label} ({total:,.2f} EUR)")
-    if parts:
-        col.notes.append(
-            f"Dated before the activity start ({_activity_start_date(config)}) and left out of the 303: "
-            + "; ".join(parts) + "."
-        )
+    natural_start = quarter_iso_bounds(year, quarter)[0]
+    note = _activity_start_note(
+        conn, config, natural_start,
+        {"stripe": _classified_quarter_end(year, quarter), "income": quarter_iso_bounds(year, quarter)[1]}, "303")
+    if note:
+        col.notes.append(note)
 
 
 def _platform_fee_vat_treatment(config: Optional[dict]) -> str:
@@ -769,16 +781,10 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             "but their base is missing from box 28 — re-enter them with the rate."
         )
 
-    natural_start, end = _invoice_date_range(year, quarter)
-    excl = _excluded_by_activity_start(
-        conn, config, natural_start, end, "invoices", "invoice_date", "subtotal_eur",
-        "AND direction = 'in' AND COALESCE(excluded, 0) = 0")
-    if excl:
-        n, total = excl
-        col.notes.append(
-            f"{n} received invoice(s) dated before the activity start "
-            f"({_activity_start_date(config)}) excluded, totalling {total:,.2f} EUR."
-        )
+    natural_start, end = quarter_iso_bounds(year, quarter)
+    note = _activity_start_note(conn, config, natural_start, {"expense": end}, "303")
+    if note:
+        col.notes.append(note)
 
 
 def _collect_303_quarter(year: int, quarter: int, conn: sqlite3.Connection,
@@ -886,7 +892,7 @@ def _previous_303_credit(year: int, quarter: int, conn: sqlite3.Connection,
         c87, c72 = filed.get("87", 0.0), filed.get("72", 0.0)
         return round(c87 + c72, 2), "filed", {"period": f"{py}-{pq}T", "filed_87": c87, "filed_72": c72}
     earliest = _earliest_303_activity(conn, config)
-    _, prev_end = _invoice_date_range(py, pq)
+    _, prev_end = quarter_iso_bounds(py, pq)
     if earliest is None or prev_end < earliest:
         return 0.0, "none", {"period": f"{py}-{pq}T", "reason": "no data before this period"}
     if depth >= _CREDIT_CHAIN_MAX_QUARTERS:
@@ -1206,7 +1212,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
                      config: Optional[dict]) -> _Collected130:
     """Gather income, real expenses and withholdings from 1 January to the quarter end."""
     col = _Collected130()
-    _, ytd_end = _invoice_date_range(year, quarter)
+    _, ytd_end = quarter_iso_bounds(year, quarter)
     ytd_start = f"{year}-01-01"
 
     # 01 — Stripe VAT bases (frozen declared amounts win, see _load_classified_range).
@@ -1275,28 +1281,8 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
 
     # Audit note: records dated before tax.activity_start_date that the YTD loaders
     # above left out of boxes 01/02 (issue #133).
-    excl_stripe = _excluded_by_activity_start(
-        conn, config, ytd_start, ytd_end, "transactions", "created_date",
-        "converted_amount - converted_amount_refunded",
-        "AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'")
-    excl_income = _excluded_by_activity_start(
-        conn, config, ytd_start, ytd_end, "invoices", "invoice_date",
-        "COALESCE(eur_received, subtotal_eur, 0)",
-        "AND direction = 'out' AND COALESCE(excluded, 0) = 0")
-    excl_expense = _excluded_by_activity_start(
-        conn, config, ytd_start, ytd_end, "invoices", "invoice_date", "subtotal_eur",
-        "AND direction = 'in' AND COALESCE(excluded, 0) = 0")
-    parts = []
-    for label, excl in (("Stripe transaction(s)", excl_stripe), ("issued invoice(s)", excl_income),
-                        ("received invoice(s)", excl_expense)):
-        if excl:
-            n, total = excl
-            parts.append(f"{n} {label} ({total:,.2f} EUR)")
-    if parts:
-        col.activity_start_note = (
-            f"Dated before the activity start ({_activity_start_date(config)}) and left out of the 130: "
-            + "; ".join(parts) + "."
-        )
+    col.activity_start_note = _activity_start_note(
+        conn, config, ytd_start, {"stripe": ytd_end, "income": ytd_end, "expense": ytd_end}, "130")
 
     # --- Audit records ------------------------------------------------------
     stripe_agg: dict[tuple, dict] = {}
@@ -1677,7 +1663,7 @@ def compute_modelo_349(
     registry = load_registry()
     # tax.activity_start_date (issue #133): purchases dated before it don't
     # belong to this business either, so the same lower bound applies here.
-    start, end = _invoice_date_range(year, quarter)
+    start, end = quarter_iso_bounds(year, quarter)
     start = _clamp_start(start, config)
     purchases = db_conn.execute(
         """SELECT id, filename, invoice_date AS tx_date, subtotal_eur, iva_amount,

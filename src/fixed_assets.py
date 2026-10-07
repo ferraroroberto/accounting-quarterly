@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any, Iterable, Optional
 
+from src.periods import quarter_date_bounds
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -177,11 +178,6 @@ def _d(value: str | date) -> date:
     return value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
 
 
-def _quarter_bounds(year: int, quarter: int) -> tuple[date, date]:
-    m_end = quarter * 3
-    return date(year, m_end - 2, 1), date(year, m_end, calendar.monthrange(year, m_end)[1])
-
-
 def _days_in_year(year: int) -> int:
     return 366 if calendar.isleap(year) else 365
 
@@ -295,7 +291,7 @@ def compute_depreciation(
     """
     if posting_mode not in POSTING_MODES:
         raise ValueError(f"posting_mode must be one of {POSTING_MODES}, got {posting_mode!r}")
-    q_start, q_end = _quarter_bounds(year, quarter)
+    q_start, q_end = quarter_date_bounds(year, quarter)
     p_start = date(year, 1, 1) if ytd else q_start
     result = DepreciationResult(
         year=year, quarter=quarter, ytd=ytd, posting_mode=posting_mode,
@@ -373,7 +369,7 @@ class CapitalGoodsVat:
 
 def compute_capital_goods_vat(assets: Iterable[FixedAsset], year: int, quarter: int) -> CapitalGoodsVat:
     """Box 30 = base × VAT business %, box 31 = VAT deducted, for capital goods acquired in the quarter."""
-    q_start, q_end = _quarter_bounds(year, quarter)
+    q_start, q_end = quarter_date_bounds(year, quarter)
     out = CapitalGoodsVat(year=year, quarter=quarter)
     for a in assets:
         if not a.vat_capital_good or not (q_start <= _d(a.acquisition_date) <= q_end):

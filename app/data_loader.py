@@ -8,12 +8,12 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import calendar
 from datetime import datetime
 from typing import Optional
 
 import streamlit as st
 
+from src.periods import quarter_datetime_bounds
 from src.classifier import classify_batch
 from src.fx_rates import convert_to_eur, init_fx_table
 from src.logger import get_logger
@@ -25,7 +25,6 @@ from src.stripe_client import fetch_charges
 log = get_logger(__name__)
 
 
-QUARTER_MONTHS = {1: (1, 3), 2: (4, 6), 3: (7, 9), 4: (10, 12)}
 
 # Fallback first year when no transactions are stored yet (e.g. a fresh DB).
 DEFAULT_FIRST_YEAR = 2023
@@ -40,14 +39,6 @@ def first_data_year(min_tx_dt: Optional[datetime] = None) -> int:
     if min_tx_dt is None:
         min_tx_dt, _ = get_transaction_date_bounds()
     return min_tx_dt.year if min_tx_dt else DEFAULT_FIRST_YEAR
-
-
-def quarter_dates(year: int, quarter: int) -> tuple[datetime, datetime]:
-    start_month, end_month = QUARTER_MONTHS[quarter]
-    last_day = calendar.monthrange(year, end_month)[1]
-    start = datetime(year, start_month, 1)
-    end = datetime(year, end_month, last_day, 23, 59, 59)
-    return start, end
 
 
 def load_payments_for_period_api(
@@ -106,7 +97,7 @@ def get_classified_for_period(
 
     if start_date is None or end_date is None:
         if quarter:
-            start_date, end_date = quarter_dates(year, quarter)
+            start_date, end_date = quarter_datetime_bounds(year, quarter)
         else:
             start_date = datetime(year, 1, 1)
             end_date = datetime(year, 12, 31, 23, 59, 59)

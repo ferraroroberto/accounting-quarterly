@@ -756,6 +756,43 @@ def _fee_split_changed(existing: sqlite3.Row, p: Payment) -> bool:
     return existing["fee_stripe"] != p.fee_stripe or existing["fee_application"] != p.fee_application
 
 
+# Every ``transactions`` column ``upsert_payments`` writes from a ``Payment`` (besides ``id``,
+# ``created_date`` and ``source``). One tuple drives the SELECT, INSERT, change check and UPDATE:
+# a new column is added here and on ``Payment``, nowhere else.
+_PAYMENT_COLUMNS = (
+    "converted_amount", "converted_amount_refunded", "description", "fee", "fee_stripe", "fee_application",
+    "currency", "payment_type_meta", "event_api_id_meta", "email_meta", "card_country", "billing_country",
+    "amount_original", "fx_rate",
+    "stripe_customer_id", "stripe_payment_intent_id", "stripe_balance_transaction_id", "stripe_invoice_id",
+    "raw_source_type", "raw_source_json",
+)
+# An unknown split (None) must never overwrite a known one: the UPDATE COALESCEs these.
+_PAYMENT_FEE_SPLIT_COLUMNS = ("fee_stripe", "fee_application")
+
+_PAYMENT_SELECT_SQL = f"SELECT id, {', '.join(_PAYMENT_COLUMNS)} FROM transactions WHERE id = ?"
+_PAYMENT_INSERT_SQL = (
+    f"INSERT INTO transactions (id, created_date, {', '.join(_PAYMENT_COLUMNS)}, source) "
+    f"VALUES ({', '.join('?' * (len(_PAYMENT_COLUMNS) + 3))})"
+)
+_PAYMENT_UPDATE_SQL = (
+    "UPDATE transactions SET "
+    + ", ".join(
+        f"{c} = COALESCE(?, {c})" if c in _PAYMENT_FEE_SPLIT_COLUMNS else f"{c} = ?"
+        for c in _PAYMENT_COLUMNS
+    )
+    + ", source = ?, updated_at = datetime('now') WHERE id = ?"
+)
+
+
+def _payment_values(p: Payment) -> dict:
+    """The ``_PAYMENT_COLUMNS`` values of ``p`` (``raw_source`` serialised to JSON)."""
+    values = {c: getattr(p, c) for c in _PAYMENT_COLUMNS if c != "raw_source_json"}
+    values["raw_source_json"] = (
+        json.dumps(p.raw_source, ensure_ascii=False, default=str) if p.raw_source else None
+    )
+    return values
+
+
 def upsert_payments(payments: list[Payment], source: str = "api",
                     db_path: Optional[str | Path] = None) -> tuple[int, int]:
     """Insert or update payments. Returns (inserted, updated) counts."""
@@ -765,105 +802,19 @@ def upsert_payments(payments: list[Payment], source: str = "api",
     try:
         _ensure_transactions_schema(conn)
         for p in payments:
-            existing = conn.execute(
-                "SELECT id, converted_amount, converted_amount_refunded, description, fee, "
-                "fee_stripe, fee_application, currency, payment_type_meta, event_api_id_meta, email_meta, card_country, billing_country, "
-                "amount_original, fx_rate, "
-                "stripe_customer_id, stripe_payment_intent_id, stripe_balance_transaction_id, stripe_invoice_id, "
-                "raw_source_type, raw_source_json "
-                "FROM transactions WHERE id = ?",
-                (p.id,),
-            ).fetchone()
+            existing = conn.execute(_PAYMENT_SELECT_SQL, (p.id,)).fetchone()
+            values = _payment_values(p)
+            params = tuple(values[c] for c in _PAYMENT_COLUMNS)
 
             if existing is None:
-                raw_json = json.dumps(p.raw_source, ensure_ascii=False, default=str) if p.raw_source else None
-                conn.execute("""
-                    INSERT INTO transactions
-                        (id, created_date, converted_amount, converted_amount_refunded,
-                         description, fee, fee_stripe, fee_application, currency, payment_type_meta,
-                         event_api_id_meta, email_meta, card_country, billing_country,
-                         amount_original, fx_rate,
-                         stripe_customer_id, stripe_payment_intent_id,
-                         stripe_balance_transaction_id, stripe_invoice_id,
-                         raw_source_type, raw_source_json,
-                         source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    p.id,
-                    p.created_date.isoformat(),
-                    p.converted_amount,
-                    p.converted_amount_refunded,
-                    p.description,
-                    p.fee,
-                    p.fee_stripe,
-                    p.fee_application,
-                    p.currency,
-                    p.payment_type_meta,
-                    p.event_api_id_meta,
-                    p.email_meta,
-                    p.card_country,
-                    p.billing_country,
-                    p.amount_original,
-                    p.fx_rate,
-                    p.stripe_customer_id,
-                    p.stripe_payment_intent_id,
-                    p.stripe_balance_transaction_id,
-                    p.stripe_invoice_id,
-                    p.raw_source_type,
-                    raw_json,
-                    source,
-                ))
+                conn.execute(_PAYMENT_INSERT_SQL, (p.id, p.created_date.isoformat(), *params, source))
                 inserted += 1
             else:
-                raw_json = json.dumps(p.raw_source, ensure_ascii=False, default=str) if p.raw_source else None
-                changed = (
-                    existing["converted_amount"] != p.converted_amount
-                    or existing["converted_amount_refunded"] != p.converted_amount_refunded
-                    or existing["description"] != p.description
-                    or existing["fee"] != p.fee
-                    or _fee_split_changed(existing, p)
-                    or existing["currency"] != p.currency
-                    or existing["payment_type_meta"] != p.payment_type_meta
-                    or existing["event_api_id_meta"] != p.event_api_id_meta
-                    or existing["email_meta"] != p.email_meta
-                    or existing["card_country"] != p.card_country
-                    or existing["billing_country"] != p.billing_country
-                    or existing["amount_original"] != p.amount_original
-                    or existing["fx_rate"] != p.fx_rate
-                    or existing["stripe_customer_id"] != p.stripe_customer_id
-                    or existing["stripe_payment_intent_id"] != p.stripe_payment_intent_id
-                    or existing["stripe_balance_transaction_id"] != p.stripe_balance_transaction_id
-                    or existing["stripe_invoice_id"] != p.stripe_invoice_id
-                    or existing["raw_source_type"] != p.raw_source_type
-                    or existing["raw_source_json"] != raw_json
+                changed = _fee_split_changed(existing, p) or any(
+                    existing[c] != values[c] for c in _PAYMENT_COLUMNS if c not in _PAYMENT_FEE_SPLIT_COLUMNS
                 )
                 if changed:
-                    conn.execute("""
-                        UPDATE transactions SET
-                            converted_amount = ?, converted_amount_refunded = ?,
-                            description = ?, fee = ?,
-                            fee_stripe = COALESCE(?, fee_stripe),
-                            fee_application = COALESCE(?, fee_application),
-                            currency = ?,
-                            payment_type_meta = ?, event_api_id_meta = ?,
-                            email_meta = ?, card_country = ?, billing_country = ?,
-                            amount_original = ?, fx_rate = ?,
-                            stripe_customer_id = ?, stripe_payment_intent_id = ?,
-                            stripe_balance_transaction_id = ?, stripe_invoice_id = ?,
-                            raw_source_type = ?, raw_source_json = ?,
-                            source = ?, updated_at = datetime('now')
-                        WHERE id = ?
-                    """, (
-                        p.converted_amount, p.converted_amount_refunded,
-                        p.description, p.fee, p.fee_stripe, p.fee_application, p.currency,
-                        p.payment_type_meta, p.event_api_id_meta,
-                        p.email_meta, p.card_country, p.billing_country,
-                        p.amount_original, p.fx_rate,
-                        p.stripe_customer_id, p.stripe_payment_intent_id,
-                        p.stripe_balance_transaction_id, p.stripe_invoice_id,
-                        p.raw_source_type, raw_json,
-                        source, p.id,
-                    ))
+                    conn.execute(_PAYMENT_UPDATE_SQL, (*params, source, p.id))
                     updated += 1
         conn.commit()
         log.info("ℹ️ Upserted payments: %d inserted, %d updated", inserted, updated)
@@ -1814,6 +1765,38 @@ def upsert_audit_entries_conn(
     )
 
 
+def load_audit_entries_conn(
+    conn: sqlite3.Connection,
+    year: int,
+    quarter: int,
+    model: str,
+    computed_at: Optional[str] = None,
+) -> list[dict]:
+    """``load_audit_entries`` on an open connection.
+
+    If *computed_at* is None, returns entries from the most recent computation run.
+    """
+    _ensure_audit_schema(conn)
+    if computed_at is None:
+        row = conn.execute(
+            """SELECT MAX(computed_at) FROM tax_audit_log
+               WHERE year = ? AND quarter = ? AND model = ?""",
+            (year, quarter, model),
+        ).fetchone()
+        if not row or not row[0]:
+            return []
+        computed_at = row[0]
+    cur = conn.execute(
+        """SELECT id, computed_at, year, quarter, model, cell, label, formula, inputs_json, value
+           FROM tax_audit_log
+           WHERE year = ? AND quarter = ? AND model = ? AND computed_at = ?
+           ORDER BY id""",
+        (year, quarter, model, computed_at),
+    )
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def load_audit_entries(
     year: int,
     quarter: int,
@@ -1827,23 +1810,6 @@ def load_audit_entries(
     """
     conn = get_connection(db_path)
     try:
-        _ensure_audit_schema(conn)
-        if computed_at is None:
-            row = conn.execute(
-                """SELECT MAX(computed_at) AS ts FROM tax_audit_log
-                   WHERE year = ? AND quarter = ? AND model = ?""",
-                (year, quarter, model),
-            ).fetchone()
-            if not row or not row["ts"]:
-                return []
-            computed_at = row["ts"]
-        rows = conn.execute(
-            """SELECT id, computed_at, year, quarter, model, cell, label, formula, inputs_json, value
-               FROM tax_audit_log
-               WHERE year = ? AND quarter = ? AND model = ? AND computed_at = ?
-               ORDER BY id""",
-            (year, quarter, model, computed_at),
-        ).fetchall()
-        return [dict(r) for r in rows]
+        return load_audit_entries_conn(conn, year, quarter, model, computed_at)
     finally:
         conn.close()

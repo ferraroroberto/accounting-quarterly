@@ -33,12 +33,12 @@ CLI: ``python -m src.invoice_dedupe scan [--direction in|out] [--apply]
 from __future__ import annotations
 
 import argparse
-import calendar
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Optional
 
+from src.periods import quarter_iso_bounds
 from src.database import (
     get_connection,
     get_invoices,
@@ -136,14 +136,6 @@ def _eligible_losers(keeper: dict, rows: list[dict]) -> list[dict]:
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(str(value)[:10])
-
-
-def quarter_bounds(year: int, quarter: int) -> tuple[str, str]:
-    """Inclusive ISO ``(start, end)`` date bounds for ``year``-Q``quarter``."""
-    month_start = (quarter - 1) * 3 + 1
-    month_end = quarter * 3
-    last_day = calendar.monthrange(year, month_end)[1]
-    return f"{year}-{month_start:02d}-01", f"{year}-{month_end:02d}-{last_day:02d}"
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +322,7 @@ def detect_out_of_period(rows: list[dict], year: int, quarter: int) -> list[Dupl
     invoices matching the files copied into ``tmp/close_quarter/<year>_Q<quarter>/``)
     — a full-table scan would flag every other quarter's invoices too.
     """
-    start, end = quarter_bounds(year, quarter)
+    start, end = quarter_iso_bounds(year, quarter)
     groups: list[DuplicateGroup] = []
     for row in rows:
         inv_date = row.get("invoice_date")

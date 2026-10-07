@@ -631,29 +631,3 @@ def audit_entries_for_box(entries: Iterable[dict], model: str, box: str) -> list
         return [e for e in entries if vat in _VAT_SEPARATORS_RE.sub("", str(e.get("cell", "")).upper())]
     pattern = re.compile(rf"^(?:c|box_?)?{re.escape(box)}(?:_|$)", re.IGNORECASE)
     return [e for e in entries if pattern.match(str(e.get("cell", "")))]
-
-
-def load_logged_audit(
-    conn: sqlite3.Connection, model: str, year: int, quarter: int
-) -> list[dict]:
-    """Entries of the latest ``tax_audit_log`` run for (model, year, quarter)."""
-    has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tax_audit_log'"
-    ).fetchone()
-    if not has_table:
-        return []
-    row = conn.execute(
-        "SELECT MAX(computed_at) FROM tax_audit_log WHERE year = ? AND quarter = ? AND model = ?",
-        (year, quarter, model),
-    ).fetchone()
-    if not row or not row[0]:
-        return []
-    cur = conn.execute(
-        """SELECT computed_at, year, quarter, model, cell, label, formula, inputs_json, value
-           FROM tax_audit_log
-           WHERE year = ? AND quarter = ? AND model = ? AND computed_at = ?
-           ORDER BY id""",
-        (year, quarter, model, row[0]),
-    )
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]

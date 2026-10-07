@@ -102,9 +102,10 @@ def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 # EU VAT country prefixes (ISO 2-letter codes of EU member states, excl. Spain)
+# "EL" is the prefix Greek VAT ids actually use ("GR" is the ISO country code).
 _EU_VAT_PREFIXES: frozenset[str] = frozenset({
     "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "FI", "FR",
-    "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL",
+    "GR", "EL", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL",
     "PL", "PT", "RO", "SE", "SI", "SK",
 })
 
@@ -351,7 +352,7 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "charged_eur": "REAL",             # EUR actually charged, when the document states it (expenses)
         "fx_rate_used": "REAL",            # 1 EUR = fx_rate_used units of original_currency
         "fx_rate_date": "TEXT",            # date the rate actually comes from (may differ from invoice_date)
-        "fx_source": "TEXT",               # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE
+        "fx_source": "TEXT",               # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE | MISSING_FX_INPUT
         "fx_stale": "INTEGER NOT NULL DEFAULT 0",       # 1 if the ECB rate used was a stale fallback
         "fx_cross_check_diff_pct": "REAL", # |LLM total - resolved total| / resolved total x 100
     }
@@ -1135,9 +1136,17 @@ def search_transactions_raw(
 
 def record_upload(filename: str, direction: str, api_response: str = "",
                   db_path: Optional[str | Path] = None) -> bool:
-    """Record an invoice upload. Returns True if new, False if already uploaded."""
+    """Record an invoice upload. Returns True if new, False if already uploaded.
+
+    A leftover ``ERROR: ...`` row from an old failed upload does not count as
+    uploaded: it is replaced by this record.
+    """
     conn = get_connection(db_path)
     try:
+        conn.execute(
+            "DELETE FROM upload_log WHERE filename = ? AND direction = ? AND api_response LIKE 'ERROR:%'",
+            (filename, direction),
+        )
         existing = conn.execute(
             "SELECT id FROM upload_log WHERE filename = ? AND direction = ?",
             (filename, direction),

@@ -47,7 +47,9 @@ def render() -> None:
     load_db = btn_col1.button("Load (from SQLite)", type="primary", key="tb_load_db")
     refresh_api = btn_col2.button("Refresh from API", type="secondary", key="tb_refresh_api")
 
-    if load_db or refresh_api or "browser_data" not in st.session_state:
+    period_key = (year, quarter)
+    if (load_db or refresh_api or "browser_data" not in st.session_state
+            or st.session_state.get("browser_key") != period_key):
         with st.spinner("Loading..."):
             if refresh_api:
                 payments = get_classified_for_period(
@@ -60,6 +62,7 @@ def render() -> None:
             else:
                 payments = get_classified_for_period(year, quarter, start_dt, end_dt, input_mode="db")
             st.session_state["browser_data"] = payments
+            st.session_state["browser_key"] = period_key
 
     payments: list[ClassifiedPayment] = st.session_state.get("browser_data", [])
 

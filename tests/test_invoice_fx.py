@@ -82,6 +82,15 @@ class TestResolveInvoiceAmounts:
         assert r.subtotal_eur == 100.0 and r.total_eur == 121.0
         assert r.fx_rate_used is None and not r.fx_stale
 
+    @pytest.mark.parametrize("missing", [{"original_amount": None}, {"invoice_date": None}])
+    def test_foreign_invoice_without_fx_inputs_is_flagged_not_native_eur(self, db, missing):
+        # #163: the LLM's guessed EUR figures are kept, but never labelled NATIVE_EUR.
+        r = resolve_invoice_amounts("in", _extracted(**missing), db_path=db)
+        assert r.fx_source == "MISSING_FX_INPUT"
+        assert r.fx_stale is True
+        assert r.fx_warning is not None and "USD" in r.fx_warning
+        assert r.total_eur == 95.0
+
     def test_usd_expense_converted_with_stored_ecb_rate(self, db):
         _store_usd_rate(db)
         data = _extracted()

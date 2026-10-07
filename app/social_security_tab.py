@@ -8,6 +8,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 ROOT = Path(__file__).parent.parent
 
 from src.config import load_config
@@ -33,6 +34,7 @@ def _resolve(path: str) -> Path:
 
 
 def render() -> None:
+    show_flash("ss")
     st.header("Seguridad Social — Cuotas de autónomo")
     st.markdown(
         "Import Social Security (Seguridad Social) monthly quota payments from a bank "
@@ -163,9 +165,10 @@ def render() -> None:
                         st.warning("No valid rows found in the file. Check the column names and date/amount format.")
                     else:
                         inserted, skipped = upsert_ss_payments(rows, source_file=str(file_path))
-                        st.success(
+                        flash(
+                            "ss", "success",
                             f"Import complete: **{inserted} new rows** imported, "
-                            f"{skipped} duplicate(s) skipped."
+                            f"{skipped} duplicate(s) skipped.",
                         )
                         st.rerun()
                 except Exception as exc:
@@ -175,7 +178,7 @@ def render() -> None:
     with col_clear:
         if st.button("Clear all SS payments", type="secondary", key="ss_clear"):
             clear_ss_payments()
-            st.success("All Social Security payment rows cleared.")
+            flash("ss", "success", "All Social Security payment rows cleared.")
             st.rerun()
 
     # -------------------------------------------------------------------------
@@ -211,7 +214,7 @@ def render() -> None:
                     description=manual_description.strip(),
                 )
                 if inserted:
-                    st.success("Manual entry added.")
+                    flash("ss", "success", "Manual entry added.")
                     st.rerun()
                 else:
                     st.warning("An identical entry (same date, amount and description) already exists.")
@@ -301,5 +304,5 @@ def render() -> None:
         del_id = st.number_input("Row ID to delete", min_value=1, step=1, key="ss_del_id")
         if st.button("Delete row", type="secondary", key="ss_delete_row"):
             delete_ss_payment(int(del_id))
-            st.success(f"Row {del_id} deleted.")
+            flash("ss", "success", f"Row {del_id} deleted.")
             st.rerun()

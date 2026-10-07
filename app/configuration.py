@@ -11,13 +11,16 @@ import streamlit as st
 ROOT = Path(__file__).parent.parent
 
 from app.data_loader import invalidate_cache
-from src.config import load_config, reload_config, save_config
+from app.flash import flash, show_flash
+from src.config import load_config, reload_config, save_config, save_stripe_api_key
+from src.exceptions import ConfigError
 from src.rules_engine import load_rules, save_rules
 from src.stripe_client import check_permissions, test_connection
 
 
 def render() -> None:
     """Render the Configuration tab."""
+    show_flash("config")
     cfg = load_config()
     rules = load_rules()
 
@@ -271,15 +274,12 @@ Classification priority order:
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("Save API Key", key="save_api_key"):
-                env_path = ROOT / ".env"
-                lines = []
-                if env_path.exists():
-                    with open(env_path) as f:
-                        lines = [line for line in f.readlines() if not line.startswith("STRIPE_API_KEY")]
-                lines.append(f"STRIPE_API_KEY={api_key_input}\n")
-                with open(env_path, "w") as f:
-                    f.writelines(lines)
-                st.success("API key saved to .env")
+                try:
+                    save_stripe_api_key(api_key_input)
+                except ConfigError as exc:
+                    st.error(str(exc))
+                else:
+                    st.success("API key saved to .env and applied to the running app")
 
         with col2:
             if st.button("Test Connection", key="test_stripe"):
@@ -327,7 +327,7 @@ geographic classification instead of manual overrides.
             st.success("Cache cleared")
         if st.button("Reload Config", key="reload_config"):
             reload_config()
-            st.success("Config reloaded from disk")
+            flash("config", "success", "Config reloaded from disk")
             st.rerun()
         st.caption(f"Data root: `{ROOT}`")
 

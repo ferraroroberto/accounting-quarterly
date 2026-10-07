@@ -14,6 +14,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.database import get_invoices, set_invoice_exclusion
 from src.invoice_dedupe import (
     DuplicateGroup,
@@ -35,15 +36,6 @@ _DETECTOR_LABELS = {
 }
 
 
-def _flash(kind: str, message: str) -> None:
-    st.session_state.setdefault("dedupe_flash", []).append((kind, message))
-
-
-def _show_flash() -> None:
-    for kind, message in st.session_state.pop("dedupe_flash", []):
-        getattr(st, kind)(message)
-
-
 def _row_label(row: dict) -> str:
     who = row.get("vendor_name") or row.get("client_name") or row.get("vendor_nif") or "?"
     total = row.get("total_eur")
@@ -53,7 +45,7 @@ def _row_label(row: dict) -> str:
 
 def _flash_skipped_groups(result: dict) -> None:
     if result["skipped_groups"]:
-        _flash("warning", f"Skipped {len(result['skipped_groups'])} group(s) whose kept row is excluded: "
+        flash("dedupe", "warning", f"Skipped {len(result['skipped_groups'])} group(s) whose kept row is excluded: "
                           "excluding the rest would leave no active invoice. Pick an active row to keep.")
 
 
@@ -93,9 +85,9 @@ def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> No
                 losers = tuple(r["id"] for r in rows if r["id"] != keep_id)
                 result = apply_groups([DuplicateGroup(group.detector, group.reason, losers, keep_id, group.note)])
                 if result["applied"]:
-                    _flash("success", f"Excluded {result['applied']} invoice(s) as {group.reason!r}.")
+                    flash("dedupe", "success", f"Excluded {result['applied']} invoice(s) as {group.reason!r}.")
                 if result["skipped_locked"]:
-                    _flash("warning", f"Skipped {result['skipped_locked']} row(s) with a locked `excluded` field.")
+                    flash("dedupe", "warning", f"Skipped {result['skipped_locked']} row(s) with a locked `excluded` field.")
                 _flash_skipped_groups(result)
                 st.rerun()
         with col_skip:
@@ -124,7 +116,7 @@ def _render_recent_auto_exclusions(records: list[dict]) -> None:
             with c2:
                 if st.button("Undo", key=f"dedupe_undo_{r['id']}"):
                     set_invoice_exclusion(r["id"], False, None)
-                    _flash("info", f"Un-excluded {r.get('filename')}.")
+                    flash("dedupe", "info", f"Un-excluded {r.get('filename')}.")
                     st.rerun()
 
 
@@ -136,7 +128,7 @@ def render() -> None:
         "Nothing is excluded until you confirm a group below. Excluded rows are ignored by every tax "
         "computation; a row already locked in the Invoice Ledger tab is never touched here."
     )
-    _show_flash()
+    show_flash("dedupe")
 
     all_invoices = get_invoices()
     if not all_invoices:
@@ -194,7 +186,7 @@ def render() -> None:
 
         if st.button("Apply all proposed exclusions", key="dedupe_apply_all"):
             result = apply_groups(groups)
-            _flash("success",
+            flash("dedupe", "success",
                    f"Applied {result['applied']} exclusion(s); skipped {result['skipped_locked']} "
                    "locked row(s).")
             _flash_skipped_groups(result)

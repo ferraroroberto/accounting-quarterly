@@ -1,14 +1,13 @@
 """Quarter Report tab content."""
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
 from app.data_loader import first_data_year, get_classified_for_period, quarter_dates
+from app.excel_download import render_excel_download
 from src.aggregator import (
     build_monthly_table,
     calculate_grand_totals,
@@ -16,8 +15,7 @@ from src.aggregator import (
     get_transaction_count,
 )
 from src.classifier import eur_default_foreign_warning, validate_classifications
-from src.excel_exporter import create_excel_report, generate_report_filename
-from src.exceptions import StaleClassificationError
+from src.excel_exporter import generate_report_filename
 
 
 def render() -> None:
@@ -46,7 +44,7 @@ def render() -> None:
             disabled=is_since_inception,
         )
     with col3:
-        use_custom = st.checkbox("Custom date range", key="qr_custom", disabled=is_since_inception)
+        use_custom = st.checkbox("Custom date range", key="qr_custom", disabled=is_since_inception) and not is_since_inception
         if use_custom:
             c1, c2 = st.columns(2)
             custom_start = c1.date_input("From", datetime(year_for_filters, 1, 1), key="qr_from")
@@ -217,21 +215,4 @@ def render() -> None:
         )
 
         if st.button("Generate Excel Report", type="primary", key="qr_export"):
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                tmp_path = tmp.name
-            try:
-                create_excel_report(payments, tmp_path, export_year, quarter, label)
-            except StaleClassificationError as exc:
-                os.unlink(tmp_path)
-                st.error(str(exc))
-                return
-            with open(tmp_path, "rb") as f:
-                excel_bytes = f.read()
-            os.unlink(tmp_path)
-            st.download_button(
-                label=f"Download {filename}",
-                data=excel_bytes,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="qr_download",
-            )
+            render_excel_download(payments, export_year, quarter, filename, download_key="qr_download", label=label)

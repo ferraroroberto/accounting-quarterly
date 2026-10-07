@@ -201,6 +201,34 @@ def _resolve_provider(provider: Optional[str]) -> str:
     return DEFAULT_PROVIDER
 
 
+def _parse_number_string(val: str) -> float:
+    """Parse a number the model returned as a string, in either locale.
+
+    The last of ``.`` / ``,`` is the decimal separator and the other is a
+    thousands separator (``"1.234,56"`` and ``"1,234.56"`` are both 1234.56).
+    A lone separator is a decimal point, except a single ``.`` followed by
+    exactly three digits (``"1.234"``), which on a Spanish invoice is a
+    thousands separator. Raises ``ValueError`` when it is not a number.
+    """
+    s = val.strip().replace(" ", "")
+    last_dot, last_comma = s.rfind("."), s.rfind(",")
+    if last_dot >= 0 and last_comma >= 0:
+        decimal = "." if last_dot > last_comma else ","
+    elif last_comma >= 0:
+        decimal = "," if s.count(",") == 1 else None
+    elif last_dot >= 0:
+        thousands_only = s.count(".") > 1 or len(s) - last_dot - 1 == 3
+        decimal = None if thousands_only else "."
+    else:
+        decimal = None
+    if decimal is None:
+        s = s.replace(".", "").replace(",", "")
+    else:
+        thousands = "," if decimal == "." else "."
+        s = s.replace(thousands, "").replace(decimal, ".")
+    return float(s)
+
+
 def _parse_json_object(raw_text: str) -> dict:
     """Parse the JSON object out of a model response.
 
@@ -416,9 +444,8 @@ def extract_invoice(
     ):
         val = data.get(field)
         if isinstance(val, str):
-            normalised = val.replace(".", "").replace(",", ".").strip()
             try:
-                data[field] = float(normalised)
+                data[field] = _parse_number_string(val)
             except (ValueError, TypeError):
                 data[field] = None
 
@@ -431,7 +458,7 @@ def extract_invoice(
                     v = line.get(sub)
                     if isinstance(v, str):
                         try:
-                            line[sub] = float(v.replace(".", "").replace(",", ".").strip())
+                            line[sub] = _parse_number_string(v)
                         except (ValueError, TypeError):
                             line[sub] = None
         data["iva_breakdown"] = breakdown

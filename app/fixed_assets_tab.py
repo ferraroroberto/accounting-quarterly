@@ -15,6 +15,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.database import get_connection
 from src.fixed_assets import (
     ASSET_CLASSES,
@@ -63,15 +64,6 @@ def _to_date(value: Optional[str]) -> Optional[date]:
         return date.fromisoformat(value[:10]) if value else None
     except ValueError:
         return None
-
-
-def _flash(kind: str, message: str) -> None:
-    st.session_state.setdefault("fa_flash", []).append((kind, message))
-
-
-def _show_flash() -> None:
-    for kind, message in st.session_state.pop("fa_flash", []):
-        getattr(st, kind)(message)
 
 
 def _grid_version() -> int:
@@ -157,9 +149,7 @@ def render_register_from_invoice(invoice: dict) -> None:
                 log.warning("⚠️ Fixed asset registration rejected for invoice %s — %s", invoice_id, exc)
                 st.error(str(exc))
             else:
-                st.session_state.setdefault("ledger_flash", []).append(
-                    ("success", f"Registered fixed asset #{asset_id}; the invoice is now a capital asset.")
-                )
+                flash("ledger", "success", f"Registered fixed asset #{asset_id}; the invoice is now a capital asset.")
                 st.rerun()
             finally:
                 conn.close()
@@ -202,10 +192,10 @@ def _render_grid(assets: list[FixedAsset]) -> None:
                     try:
                         changed = update_fixed_asset(conn, asset_id, changes)
                         if changed:
-                            _flash("success", f"Asset #{asset_id}: saved {', '.join(changed)}.")
+                            flash("fa", "success", f"Asset #{asset_id}: saved {', '.join(changed)}.")
                     except (ValueError, KeyError) as exc:
                         log.warning("⚠️ Fixed asset %d edit rejected — %s", asset_id, exc)
-                        _flash("error", f"Asset #{asset_id}: {exc}")
+                        flash("fa", "error", f"Asset #{asset_id}: {exc}")
             finally:
                 conn.close()
             _bump_grid_version()
@@ -226,7 +216,7 @@ def _render_add_form() -> None:
             except ValueError as exc:
                 st.error(str(exc))
             else:
-                _flash("success", f"Added fixed asset #{asset_id}.")
+                flash("fa", "success", f"Added fixed asset #{asset_id}.")
                 _bump_grid_version()
                 st.rerun()
             finally:
@@ -276,7 +266,7 @@ def _render_schedule(assets: list[FixedAsset], settings) -> None:
             delete_fixed_asset(conn, asset_id)
         finally:
             conn.close()
-        _flash("info", f"Deleted fixed asset #{asset_id}; its invoice is unflagged if no other asset uses it.")
+        flash("fa", "info", f"Deleted fixed asset #{asset_id}; its invoice is unflagged if no other asset uses it.")
         _bump_grid_version()
         st.rerun()
 
@@ -326,7 +316,7 @@ def _render_vat_register(assets: list[FixedAsset]) -> None:
             set_vat_usage(conn, asset_id, year, pct)
         finally:
             conn.close()
-        _flash("success", f"Recorded {pct:g}% VAT business use for {year}.")
+        flash("fa", "success", f"Recorded {pct:g}% VAT business use for {year}.")
         st.rerun()
 
 
@@ -337,7 +327,7 @@ def render() -> None:
         "Simplified depreciation table (Orden de 27 de marzo de 1998). Register assets from an expense invoice "
         "in the **Invoice Ledger** tab, or add one by hand below."
     )
-    _show_flash()
+    show_flash("fa")
     settings = asset_settings(load_app_config())
     conn = get_connection()
     try:

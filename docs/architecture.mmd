@@ -59,6 +59,7 @@ flowchart TB
 
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
     LOADER["data_loader.py"]
+    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export)"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
     INVTABS["invoice_upload · invoice_ocr_tab (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe_tab · invoice_explorer · vendor_registry_tab ·\nfixed_assets_tab"]
     SSTAB["social_security_tab"]
@@ -66,7 +67,7 @@ flowchart TB
   end
 
   subgraph tests["tests/ — pytest suite"]
-    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_modelo_130 · test_close_pipeline ·\ntest_invoice_ocr_tab · test_modelo_349 · test_filing_sheet ·\ntest_filing_sheet_tab · test_annual_pack · test_stripe_client ·\ntest_relink"]
+    TESTFILES["test_classifier · test_database · test_fx_rates ·\ntest_aggregator · test_rules_engine · test_models ·\ntest_tax_engine · test_tax_validator · test_social_security ·\ntest_invoice_ledger · test_invoice_ledger_tab · test_stripe_eu_b2c_reclassify ·\ntest_filed_returns · test_invoice_dedupe · test_invoice_dedupe_tab ·\ntest_vendor_registry · test_vendor_registry_tab · test_fixed_assets ·\ntest_invoice_fx · test_reconciliation · test_tax_validation_tab ·\ntest_modelo_303 · test_modelo_130 · test_close_pipeline ·\ntest_invoice_ocr_tab · test_audit163_fixes · test_modelo_349 · test_filing_sheet ·\ntest_filing_sheet_tab · test_annual_pack · test_stripe_client ·\ntest_relink"]
   end
 
   subgraph scripts["scripts/ — operational tooling"]

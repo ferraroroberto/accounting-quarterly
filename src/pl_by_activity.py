@@ -156,11 +156,11 @@ def compute_pl_by_activity(
                       "rule": None if activity else rule_key, **extra})
 
     # --- Income (130 box 01) ----------------------------------------------------
-    stripe_rows = _load_classified_ytd(year, 4, db_conn)
+    stripe_rows = _load_classified_ytd(year, 4, db_conn, config)
     for r in stripe_rows:
         _line("income", "stripe", _get_vat_base(r, config), _norm_activity(r.get("activity_type")), "unallocated",
               id=r["id"], date=str(r.get("created_date", ""))[:10])
-    for inv in _load_income_invoices_ytd(year, 4, db_conn):
+    for inv in _load_income_invoices_ytd(year, 4, db_conn, config):
         m = meta.get(inv["id"], {})
         act = _norm_activity(m.get("activity_type"))
         if act is None and (inv.get("tax_treatment") or m.get("tax_treatment")) == "EXEMPT_TEACHING":
@@ -180,7 +180,7 @@ def compute_pl_by_activity(
 
     # --- Expenses (real expenses of 130 box 02) -------------------------------------
     capital_ids = capital_asset_invoice_ids(db_conn)
-    for inv in _load_expense_invoices_ytd(year, 4, db_conn):
+    for inv in _load_expense_invoices_ytd(year, 4, db_conn, config):
         if inv["id"] in capital_ids:
             continue   # enters through depreciation, as in the 130
         m = meta.get(inv["id"], {})

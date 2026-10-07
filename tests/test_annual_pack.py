@@ -382,6 +382,17 @@ class TestPLByActivity:
         pl = compute_pl_by_activity(YEAR, conn, {"tax": {"pl_allocation": {"reta": "PAINTING"}}}, year)
         assert pl.allocation["reta"] == "COACHING" and "PAINTING" in pl.notes
 
+    def test_activity_start_date_floors_the_pl_like_the_130(self, conn, year):
+        # #163: the P&L must apply the same tax.activity_start_date floor as the Q4 130,
+        # or it counts income/expenses before the activity existed and stops tying.
+        cfg = {"tax": {"activity_start_date": "2025-06-01"}}
+        pl = compute_pl_by_activity(YEAR, conn, cfg, year)
+        m130 = compute_modelo_130(YEAR, 4, conn, cfg)
+        assert pl.total_income == m130.c01_ingresos == 1700.0
+        assert pl.total_income < 5500.0
+        assert pl.total_expenses == m130.gastos_reales
+        assert pl.ties_to_130
+
     def test_platform_fee_goes_to_the_charge_activity_and_ties(self, conn, year):
         # #135: the newsletter charge's platform (application) fee is a real expense of IAE 751.
         conn.execute("UPDATE transactions SET fee_stripe = 0.4, fee_application = 12.0 WHERE id = 'n1'")

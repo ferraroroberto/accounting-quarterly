@@ -1,8 +1,6 @@
 """History & Charts tab content."""
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import datetime
 
 import pandas as pd
@@ -10,9 +8,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.data_loader import first_data_year, get_classified_for_period, quarter_dates
+from app.excel_download import render_excel_download
 from src.aggregator import calculate_grand_totals, calculate_regional_totals, get_transaction_count
 from src.database import get_transaction_date_bounds
-from src.excel_exporter import create_excel_report, generate_report_filename
+from src.excel_exporter import generate_report_filename
 
 
 def render() -> None:
@@ -218,17 +217,5 @@ def render() -> None:
         d = valid_quarters[export_quarter]
         payments = d.get("payments", [])
         if payments:
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                tmp_path = tmp.name
             filename = generate_report_filename(d["year"], d["quarter"])
-            create_excel_report(payments, tmp_path, d["year"], d["quarter"])
-            with open(tmp_path, "rb") as f:
-                excel_bytes = f.read()
-            os.unlink(tmp_path)
-            st.download_button(
-                f"Download {filename}",
-                excel_bytes,
-                filename,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="hist_download",
-            )
+            render_excel_download(payments, d["year"], d["quarter"], filename, download_key="hist_download")

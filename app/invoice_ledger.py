@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from app.fixed_assets_tab import render_register_from_invoice
+from app.flash import flash, show_flash
 from src.database import (
     EXCLUDED_REASONS,
     TAX_TREATMENTS_IN,
@@ -87,15 +88,6 @@ def _editor_version() -> int:
 def _bump_editor_version() -> None:
     """Remount the data_editor (fresh key) so applied edits don't linger as pending."""
     st.session_state["ledger_editor_version"] = _editor_version() + 1
-
-
-def _flash(kind: str, message: str) -> None:
-    st.session_state.setdefault("ledger_flash", []).append((kind, message))
-
-
-def _show_flash() -> None:
-    for kind, message in st.session_state.pop("ledger_flash", []):
-        getattr(st, kind)(message)
 
 
 def _build_frame(records: list[dict], direction: str) -> pd.DataFrame:
@@ -192,10 +184,10 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
                 except (ValueError, KeyError) as exc:
                     errors.append(f"{view.at[invoice_id, 'filename']}: {exc}")
             if saved:
-                _flash("success", f"Saved {saved} invoice(s); edited fields are now locked.")
+                flash("ledger", "success", f"Saved {saved} invoice(s); edited fields are now locked.")
             for err in errors:
                 log.warning("⚠️ Ledger bulk edit rejected — %s", err)
-                _flash("error", err)
+                flash("ledger", "error", err)
             _bump_editor_version()
             st.rerun()
 
@@ -317,14 +309,14 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
             log.warning("⚠️ Ledger edit rejected for %s — %s", rec.get("filename"), exc)
             st.error(str(exc))
         else:
-            _flash("success", f"Saved; locked: {', '.join(changed)}." if changed
+            flash("ledger", "success", f"Saved; locked: {', '.join(changed)}." if changed
                    else "No field changed; invoice marked reviewed.")
             _bump_editor_version()
             st.rerun()
 
     if locked and st.button("Unlock all fields (next re-extract may overwrite them)", key=f"{k}_unlock"):
         unlock_invoice_fields(invoice_id)
-        _flash("info", "All locks released; stored values are unchanged.")
+        flash("ledger", "info", "All locks released; stored values are unchanged.")
         _bump_editor_version()
         st.rerun()
 
@@ -414,8 +406,8 @@ def _render_exchange_differences(income_records: list[dict]) -> None:
                 notes=notes or None,
             )
             sign = "gain" if gain_loss >= 0 else "loss"
-            st.success(f"Recorded: {sign} of {abs(gain_loss):,.2f} EUR — feeds Modelo 130 income for "
-                       f"Q{(conversion_date.month - 1) // 3 + 1} {conversion_date.year}.")
+            flash("ledger", "success", f"Recorded: {sign} of {abs(gain_loss):,.2f} EUR — feeds Modelo 130 income for "
+                  f"Q{(conversion_date.month - 1) // 3 + 1} {conversion_date.year}.")
             st.rerun()
 
 
@@ -426,7 +418,7 @@ def render() -> None:
         "The accounting date is the **invoice date**: it decides the quarter. Supply date is informational. "
         "Any field you edit here is 🔒 locked and survives re-extraction in the Invoice OCR tab."
     )
-    _show_flash()
+    show_flash("ledger")
 
     all_invoices = get_invoices()
     if not all_invoices:

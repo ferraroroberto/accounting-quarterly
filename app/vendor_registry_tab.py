@@ -8,6 +8,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.database import TAX_TREATMENTS_IN
 from src.logger import get_logger
 from src.vendor_registry import (
@@ -34,15 +35,6 @@ _LIST_COLUMNS = ("aliases", "alt_vat_ids")
 
 def _editor_version() -> int:
     return st.session_state.setdefault("vendors_editor_version", 0)
-
-
-def _flash(kind: str, message: str) -> None:
-    st.session_state.setdefault("vendors_flash", []).append((kind, message))
-
-
-def _show_flash() -> None:
-    for kind, message in st.session_state.pop("vendors_flash", []):
-        getattr(st, kind)(message)
 
 
 def _to_frame(registry: VendorRegistry) -> pd.DataFrame:
@@ -99,7 +91,7 @@ def _render_editor(registry: VendorRegistry) -> None:
             st.error(f"Registry not saved: {exc}")
             return
         save_registry(new_registry)
-        _flash("success", f"Saved {len(new_registry.vendors)} vendor(s) to {registry_path().name}. "
+        flash("vendors", "success", f"Saved {len(new_registry.vendors)} vendor(s) to {registry_path().name}. "
                           "Apply the registry to update stored invoices.")
         st.session_state["vendors_editor_version"] = _editor_version() + 1
         st.rerun()
@@ -114,7 +106,7 @@ def _render_apply(registry: VendorRegistry) -> None:
     )
     if st.button("Apply registry", key="vendors_apply", disabled=not registry.vendors):
         result = apply_vendor_registry(registry)
-        _flash("success",
+        flash("vendors", "success",
                f"Matched {result.matched} of {result.scanned} expense invoice(s) "
                f"({', '.join(f'{k}: {v}' for k, v in result.by_signal.items()) or 'none'}); "
                f"updated {result.rows_updated}; {result.unmatched} unknown vendor(s)."
@@ -153,7 +145,7 @@ def _render_import(registry: VendorRegistry) -> None:
             st.error(str(exc))
             return
         save_registry(merged)
-        _flash("success", f"Imported: {len(res.added)} added, {len(res.updated)} updated, "
+        flash("vendors", "success", f"Imported: {len(res.added)} added, {len(res.updated)} updated, "
                           f"{len(res.unchanged)} unchanged.")
         st.session_state["vendors_editor_version"] = _editor_version() + 1
         st.rerun()
@@ -162,7 +154,7 @@ def _render_import(registry: VendorRegistry) -> None:
 def render() -> None:
     """Render the Vendors tab."""
     st.subheader("Vendor registry — per-vendor tax defaults")
-    _show_flash()
+    show_flash("vendors")
     try:
         registry = load_registry()
     except (ValueError, TypeError) as exc:

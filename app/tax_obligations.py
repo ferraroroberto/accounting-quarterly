@@ -8,6 +8,7 @@ from typing import Any
 import streamlit as st
 
 from app.annual_pack_tab import render as render_annual_pack
+from app.flash import flash, show_flash
 from src.config import reload_config
 from src.database import (
     add_tax_entry,
@@ -330,7 +331,7 @@ def _render_manual_entries(year: int, quarter: int) -> None:
             if delete_id > 0:
                 deleted = delete_tax_entry(int(delete_id))
                 if deleted:
-                    st.success(f"Entry {delete_id} deleted.")
+                    flash("tax", "success", f"Entry {delete_id} deleted.")
                     st.rerun()
                 else:
                     st.error("Entry not found.")
@@ -360,7 +361,7 @@ def _render_manual_entries(year: int, quarter: int) -> None:
             if amount > 0:
                 add_tax_entry(year, quarter, entry_type, amount, description, notes,
                               vat_rate=vat_rate if entry_type == "IVA_SOPORTADO" else None)
-                st.success("Entry added.")
+                flash("tax", "success", "Entry added.")
                 st.rerun()
             else:
                 st.warning("Amount must be greater than 0.")
@@ -563,6 +564,7 @@ def _save_filing_button(model: str, year: int, quarter: int | None, amount: floa
 # ---------------------------------------------------------------------------
 
 def render() -> None:
+    show_flash("tax")
     st.title("Tax Obligations")
     st.markdown(_DISCLAIMER)
     st.divider()
@@ -590,7 +592,7 @@ def render() -> None:
                     compute_and_persist_tax_snapshots(year, quarter, conn)
             finally:
                 conn.close()
-            st.success("Tax calculations saved to the database.")
+            flash("tax", "success", "Tax calculations saved to the database.")
             st.rerun()
 
     st.caption(

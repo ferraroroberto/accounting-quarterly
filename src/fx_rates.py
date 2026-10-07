@@ -430,7 +430,7 @@ class InvoiceFxResolution:
     total_eur: Optional[float]
     fx_rate_used: Optional[float]      # 1 EUR = fx_rate_used units of the original currency
     fx_rate_date: Optional[str]        # ISO date the rate actually comes from
-    fx_source: str                     # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE
+    fx_source: str                     # NATIVE_EUR | CHARGED_EUR | ECB | NO_RATE | INVALID_DATE | MISSING_FX_INPUT
     fx_stale: bool
     fx_cross_check_diff_pct: Optional[float]  # |LLM total − resolved total| / resolved total × 100
     fx_warning: Optional[str]
@@ -473,13 +473,29 @@ def resolve_invoice_amounts(
     llm_total = data.get("total_eur")
     charged_eur = data.get("charged_eur")
 
-    if currency == "EUR" or not original_amount or not invoice_date_str:
-        # Native EUR, or nothing to convert (missing foreign amount/date) — the
-        # LLM's own figures are the only ones available.
+    if currency == "EUR":
         return InvoiceFxResolution(
             subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
             fx_rate_used=None, fx_rate_date=None, fx_source="NATIVE_EUR",
             fx_stale=False, fx_cross_check_diff_pct=None, fx_warning=None,
+        )
+
+    if not original_amount or not invoice_date_str:
+        # A foreign-currency invoice with nothing to convert: the LLM's own EUR
+        # figures are kept, but flagged — never labelled native EUR.
+        missing = " and ".join(
+            name for name, value in (("original_amount", original_amount), ("invoice_date", invoice_date_str))
+            if not value
+        )
+        warning = (
+            f"⚠️ {currency} invoice has no {missing} — cannot convert to EUR; "
+            f"the LLM's own EUR estimate is kept unverified"
+        )
+        log.warning(warning)
+        return InvoiceFxResolution(
+            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
+            fx_rate_used=None, fx_rate_date=None, fx_source="MISSING_FX_INPUT",
+            fx_stale=True, fx_cross_check_diff_pct=None, fx_warning=warning,
         )
 
     try:

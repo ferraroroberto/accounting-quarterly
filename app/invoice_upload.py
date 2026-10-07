@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.config import load_config
 from src.database import get_uploaded_files, record_upload
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
@@ -20,9 +21,14 @@ from src.logger import get_logger
 log = get_logger(__name__)
 
 
+def _successful_uploads(uploaded: list[dict]) -> list[dict]:
+    """Drop ``upload_log`` rows left by a failed upload (``ERROR: ...`` responses)."""
+    return [u for u in uploaded if not str(u.get("api_response") or "").startswith("ERROR:")]
+
+
 def _get_new_invoices(all_files: list[str], uploaded: list[dict]) -> list[str]:
-    """Find files that haven't been uploaded yet."""
-    uploaded_names = {u["filename"] for u in uploaded}
+    """Find files that haven't been uploaded yet (a failed upload still counts as pending)."""
+    uploaded_names = {u["filename"] for u in _successful_uploads(uploaded)}
     return [f for f in all_files if f not in uploaded_names]
 
 
@@ -46,7 +52,7 @@ def _render_upload_panel(
     dir_path.mkdir(parents=True, exist_ok=True)
 
     all_files = [str(p.relative_to(dir_path)) for p in scan_invoice_pdfs(direction)]
-    uploaded = get_uploaded_files(direction)
+    uploaded = _successful_uploads(get_uploaded_files(direction))
     new_files = _get_new_invoices(all_files, uploaded)
 
     col_total, col_uploaded, col_new = st.columns(3)
@@ -89,10 +95,10 @@ def _render_upload_panel(
                             progress.progress((i + 1) / len(new_files), text=f"Uploaded {filename}")
                         except AccountingAPIError as exc:
                             log.error("Invoice upload failed for %s: %s", filename, exc)
-                            record_upload(filename, direction, api_response=f"ERROR: {exc}")
-                            st.error(f"{filename}: {exc}")
+                            flash("upload", "error", f"{filename}: {exc}")
                     progress.empty()
-                    st.success(f"Uploaded {uploaded_count}/{len(new_files)} invoices")
+                    flash("upload", "success" if uploaded_count == len(new_files) else "warning",
+                          f"Uploaded {uploaded_count}/{len(new_files)} invoices")
                     st.rerun()
     else:
         st.success("All invoices have been uploaded.")
@@ -109,6 +115,7 @@ def _render_upload_panel(
 
 def render() -> None:
     """Render the Invoice Upload tab."""
+    show_flash("upload")
     cfg = load_config()
     app_cfg = cfg.get("app", {})
     invoice_in_dir = app_cfg.get("invoice_in_dir", "data/invoices/in")

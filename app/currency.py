@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.fx_rates import (
     SUPPORTED_CURRENCIES,
     get_all_rates,
@@ -19,6 +20,7 @@ from src.fx_rates import (
 
 def render() -> None:
     """Render the Currency tab."""
+    show_flash("currency")
 
     st.subheader("Exchange Rate Management")
     st.caption(
@@ -191,5 +193,5 @@ def _render_recompute_section() -> None:
                     dry_run=False, since=since.isoformat() if since else None,
                 )
                 st.session_state.pop("fx_recompute_preview", None)
-                st.success(f"Applied: {applied.changed} invoice(s) updated.")
+                flash("currency", "success", f"Applied: {applied.changed} invoice(s) updated.")
                 st.rerun()

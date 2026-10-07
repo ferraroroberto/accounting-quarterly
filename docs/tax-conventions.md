@@ -166,7 +166,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 ## 6. Foreign currency
 
 **Rule.**
-- **Expense invoices:** the EUR actually charged, when the document states it (`charged_eur`); otherwise the original amount at the ECB reference rate of the invoice date (`fx_source` `CHARGED_EUR` / `ECB`). A missing rate is never passed through unconverted (`NO_RATE`); a fallback to a rate more than five days old is flagged `fx_stale`.
+- **Expense invoices:** the EUR actually charged, when the document states it (`charged_eur`); otherwise the original amount at the ECB reference rate of the invoice date (`fx_source` `CHARGED_EUR` / `ECB`). A missing rate is never passed through unconverted (`NO_RATE`), and a foreign-currency invoice with no original amount or invoice date is flagged `MISSING_FX_INPUT` rather than labelled native EUR; a fallback to a rate more than five days old is flagged `fx_stale`.
 - **Income invoices:** the ECB rate on the invoice date, stored at extraction. That figure is final when the money stays in a foreign-currency account. When the amount was converted on receipt, `eur_received` (Invoice Ledger) replaces it in every model.
 - **Exchange differences:** when a foreign-currency balance booked at the ECB rate is converted later, the gain or loss (EUR obtained − EUR booked) is recorded in the Invoice Ledger's income view (`fx_exchange_differences`) and added to Modelo 130 box 01 of the quarter of the conversion. VAT figures do not move.
 - **Stripe charges:** converted with the stored ECB rate of the charge date. Once a quarter's Stripe report is frozen as declared, its EUR amounts win over any later recomputation.

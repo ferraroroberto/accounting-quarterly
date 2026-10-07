@@ -1702,7 +1702,6 @@ def compute_modelo_349(
               "vendor": str(inv.get("vendor_name") or "")[:40]})
 
     warnings: list[str] = []
-    eu_prefixes = _EU_VAT_PREFIXES | {"EL"}   # Greece's VAT ids use EL, not GR
     buckets = sorted(ops.items(), key=lambda kv: (kv[0][0], kv[1]["name"].lower(), kv[1]["vat"]))
     for (key, _), b in buckets:
         vat = b["vat"]
@@ -1720,7 +1719,7 @@ def compute_modelo_349(
                             "the 349 takes no zero/negative lines; rectify the original period instead.")
         else:
             result.rows.append(row)
-            if country not in eu_prefixes:
+            if country not in _EU_VAT_PREFIXES:
                 warnings.append(f"{vat} (key {key}) does not start with an EU country prefix — check it.")
     result.total = round(sum((r.base for r in result.rows), 0.0), 2)
     result.notes = " ".join(warnings)

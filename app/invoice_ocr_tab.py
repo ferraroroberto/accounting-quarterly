@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import streamlit as st
 
+from app.flash import flash, show_flash
 from src.config import load_config
 from src.database import (
     clear_invoices,
@@ -54,9 +55,9 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 progress.empty()
                 if errors:
                     for e in errors:
-                        st.error(e)
+                        flash("ocr", "error", e)
                 else:
-                    st.success(f"Extracted {len(to_process)} file(s).")
+                    flash("ocr", "success", f"Extracted {len(to_process)} file(s).")
                 st.rerun()
 
     with col_b:
@@ -79,14 +80,14 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                     with st.spinner(f"Extracting {fname}…"):
                         try:
                             record = extract_and_save(fname, direction)
-                            st.success("Extracted successfully.")
+                            flash("ocr", "success", f"Extracted {fname}.")
                             st.rerun()
                         except Exception as exc:
                             st.error(str(exc))
             with col3:
                 if existing and st.button("Delete record", key=f"delete_{direction}_{fname}"):
                     delete_invoice(fname, direction)
-                    st.warning("Record deleted.")
+                    flash("ocr", "warning", "Record deleted.")
                     st.rerun()
 
             if existing:
@@ -150,6 +151,9 @@ def _render_invoice_fields(rec: dict) -> None:
             if fx_source == "NO_RATE":
                 st.error("⚠️ No ECB rate available for this currency/date — amount NOT converted. "
                           "Load rates for this period in the Currency tab.")
+            elif fx_source == "MISSING_FX_INPUT":
+                st.error("⚠️ Original amount or invoice date missing — EUR figures are the LLM's unverified "
+                         "estimate, not converted. Correct them in the Invoice Ledger tab.")
             elif fx_source:
                 rate_txt = (f" · rate 1 EUR = {rec['fx_rate_used']:.4f} on {rec.get('fx_rate_date') or '?'}"
                             if rec.get("fx_rate_used") else "")
@@ -206,6 +210,7 @@ def _fmt_pct(val) -> str:
 
 def render() -> None:
     """Render the Invoice OCR tab."""
+    show_flash("ocr")
     cfg = load_config()
     app_cfg = cfg.get("app", {})
     invoice_in_dir = app_cfg.get("invoice_in_dir", "data/invoices/in")
@@ -294,7 +299,7 @@ def render() -> None:
                 if col_yes.button("Yes, delete everything", type="primary", key="inv_ocr_clear_confirm"):
                     n = clear_invoices()
                     st.session_state["confirm_clear_invoices"] = False
-                    st.success(f"Deleted {n} record(s).")
+                    flash("ocr", "success", f"Deleted {n} record(s).")
                     st.rerun()
                 if col_no.button("Cancel", key="inv_ocr_clear_cancel"):
                     st.session_state["confirm_clear_invoices"] = False
@@ -344,7 +349,7 @@ def render() -> None:
                             if "id" in df_display.columns
                         ]
                         n = delete_invoices_by_ids(ids_to_delete)
-                        st.success(f"Deleted {n} record(s).")
+                        flash("ocr", "success", f"Deleted {n} record(s).")
                         st.rerun()
                 else:
                     st.caption("Select rows to enable deletion.")

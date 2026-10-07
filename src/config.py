@@ -10,6 +10,7 @@ from src.exceptions import ConfigError
 load_dotenv()
 
 _CONFIG_PATH = Path(__file__).parent.parent / "config.json"
+_ENV_PATH = Path(__file__).parent.parent / ".env"
 
 
 def _missing_config(path: Path) -> dict[str, Any]:
@@ -36,3 +37,22 @@ def get_stripe_api_key() -> str:
     if not key:
         raise ConfigError("STRIPE_API_KEY not set in environment / .env file")
     return key
+
+
+def save_stripe_api_key(key: str, env_path: str | Path | None = None) -> None:
+    """Write ``STRIPE_API_KEY`` to ``.env`` and into the running process.
+
+    Refuses an empty key. Only the exact ``STRIPE_API_KEY=`` line is replaced, so
+    the ``STRIPE_API_KEY_RESTRICTED`` fallback is left alone. ``os.environ`` is
+    updated too, because dotenv is only read once at import.
+    """
+    key = key.strip()
+    if not key:
+        raise ConfigError("Stripe API key is empty - nothing was saved.")
+    path = Path(env_path) if env_path else _ENV_PATH
+    lines: list[str] = []
+    if path.exists():
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.startswith("STRIPE_API_KEY=")]
+    lines.append(f"STRIPE_API_KEY={key}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ["STRIPE_API_KEY"] = key

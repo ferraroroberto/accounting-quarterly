@@ -6,7 +6,7 @@ The durable reference for **every tax rule the app applies** when it computes th
 - **Legal basis**: the article, order or AEAT manual it rests on;
 - **External accountant**: where a *gestor* or *asesor* commonly does it differently. Each such difference, once confirmed in the Reconciliation tab, belongs in `divergences.json` with the category `convention` (a legitimate alternative), `gestor_error` (the filed figure is wrong) or `app_choice` (a deliberate app position).
 
-How to *run* a quarter, including filing on the AEAT Sede, is in [quarter-close-runbook.md](quarter-close-runbook.md). Box-by-box mechanics (field names, audit cells) are in the README sections [Modelo 303 box model](../README.md#modelo-303-box-model), [Modelo 130 box model](../README.md#modelo-130-box-model) and [Modelo 349 operators](../README.md#modelo-349-operators). The annual returns (390, 347 purchases, P&L per activity) belong to the annual pack (#103) and are not covered here.
+How to *run* a quarter, including filing on the AEAT Sede, is in [quarter-close-runbook.md](quarter-close-runbook.md). Box-by-box mechanics (field names, audit cells) are in [tax-engine-reference.md](tax-engine-reference.md): [Modelo 303 box model](tax-engine-reference.md#modelo-303-box-model), [Modelo 130 box model](tax-engine-reference.md#modelo-130-box-model) and [Modelo 349 operators](tax-engine-reference.md#modelo-349-operators). The annual returns (390, 347 purchases, P&L per activity) belong to the annual pack (#103) and are not covered here.
 
 > This is a working record of the positions the app takes, not tax advice. The law changes: re-check a rule against its source when a figure looks surprising, and before relying on it for a new situation.
 

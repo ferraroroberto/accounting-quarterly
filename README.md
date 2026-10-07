@@ -392,7 +392,7 @@ Every step takes `--year Y --quarter Q` (default: the last completed quarter), i
 .venv/Scripts/python.exe scripts/close_quarter.py fx-backfill                          # backfill ECB FX rates to today
 .venv/Scripts/python.exe scripts/close_quarter.py fx-recompute [--dry-run] [--since D] # re-resolve stored invoices' EUR at the ECB rate
 .venv/Scripts/python.exe scripts/close_quarter.py archive --year Y --quarter Q         # after filing: quarter folder + DB snapshot -> app.archive_dir
-.venv/Scripts/python.exe scripts/close_quarter.py relink [--manifest moves.csv] [--apply] # after moving/renaming invoice PDFs
+.venv/Scripts/python.exe scripts/close_quarter.py relink [--manifest moves.csv] [--old-in-dir D] [--old-out-dir D] [--apply] # after moving/renaming invoice PDFs
 ```
 
 - **`sweep`** (pipeline step 1) diffs `invoice_in_dir` / `invoice_out_dir` (recursively) against both the `invoices` DB table and a cumulative manifest (`tmp/close_quarter/invoice_copy_log.json`), copies only the files not seen before into `tmp/close_quarter/<year>_Q<quarter>/`, and updates the manifest — safe to rerun after adding more invoices.
@@ -494,9 +494,9 @@ Computed figures are **not** recalculated on every page load. Click **Calculate 
 
 | Model | Name | Frequency | What it computes |
 |-------|------|-----------|-----------------|
-| **Modelo 303** | Declaración IVA Trimestral | Quarterly | Every AEAT box: accrued (01–13, 27), deductible (28–46, incl. reverse charge, capital goods and pro-rata), informational (59/60/120) and the result with the credit chain (64–73, 110/78/87) — see [Modelo 303 box model](#modelo-303-box-model) |
-| **Modelo 130** | Pago Fraccionado IRPF | Quarterly | Every AEAT box 01–19: YTD income/expenses (02 includes the 5% allowance), 20% advance, withholdings, the art. 110.3.c reduction (13) and the negative-result carry (15) — see [Modelo 130 box model](#modelo-130-box-model) |
-| **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Key `I` (services acquired from EU businesses) and key `S` (services supplied to EU businesses), one line per VAT id and key — see [Modelo 349 operators](#modelo-349-operators) |
+| **Modelo 303** | Declaración IVA Trimestral | Quarterly | Every AEAT box: accrued (01–13, 27), deductible (28–46, incl. reverse charge, capital goods and pro-rata), informational (59/60/120) and the result with the credit chain (64–73, 110/78/87) — see [Modelo 303 box model](docs/tax-engine-reference.md#modelo-303-box-model) |
+| **Modelo 130** | Pago Fraccionado IRPF | Quarterly | Every AEAT box 01–19: YTD income/expenses (02 includes the 5% allowance), 20% advance, withholdings, the art. 110.3.c reduction (13) and the negative-result carry (15) — see [Modelo 130 box model](docs/tax-engine-reference.md#modelo-130-box-model) |
+| **Modelo 349** | Operaciones Intracomunitarias | Quarterly | Key `I` (services acquired from EU businesses) and key `S` (services supplied to EU businesses), one line per VAT id and key — see [Modelo 349 operators](docs/tax-engine-reference.md#modelo-349-operators) |
 | **OSS Return** | One Stop Shop | Quarterly | B2C digital services to EU non-Spain customers, grouped by country — only when `oss_registered` is true |
 | **EU B2C threshold** | Art. 73 LIVA | Live | Year-to-date EU B2C sales (ex-VAT) vs €10,000; warns at 80%, flags the previous year too |
 | **Modelo 347** | Operaciones con Terceros | Annual | Spain counterparties with total operations > €3,005.06 (**importe IVA incluido**): sales here, purchases in the [Annual Pack](#annual-pack-modelo-390-modelo-347-pl-per-activity) |
@@ -571,7 +571,7 @@ Every key above drives a computation:
 | `vat_registered` | When `false`, Spanish sales are treated as `IVA_EXEMPT` (no IVA devengado) and no input IVA is deducted in Modelo 303. |
 | `oss_registered` | Default `false` (OSS is opt-in, Modelo 035). Unless `true`, no OSS return is generated (an audit note records why) and EU B2C sales are `EU_B2C_ES21`. |
 | `activity_start_date` | ISO date (`YYYY-MM-DD`) the business activity began. Absent → no lower bound (unchanged behaviour). Set, it floors every quarter/YTD range: a Stripe charge or invoice dated before it is left out of 303, 130, 349, 390 and 347 (income on the date itself is still counted), and the 303 box 110 / 130 box 05-15 chains never reach back before it. An audit note records what was excluded (accounting-quarterly#133). |
-| `prorrata.enabled` | VAT pro-rata (arts. 102–106 LIVA), default `true`. See [Modelo 303 box model](#modelo-303-box-model). |
+| `prorrata.enabled` | VAT pro-rata (arts. 102–106 LIVA), default `true`. See [Modelo 303 box model](docs/tax-engine-reference.md#modelo-303-box-model). |
 | `prorrata.definitive_pct_by_year` | The definitive pro-rata % of each year once filed (Q4 303 / 390); it is the next year's provisional %. Years not listed fall back to the % the app computes from that year's data, then 100. |
 | `previous_year_net_yield` | Previous year's net yield of economic activities for Modelo 130 box 13 — a number, or `{"<year>": amount}`. Only used when the previous year's Q4 130 receipt is not imported; without either, the app's own previous-year figure is used. |
 | `modelo303_q4_negative_result` | `compensate` (default, box 72) or `refund` (box 73) for a negative Q4 result. Q1–Q3 always carry forward. |
@@ -580,63 +580,9 @@ Every key above drives a computation:
 | `vat_proration_percentage` | Legacy flat pro-rata %. Only used, as the provisional %, when it is not `100` and the previous year has no `prorrata.definitive_pct_by_year` entry. |
 | `default_vat_treatment_eu_coaching` / `default_vat_treatment_eu_newsletter` / `default_vat_treatment_eu_illustrations` | Pick the EU B2C sub-treatment (`EU_B2C_ES21` or `OSS_EU`) per activity for a sale **without** a known customer VAT id. Default `EU_B2C_ES21` for every activity. No longer selects B2B: since #113, `IVA_EU_B2B` only applies when the customer has a VAT id on file (see "VAT treatment classification" above) — a legacy `IVA_EU_B2B` value here is accepted but ignored. |
 
-### Modelo 303 box model
+### Modelo 303, 130 and 349 box models
 
-`compute_modelo_303` returns a `Modelo303Result` whose fields are named after the AEAT boxes (`c07_base`, `c09_cuota`, …, `c110_pendiente_anteriores`); `result.aeat_boxes()` gives them keyed by the box number as printed on the form (`"07"`, `"110"`), in form order. The layout and formulas follow the AEAT form (Manual práctico IVA 2025, cap. 9): rows 01/03 = 4%, 04/06 = 10%, 07/09 = 21%; 27 = sum of the accrued cuotas; 45 = 29 + 31 + 37 + 43 + 44; 46 = 27 − 45; 64 = 46; 66 = 64 × 65 %; 69 = 66 − 78; 71 = 69.
-
-| Box | Source |
-|-----|--------|
-| 01–09 | Stripe Spain + EU consumers at Spanish 21% (`EU_B2C_ES21`, no OSS) and income invoices `ES_21` (by rate) / `EU_B2C_ES21` |
-| 10/11 · 36/37 | `INTRA_EU_RC` purchases: base × 21% self-assessed (accrued), and deducted × `deductible_pct_vat` |
-| 12/13 | `NON_EU_RC` purchases (non-EU services, reverse charge — VAT-neutral) and the quarter's Stripe platform (application) fees at 21% (same classified charges as the sales, by charge date; audit source `platform_fee`, one record per charge; `tax.platform_fee_vat_treatment`), deducted in 28/29 |
-| 28/29 | `DOMESTIC` invoices × `deductible_pct_vat` (minus any capital-good share), `NON_EU_RC`, Stripe platform fees at 100%, manual `IVA_SOPORTADO` entries (cuota ÷ their rate for the base) |
-| 30/31 | Capital goods (unit base > €3,005.06) from the fixed-asset register at their VAT business-use %; `DOMESTIC_CAPITAL` invoices not in the register use the invoice |
-| 43 · 44 | Q4 only: capital-goods regularisation (arts. 107–109 LIVA) and the pro-rata regularisation |
-| 59 · 60 · 120 | EU B2B sales · exports of goods (none today) · non-EU sales not subject by location rules (Stripe non-EU customers + `NON_EU_NOT_SUBJECT` invoices). Earlier filings by the external accountant put non-EU service invoices in 60 instead of 120 — informational only, no money effect |
-| 110 | The previous quarter's **filed** 87 + 72 (imported receipt, see [Importing filed AEAT receipts](#importing-filed-aeat-receipts)); when not imported, the app's own previous-quarter result, chained back to the first period with data |
-| 78 / 87 | 78 = min(110, max(0, 66)); 87 = 110 − 78. Q4 with `refund`: 78 = 110 |
-| 72 / 73 | A negative 71 is carried forward in 72; in Q4 it can be refunded (73) instead |
-
-**Pro-rata** (arts. 102–106 LIVA, `tax.prorrata.enabled`, default on). During a year every deductible box is multiplied by the *provisional* %, which is the previous year's *definitive* %. In Q4 the engine computes the year's definitive % (art. 104: operations with the right to deduct — taxed sales plus EU B2B, non-EU and OSS sales that would carry the right if made in Spain — over those plus exempt ones such as `EXEMPT_TEACHING`, rounded **up** to the unit) and puts (definitive − provisional) × the year's deductible VAT into box 44. Record the definitive % under `tax.prorrata.definitive_pct_by_year` once filed. `c46_sin_prorrata` shows box 46 with 100% deduction, for comparing with filings that ignore the pro-rata.
-
-Manual `IVA_SOPORTADO` entries (Tax Obligations → Manual Entries) now carry their VAT rate, from which the box 28 base is derived; the old fixed 21% assumption is gone.
-
-Old snapshots with the pre-#97 field names (`box_01_base`, `box_29_cuota_soportado`, `export_base`, …) still decode: the codec maps them to the new fields and fills in the totals.
-
-### Modelo 349 operators
-
-`compute_modelo_349` returns a `Modelo349Result`: `result.operators()` lists the declarable lines as the form does (`country`, `vat_id` without the country prefix, `name`, `key`, `base`) and `result.aeat_boxes()` the summary boxes — 01 number of operators, 02 total amount, 03/04 rectifications (always 0: rectification lines are out of scope).
-
-| Key | Source | Grouped by | Name |
-|-----|--------|-----------|------|
-| `I` | Expense invoices with `tax_treatment` `INTRA_EU_RC` | Vendor VAT id: the invoice's `vendor_vat_id_norm` / `vendor_nif`, else the matched vendor-registry `vat_id` | Registry `legal_entity`, else the invoice vendor name |
-| `S` | Stripe charges treated `IVA_EU_B2B` (customer `buyer_vat_id`) + income invoices with `tax_treatment` `EU_B2B` (`client_nif`) | Normalised VAT id (`normalize_vat_id`) | Stripe customer e-mail / invoice client name |
-
-Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the stored EUR values (ECB rate resolved at OCR time; `eur_received` for income invoices), so — lines not declared aside — key `I` adds up to 303 box 10 and key `S` to box 59. Lines that cannot be declared are listed apart with a warning: an operator whose quarter total is **zero or negative** (`result.excluded` — rectify the original period instead) and records **without a VAT id** (`result.unidentified` — add the id to the invoice or the vendor registry). A VAT id without an EU country prefix is declared but flagged. The **Modelo 349** tab of Tax Obligations shows the boxes and the operator table; the Tax Audit trail has one cell per line (`op_<KEY>_<VATID>`, with the records summed) plus `c01_operadores` / `c02_importe`. Snapshots stored before #99 (EU B2B sales only) decode as key `S` lines.
-
-### Modelo 130 box model
-
-`compute_modelo_130` returns a `Modelo130Result` whose fields are named after the AEAT boxes (`c01_ingresos` … `c19_resultado`); `result.aeat_boxes()` gives boxes `"01"`–`"19"` keyed as printed on the form, in form order. Formulas follow the AEAT Sede *Modelo 130 — Instrucciones*. Only 04 and 12 are floored at 0; 03, 07, 14, 17 and 19 may be negative, as on the form.
-
-| Box | Rule |
-|-----|------|
-| 01 | Year-to-date income: Stripe VAT bases (frozen declared-report amounts when frozen) + issued invoices gross of the withholding (`eur_received` when set) + exchange differences |
-| 02 | Real expenses + the 5% *gastos de difícil justificación*. Real expenses = expense invoices × `deductible_pct_irpf` (excluded rows and capital assets out) + RETA as paid, net of refunds + Stripe platform (application) fees + depreciation (posting mode) + manual `GASTOS_DEDUCIBLES`. Stripe's own processing fee is not added: it is already expensed from Stripe's invoices (see [tax conventions §8](docs/tax-conventions.md#8-modelo-130-irpf-advance-payment)). The allowance is 5% of the positive (01 − real expenses), capped at €2,000 a year, only under `estimacion_directa_simplificada` (art. 30.2.4ª LIRPF). The UI and the audit (`c02_gastos_reales`, `c02_platform_fees`, `c02_gastos_dificil_justificacion`) show the split; charges with an unknown fee split are counted in `c02_platform_fees` and the notes |
-| 03 · 04 | 03 = 01 − 02; 04 = 20% of the positive 03 |
-| 05 | Σ positive 07 − Σ 16 of the earlier quarters of the year |
-| 06 | Year-to-date withholdings: `irpf_amount` of issued invoices (exact cents) + manual `RETENCIONES_SOPORTADAS` |
-| 07 | 04 − 05 − 06 |
-| 08–11 | Agricultural activities — 0 |
-| 12 | max(0, 07 + 11) |
-| 13 | Art. 110.3.c RIRPF reduction by the previous year's net yield: ≤ 9,000 → 100; ≤ 10,000 → 75; ≤ 11,000 → 50; ≤ 12,000 → 25; otherwise 0. The net comes from the previous year's **filed** Q4 130 box 03, else `tax.previous_year_net_yield`, else the app's previous-year Q4 box 03 (no activity counts as 0). It applies even when 12 is 0, leaving a negative 14 |
-| 14 | 12 − 13 |
-| 15 | Only when 14 is positive: the negative 19s of earlier quarters of the year not yet deducted, up to 14 |
-| 16 · 18 | Housing-loan deduction · complementary return — 0 |
-| 17 · 19 | 17 = 14 − 15 − 16; 19 = 17 − 18. A negative 19 is carried into 15 of later quarters (`negativos_pendientes_posteriores`) |
-
-Boxes 05 and 15 chain through the earlier quarters of the year: each quarter's **filed** 130 is used when its receipt is imported (see [Importing filed AEAT receipts](#importing-filed-aeat-receipts)); otherwise the app computes that quarter itself. `c05_source` says which (`filed`, `app_chain`, `mixed`, `none`). The old `tax_filing_status` "previous payments" are no longer read.
-
-Old snapshots with the pre-#98 field names (`box_01_ingresos`, `box_05_base`, `box_16_resultado`, …) still decode: `box_02_gastos` becomes the real expenses, 02 gets the allowance added back, and 07/12/14/17 are derived (legacy results had no 13/15).
+Field-by-field box tables (AEAT box → source, field names, audit cell names) are the tax-engine reference, not a tab overview: [docs/tax-engine-reference.md](docs/tax-engine-reference.md#modelo-303-box-model) covers the Modelo 303 box model, the [Modelo 130 box model](docs/tax-engine-reference.md#modelo-130-box-model) and [Modelo 349 operators](docs/tax-engine-reference.md#modelo-349-operators). The legal basis behind each box is in [tax-conventions.md](docs/tax-conventions.md).
 
 ### Invoice data in tax calculations
 
@@ -679,17 +625,7 @@ Items that cannot be derived from Stripe or invoices (additional overrides, one-
 
 ### Modelo 390 (`src/modelo_390.py`)
 
-`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation and the validator use it. Box layout from the AEAT *Modelo 390. Instrucciones* (Sede, procedure G412, layout valid since ejercicio 2024):
-
-| Section | Boxes |
-|---------|-------|
-| IVA devengado | 01–06 (régimen ordinario 4/10/21 %), 545–552 (intra-EU acquisitions of services by rate), 27/28 (other reverse charge), 33/34 totals, 47 |
-| IVA deducible | 190/191, 603/604, 605/606 → 48/49 (current domestic, incl. non-EU reverse charge); 196/197, 611–614 → 50/51 (capital goods); 587/588, 635–638 → 597/598 (intra-EU services); 63 (capital-goods regularisation); 522 (pro-rata regularisation, the Q4 303 box 44); 64, 65 = 47 − 64 |
-| Result | 84, 85 (credit of earlier years applied: FIFO walk of the quarters, each box 78 consuming Q1's box 110 first, capped at each quarter's 110), 86 = 84 − 85, 95 (Σ positive 71), 97/98 (Q4 72/73), 662 (credit generated this year still pending: Q4 87 minus what is left of earlier years' credit) |
-| Volume | 99 (taxed sales), 103 (intra-EU B2B), 104 (exports), 105 (exempt teaching), 110 (non-EU services not subject — the 303's box 120), 126 (OSS), 108 total |
-| Pro-rata | 115/116/118 (general pro-rata, box 117 = G) — only when exempt operations exist |
-
-Deductible bases are "sin prorratear" (the 303's `base_100`), cuotas after the pro-rata. The per-rate split follows the rate of each 303 audit record and is rounded so the rates add up to the section total. `INTRA_EU_RC` purchases are services (349 key I). The external accountant reported non-EU services in 104; the app follows the instructions (110). `230`/`232` (exempt / non-deductible purchases) are not modelled. The audit of boxes 85 and 662 records the per-quarter credit walk and its `flags`: `carried_in_from_app_chain` when Q1's box 110 comes from the app's own chain rather than the filed 4T return of the previous year, and `chain_break_QN` when a quarter's 110 differs from the previous quarter's 87 + 72; both also appear in the 390 notes.
+`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation and the validator use it. Full box layout: [docs/tax-engine-reference.md#modelo-390-box-model](docs/tax-engine-reference.md#modelo-390-box-model).
 
 ### Modelo 347 (`src/modelo_347.py` purchases + `compute_modelo_347` sales)
 
@@ -956,43 +892,16 @@ All fields required for AEAT compliance (Libro de IVA, SII, Modelo 303/347/349):
 
 ### Foreign-currency invoices: EUR resolution
 
-The LLM's own `subtotal_eur`/`iva_amount`/`total_eur` guess for a foreign-currency
-document is used only as a **cross-check** — the authoritative EUR figure comes
-from `src.fx_rates.resolve_invoice_amounts`, called right after extraction
-(`src/invoice_ingest.extract_and_save`, shared by the Invoice OCR tab and
-`close_quarter.py ocr`), in this order:
+The LLM's own `subtotal_eur`/`iva_amount`/`total_eur` guess for a foreign-currency document is used only as a **cross-check** — the authoritative EUR figure comes from `src.fx_rates.resolve_invoice_amounts`, called right after extraction (`src/invoice_ingest.extract_and_save`, shared by the Invoice OCR tab and `close_quarter.py ocr`), in this order:
 
-1. **`charged_eur`** — when the document itself states the EUR actually charged
-   to the card (e.g. *"Charged 42.50 EUR using 1 USD = 0.8500 EUR"*), that wins.
-   The OCR prompt extracts it into a new `charged_eur` field, left `null` when
-   the document doesn't state it.
-2. Otherwise, **the ECB rate on `invoice_date`** — `original_amount` divided by
-   the daily rate from `fx_rates`, with the fallback/staleness behaviour above.
+1. **`charged_eur`** — when the document itself states the EUR actually charged to the card (e.g. *"Charged 42.50 EUR using 1 USD = 0.8500 EUR"*), that wins. The OCR prompt extracts it into a new `charged_eur` field, left `null` when the document doesn't state it.
+2. Otherwise, **the ECB rate on `invoice_date`** — `original_amount` divided by the daily rate from `fx_rates`, with the fallback/staleness behaviour above.
 
-The resolved rate, its date and its source are stored per invoice
-(`fx_rate_used`, `fx_rate_date`, `fx_source` ∈ `NATIVE_EUR` / `CHARGED_EUR` /
-`ECB` / `NO_RATE` / `INVALID_DATE`, `fx_stale`), and the LLM's own estimate is
-compared against the resolved figure: a difference over 1% is stored as
-`fx_cross_check_diff_pct` and surfaced as a ⚠️ warning in the Invoice OCR and
-Invoice Ledger tabs.
+The resolved rate, its date and its source are stored per invoice (`fx_rate_used`, `fx_rate_date`, `fx_source` ∈ `NATIVE_EUR` / `CHARGED_EUR` / `ECB` / `NO_RATE` / `INVALID_DATE`, `fx_stale`), and the LLM's own estimate is compared against the resolved figure: a difference over 1% is stored as `fx_cross_check_diff_pct` and surfaced as a ⚠️ warning in the Invoice OCR and Invoice Ledger tabs.
 
-**Income invoices (`direction='out'`):** the same ECB resolution applies at
-extraction time, and it is **final**, not provisional — per art. 79.Once LIVA,
-income kept in a foreign-currency account (never converted) is booked at the
-ECB rate on the invoice date. If the money **was** actually converted on
-receipt, set `eur_received` in the Invoice Ledger tab once it's known; it then
-wins over the stored ECB figure in every tax computation that reads invoice
-income (Modelo 130 box 01, Modelo 303 box 120). See
-[Exchange rate differences](#exchange-rate-differences) for what happens when
-a foreign-currency balance booked at the ECB rate is converted later.
+**Income invoices (`direction='out'`):** the same ECB resolution applies at extraction time, and it is **final**, not provisional — per art. 79.Once LIVA, income kept in a foreign-currency account (never converted) is booked at the ECB rate on the invoice date. If the money **was** actually converted on receipt, set `eur_received` in the Invoice Ledger tab once it's known; it then wins over the stored ECB figure in every tax computation that reads invoice income (Modelo 130 box 01, Modelo 303 box 120). See [Exchange rate differences](#exchange-rate-differences) for what happens when a foreign-currency balance booked at the ECB rate is converted later.
 
-**Invoices stored before this resolver existed** (or before a later fix to
-it) keep whatever EUR figure the LLM originally guessed until corrected —
-resolution only runs at extraction time, not retroactively. Run
-`close_quarter.py fx-recompute` (or the Currency tab's **Recompute FX for
-stored invoices** button) to re-resolve every stored non-EUR invoice in
-place; see [Closing a Quarter](#closing-a-quarter) for the command and its
-guarantees (locked fields skipped, `eur_received` untouched, idempotent).
+**Invoices stored before this resolver existed** (or before a later fix to it) keep whatever EUR figure the LLM originally guessed until corrected — resolution only runs at extraction time, not retroactively. Run `close_quarter.py fx-recompute` (or the Currency tab's **Recompute FX for stored invoices** button) to re-resolve every stored non-EUR invoice in place; see [Closing a Quarter](#closing-a-quarter) for the command and its guarantees (locked fields skipped, `eur_received` untouched, idempotent).
 
 ### All Records tab features
 
@@ -1043,55 +952,15 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 
 **Locks.** Every field you change is added to the invoice's `locked_fields` (JSON list). Re-extracting the PDF in the Invoice OCR tab never overwrites a locked field — enforced in `src/database.py` (`upsert_invoice`), not just in the UI. Ledger-only columns (`excluded`, `eur_received`, …) also survive a plain re-extract. **Unlock all fields** releases the locks (values stay as they are) so the next re-extract may overwrite them.
 
-**Ledger columns** (added by an idempotent migration on startup):
+**Ledger columns** (added by an idempotent migration on startup), and the **backfill of `tax_treatment`** from the legacy `vat_treatment`: [docs/tax-engine-reference.md#ledger-columns](docs/tax-engine-reference.md#ledger-columns) and [docs/tax-engine-reference.md#backfill-of-tax_treatment](docs/tax-engine-reference.md#backfill-of-tax_treatment).
 
-| Column | Meaning |
-|--------|---------|
-| `tax_treatment` | Expenses: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT`, `NOT_DEDUCTIBLE`. Income: `ES_21`, `EU_B2C_ES21`, `EU_B2B`, `NON_EU_NOT_SUBJECT`, `EXEMPT_TEACHING`. |
-| `deductible_pct_vat` / `deductible_pct_irpf` | Business-use share for the VAT deduction (303) and the IRPF expense (130), independently. Backfilled from the legacy `deductible_pct`. |
-| `is_capital_asset`, `asset_class` | Capital-asset flag and class. A flagged invoice is not expensed in the Modelo 130; register it as a fixed asset so its cost enters through depreciation (see [Fixed Assets](#fixed-assets)). |
-| `excluded`, `excluded_reason` | `1` removes the row from every tax computation; reason ∈ `duplicate`, `receipt`, `personal`, `other_period`, `superseded`. |
-| `eur_received`, `payment_date` | EUR actually received for foreign-currency income, and when. |
-| `vendor_vat_id_norm` | `vendor_nif` normalised for matching: upper-case, separators stripped, Spanish ids `ES`-prefixed. |
-| `locked_fields`, `reviewed_at` | User-edited fields (never overwritten by re-OCR) and last review time. |
-| `charged_eur` | EUR actually charged to the card, when the document states it (expenses) — wins over the ECB rate. The one FX field you may correct by hand. |
-| `fx_rate_used`, `fx_rate_date`, `fx_source`, `fx_stale`, `fx_cross_check_diff_pct` | FX resolution metadata (#93) — see [Foreign-currency invoices: EUR resolution](#foreign-currency-invoices-eur-resolution). Derived; re-resolved on the next OCR extraction, not directly editable. |
-
-**Backfill of `tax_treatment`** from the legacy `vat_treatment` (still stored and kept in sync when you edit the treatment). The mapping preserves what the engine did with the legacy value:
-
-| Direction | Legacy `vat_treatment` (+ `geo_region`) | `tax_treatment` |
-|-----------|------------------------------------------|-----------------|
-| in | `IVA_ES_21` | `DOMESTIC` |
-| in | `IVA_EU_B2B` | `INTRA_EU_RC` |
-| in | `IVA_EXEMPT` + `OUTSIDE_EU` | `NON_EU_RC` |
-| in | `IVA_EXEMPT` + any other region | `NO_VAT` |
-| out | `IVA_ES_21` | `ES_21` |
-| out | `OSS_EU` | `EU_B2C_ES21` |
-| out | `IVA_EU_B2B` | `EU_B2B` |
-| out | `IVA_EXPORT` | `NON_EU_NOT_SUBJECT` |
-| out | `IVA_EXEMPT` + `SPAIN` | `EXEMPT_TEACHING` |
-| out | `IVA_EXEMPT` + other / unknown region | left empty — review it in the Ledger tab |
-
-The tax engine uses `excluded`, `invoice_date`, the split business-use percentages and, for the Modelo 303, `tax_treatment` (see [Modelo 303 box model](#modelo-303-box-model)). Rows with no `tax_treatment` are derived from the legacy `vat_treatment` on the fly.
+The tax engine uses `excluded`, `invoice_date`, the split business-use percentages and, for the Modelo 303, `tax_treatment` (see [Modelo 303 box model](docs/tax-engine-reference.md#modelo-303-box-model)). Rows with no `tax_treatment` are derived from the legacy `vat_treatment` on the fly.
 
 ### Exchange rate differences
 
-A foreign-currency income invoice with no `eur_received` is booked at the ECB
-rate on the invoice date — final, not provisional (see above). If that
-foreign-currency balance is **later converted** to EUR, the conversion
-realises a gain or loss against the EUR figure originally booked, which must
-be recorded as activity income (or a loss) in the quarter of conversion, not
-the invoice's own quarter.
+A foreign-currency income invoice with no `eur_received` is booked at the ECB rate on the invoice date — final, not provisional (see above). If that foreign-currency balance is **later converted** to EUR, the conversion realises a gain or loss against the EUR figure originally booked, which must be recorded as activity income (or a loss) in the quarter of conversion, not the invoice's own quarter.
 
-The Invoice Ledger tab's **income** view has an "Exchange rate differences"
-form for this: pick the invoice (optional), the conversion date, the
-foreign-currency amount converted, and the EUR actually obtained. It computes
-`gain_loss_eur = eur_obtained − booked_eur` and stores it in the
-`fx_exchange_differences` table (`src.fx_rates.record_exchange_difference` /
-`get_exchange_differences`). Every recorded gain/loss dated within a quarter's
-year-to-date window is added to that quarter's Modelo 130 box 01 income
-(`src.tax_engine.compute_modelo_130`) — on top of, not instead of, the
-invoice's own booked income, which keeps counting in its own quarter as usual.
+The Invoice Ledger tab's **income** view has an "Exchange rate differences" form for this: pick the invoice (optional), the conversion date, the foreign-currency amount converted, and the EUR actually obtained. It computes `gain_loss_eur = eur_obtained − booked_eur` and stores it in the `fx_exchange_differences` table (`src.fx_rates.record_exchange_difference` / `get_exchange_differences`). Every recorded gain/loss dated within a quarter's year-to-date window is added to that quarter's Modelo 130 box 01 income (`src.tax_engine.compute_modelo_130`) — on top of, not instead of, the invoice's own booked income, which keeps counting in its own quarter as usual.
 
 ---
 

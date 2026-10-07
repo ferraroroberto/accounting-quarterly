@@ -187,7 +187,6 @@ class ReconLine:
     app: Optional[float]
     status: str = STATUS_MISSING
     divergence: Optional[Divergence] = None
-    note: str = ""        # caveat of the legacy field mapping, if any
 
     @property
     def diff(self) -> Optional[float]:
@@ -212,7 +211,6 @@ class Reconciliation:
     year: int
     quarter: Optional[int]
     filed_found: bool
-    engine: str                    # "aeat" (result.aeat_boxes) or "legacy"
     filed_source: str = ""         # "db" (imported receipt) or "yaml"
     filed_date: str = ""
     lines: list[ReconLine] = field(default_factory=list)
@@ -311,7 +309,6 @@ def build_lines(
     filed_complete: bool = True,
     filed_operators: Optional[list[dict]] = None,
     app_ops: Optional[list[dict]] = None,
-    notes: Optional[dict[str, str]] = None,
 ) -> list[ReconLine]:
     """Rows for the union of filed and app boxes (plus 349 operators).
 
@@ -319,7 +316,6 @@ def build_lines(
     With ``filed_complete`` (an imported receipt) a blank box counts as 0;
     a hand-written YAML filing only knows the boxes it lists.
     """
-    notes = notes or {}
     labels = BOX_LABELS.get(model, {})
     lines: list[ReconLine] = []
     boxes = set(app) | set(filed_boxes or {})
@@ -330,7 +326,7 @@ def build_lines(
             filed = filed_boxes[box]
         else:
             filed = 0.0 if filed_complete else None
-        lines.append(ReconLine(box, labels.get(box, ""), filed, app.get(box), note=notes.get(box, "")))
+        lines.append(ReconLine(box, labels.get(box, ""), filed, app.get(box)))
 
     if model == "349":
         filed_by, app_by = _ops_by_key(filed_operators), _ops_by_key(app_ops)
@@ -360,9 +356,9 @@ def to_markdown(rec: Reconciliation) -> str:
     source = {"db": "imported AEAT receipt", "yaml": "validation.yaml"}.get(rec.filed_source, "")
     head = [f"## Modelo {rec.model} — {rec.period} — filed vs app", ""]
     if rec.filed_found:
-        head.append(f"Filed: {rec.filed_date or '—'} ({source}). App engine: {rec.engine}.")
+        head.append(f"Filed: {rec.filed_date or '—'} ({source}).")
     else:
-        head.append(f"No filed return for this period. App engine: {rec.engine}.")
+        head.append("No filed return for this period.")
     head.append("")
     head.append(" · ".join(f"{STATUS_ICONS[s]} {s}: {counts[s]}" for s in STATUSES))
     head.append("")
@@ -508,15 +504,9 @@ def _compute(model: str, year: int, quarter: int, conn: sqlite3.Connection, conf
     return engines[model](year, quarter, conn, config)
 
 
-def _is_aeat(result: Any) -> bool:
-    return callable(getattr(result, "aeat_boxes", None))
-
-
 def result_boxes(model: str, result: Any) -> dict[str, float]:
-    """AEAT box → value of one engine result's ``aeat_boxes()`` ({} for a result without one)."""
-    if _is_aeat(result):
-        return {normalize_box(k): float(v) for k, v in result.aeat_boxes().items() if v is not None}
-    return {}
+    """AEAT box → value of one engine result's ``aeat_boxes()``."""
+    return {normalize_box(k): float(v) for k, v in result.aeat_boxes().items() if v is not None}
 
 
 def result_operators(result: Any) -> list[dict]:
@@ -607,22 +597,21 @@ def reconcile(
         result = compute_modelo_390(year, conn, config)
     else:
         result = _compute(model, year, quarter, conn, config)
-    engine = "aeat" if _is_aeat(result) else "legacy"
     app = result_boxes(model, result)
     if model == "349":
         app_ops = result_operators(result)
     live_audit = _audit_dicts(getattr(result, "audit", []) or [])
 
     rec = Reconciliation(
-        model=model, year=year, quarter=quarter, filed_found=filing is not None, engine=engine,
+        model=model, year=year, quarter=quarter, filed_found=filing is not None,
         filed_source=(filing or {}).get("source", ""), filed_date=(filing or {}).get("filed_date", ""),
         lines=build_lines(model, filed_boxes, app, filed_complete=filed_complete,
                           filed_operators=filed_ops, app_ops=app_ops),
         live_audit=live_audit,
     )
     apply_catalogue(rec, catalogue or [])
-    log.info("ℹ️ Reconciled Modelo %s %s (%s engine, filed=%s): %s",
-             model, rec.period, engine, rec.filed_found, rec.counts())
+    log.info("ℹ️ Reconciled Modelo %s %s (filed=%s): %s",
+             model, rec.period, rec.filed_found, rec.counts())
     return rec
 
 
@@ -630,19 +619,16 @@ def reconcile(
 # Drill-down: audit records behind an app box
 # ---------------------------------------------------------------------------
 
-def audit_entries_for_box(entries: Iterable[dict], model: str, box: str, engine: str) -> list[dict]:
+def audit_entries_for_box(entries: Iterable[dict], model: str, box: str) -> list[dict]:
     """The audit entries (``tax_audit_log`` row dicts) that produced ``box``.
 
     AEAT-numbered results match cells named after the box (``c07_base``,
-    ``box_07``, ``07``); a legacy result has no field map left (nothing
-    matches). A 349 operator row matches the cells that name its VAT id.
+    ``box_07``, ``07``). A 349 operator row matches the cells that name its VAT id.
     """
     entries = list(entries)
     if box.startswith(OPERATOR_PREFIX):
         vat = box[len(OPERATOR_PREFIX):].rsplit(":", 1)[0]
         return [e for e in entries if vat in _VAT_SEPARATORS_RE.sub("", str(e.get("cell", "")).upper())]
-    if engine == "legacy":
-        return []
     pattern = re.compile(rf"^(?:c|box_?)?{re.escape(box)}(?:_|$)", re.IGNORECASE)
     return [e for e in entries if pattern.match(str(e.get("cell", "")))]
 

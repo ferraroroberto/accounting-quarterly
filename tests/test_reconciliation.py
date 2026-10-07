@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -110,7 +109,7 @@ class TestClassify:
 
 class TestApplyCatalogue:
     def _rec(self, **kw) -> Reconciliation:
-        return Reconciliation(model="303", year=2025, quarter=2, filed_found=True, engine="legacy",
+        return Reconciliation(model="303", year=2025, quarter=2, filed_found=True,
                               lines=[ReconLine("46", "", 10.0, 15.0)], **kw)
 
     def test_entry_for_other_period_or_box_does_not_apply(self):
@@ -273,7 +272,7 @@ class TestCatalogue:
 # ---------------------------------------------------------------------------
 
 def test_markdown_export_contains_every_row_and_escapes_pipes():
-    rec = Reconciliation(model="303", year=2025, quarter=2, filed_found=True, engine="legacy",
+    rec = Reconciliation(model="303", year=2025, quarter=2, filed_found=True,
                          filed_source="db", filed_date="2025-07-20",
                          lines=[ReconLine("07", "Base 21 %", 100.0, 100.0),
                                 ReconLine("46", "Resultado", -10.0, -5.0),
@@ -288,7 +287,7 @@ def test_markdown_export_contains_every_row_and_escapes_pipes():
 
 
 def test_markdown_export_without_filed_return():
-    rec = Reconciliation(model="130", year=2025, quarter=1, filed_found=False, engine="legacy",
+    rec = Reconciliation(model="130", year=2025, quarter=1, filed_found=False,
                          lines=[ReconLine("01", "", None, 10.0)])
     apply_catalogue(rec, [])
     assert "No filed return for this period" in to_markdown(rec)
@@ -326,12 +325,6 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
 
 
 class TestAppBoxesAdapter:
-    def test_no_legacy_mapping_is_left(self):
-        # Every engine has its own aeat_boxes() (#97/#98/#99/#103): a result without one maps to nothing.
-        legacy = SimpleNamespace(rows=[], total=9.5)
-        for model in ("303", "130", "349", "390"):
-            assert result_boxes(model, legacy) == {}
-
     def test_303_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_303(2025, 1, db_conn, CFG)
         boxes = app_boxes("303", 2025, 1, db_conn, CFG)
@@ -347,7 +340,6 @@ class TestAppBoxesAdapter:
         assert list(boxes) == [f"{n:02d}" for n in range(1, 20)]
         # Box 02 includes the 5 % allowance, as on the form.
         assert boxes["02"] == round(result.gastos_reales + result.gastos_dificil_justificacion, 2)
-        assert reconcile("130", 2025, 1, db_conn, CFG).engine == "aeat"
 
     def test_result_with_aeat_boxes_is_used_verbatim(self, db_conn, monkeypatch):
         class NewResult:
@@ -358,8 +350,6 @@ class TestAppBoxesAdapter:
 
         monkeypatch.setattr(rc, "compute_modelo_303", lambda *a, **k: NewResult())
         assert app_boxes("303", 2025, 1, db_conn, CFG) == {"07": 1.0, "10": 2.0, "110": 3.0}
-        rec = reconcile("303", 2025, 1, db_conn, CFG)
-        assert rec.engine == "aeat" and not any(ln.note for ln in rec.lines)
 
     def test_result_with_operators_is_used_for_349(self, db_conn, monkeypatch):
         class New349:
@@ -379,7 +369,7 @@ class TestAppBoxesAdapter:
 class TestReconcile:
     def test_no_filed_return_shows_app_side_only(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)
-        assert rec.filed_found is False and rec.engine == "aeat"
+        assert rec.filed_found is False
         assert rec.lines and all(ln.status == STATUS_MISSING for ln in rec.lines)
         assert {"07", "27", "110", "71"} <= {ln.box for ln in rec.lines}
 
@@ -397,7 +387,6 @@ class TestReconcile:
         assert by_box["110"].status == STATUS_UNCATALOGUED     # app chain has no earlier credit
         assert by_box["64"].status == STATUS_UNCATALOGUED      # blank on the return = 0
         assert by_box["33"].status == STATUS_MISSING           # imports: not computed by the app
-        assert not by_box["07"].note                           # AEAT engine: no legacy caveats
 
     def test_filed_349_compared_operator_by_operator(self, db_conn):
         _file(db_conn, "349", {"01": 1.0, "02": 100.0},
@@ -409,10 +398,9 @@ class TestReconcile:
     def test_390_is_annual(self, db_conn):
         rec = reconcile("390", 2025, 3, db_conn, CFG)
         assert rec.quarter is None and rec.period == "2025 annual"
-        assert rec.engine == "aeat"
         assert "05" in {ln.box for ln in rec.lines}
         # The 390 engine's audit trail backs the drill-down (cells named after the box).
-        cells = [e["cell"] for e in audit_entries_for_box(rec.live_audit, "390", "65", rec.engine)]
+        cells = [e["cell"] for e in audit_entries_for_box(rec.live_audit, "390", "65")]
         assert cells == ["c65"]
 
 
@@ -427,16 +415,12 @@ class TestAuditDrillDown:
         {"cell": "operator_IE1234567X", "value": 5.0}, {"cell": "total", "value": 5.0},
     ]
 
-    def test_legacy_engine_has_no_field_map_left(self):
-        assert audit_entries_for_box(self.ENTRIES, "349", "02", "legacy") == []
-        assert audit_entries_for_box(self.ENTRIES, "130", "04", "legacy") == []
-
     def test_aeat_box_matches_cells_named_after_it(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "07", "aeat")]
+        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "07")]
         assert cells == ["c07_base"]
 
     def test_operator_row_matches_its_vat_id(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "349", "op:IE1234567X:I", "legacy")]
+        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "349", "op:IE1234567X:I")]
         assert cells == ["operator_IE1234567X"]
 
     def test_logged_audit_reads_the_latest_run(self, db_conn):
@@ -450,6 +434,6 @@ class TestAuditDrillDown:
 
     def test_live_audit_is_carried_on_the_reconciliation(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)
-        hits = audit_entries_for_box(rec.live_audit, "303", "07", rec.engine)
+        hits = audit_entries_for_box(rec.live_audit, "303", "07")
         assert [h["cell"] for h in hits] == ["c07_base"]
         assert hits[0]["computed_at"] == "live"

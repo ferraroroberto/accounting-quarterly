@@ -206,15 +206,6 @@ def _render_table(rec: Reconciliation) -> None:
         hide_index=True,
         column_config={"Filed": money, "App": money, "Diff (app − filed)": money},
     )
-    caveats = [ln for ln in rec.lines if ln.note]
-    if caveats:
-        with st.expander(f"ℹ️ Legacy engine mapping caveats ({len(caveats)})", expanded=False):
-            st.caption(
-                "The app's engine still uses its pre-AEAT field names; these boxes are mapped "
-                "from them and do not carry the form's exact meaning yet (#97/#98/#99)."
-            )
-            for ln in caveats:
-                st.markdown(f"- **{ln.box}** — {ln.note}")
 
 
 def _render_drilldown(rec: Reconciliation) -> None:
@@ -244,7 +235,7 @@ def _render_drilldown(rec: Reconciliation) -> None:
             "No stored `tax_audit_log` run for this period — showing the live computation's "
             "audit trail (click **Calculate tax** in Tax Obligations to persist it)."
         )
-    entries = audit_entries_for_box(source, rec.model, box, rec.engine)
+    entries = audit_entries_for_box(source, rec.model, box)
     if not entries:
         st.info("No audit cell is linked to this box.")
         return
@@ -359,8 +350,7 @@ def render() -> None:
     if rec.filed_found:
         source = {"db": "imported AEAT receipt", "yaml": "`tmp/validation/validation.yaml`"}
         st.caption(
-            f"Filed {rec.filed_date or '—'} · source: {source.get(rec.filed_source, rec.filed_source)} "
-            f"· app engine: {rec.engine}"
+            f"Filed {rec.filed_date or '—'} · source: {source.get(rec.filed_source, rec.filed_source)}"
         )
         _render_summary(rec)
     else:

@@ -108,10 +108,10 @@ class TestGoldenTwoQuarters:
         r = compute_modelo_130(2025, 2, year)
         entries = [{"cell": e.cell, "value": e.value} for e in r.audit]
         for box in BOXES:
-            hits = audit_entries_for_box(entries, "130", box, "aeat")
+            hits = audit_entries_for_box(entries, "130", box)
             assert hits and hits[0]["cell"] == MODELO130_BOX_FIELDS[box]
         # The box 02 split is drillable under 02.
-        cells_02 = {e["cell"] for e in audit_entries_for_box(entries, "130", "02", "aeat")}
+        cells_02 = {e["cell"] for e in audit_entries_for_box(entries, "130", "02")}
         assert {"c02_gastos_reales", "c02_gastos_dificil_justificacion", "c02_amortizaciones"} <= cells_02
 
 

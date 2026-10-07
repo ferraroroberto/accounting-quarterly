@@ -383,7 +383,7 @@ def test_old_snapshot_field_names_still_decode():
                                                "box_29_base_soportado": 60.0}))
     assert (pre42.c28_base, pre42.c29_cuota) == (60.0, 15.0)
     # Legacy read-only aliases (still used by the validator until #100).
-    assert r.box_01_base == 1000.0 and r.export_base == 70.0
+    assert r.c07_base == 1000.0 and r.c120_no_sujetas_localizacion == 70.0
 
 
 def test_snapshot_roundtrip(conn):

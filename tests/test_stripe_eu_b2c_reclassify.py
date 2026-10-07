@@ -134,8 +134,8 @@ class TestEuB2CSpanish21:
         _store(db_path, [_payment("ch_eu1", "2025-02-10T10:00:00", 121.0,
                                   email_meta="reader@example.at")], sample_rules)
         r303 = compute_modelo_303(2025, 1, conn, {"tax": {}})
-        assert r303.box_01_base == pytest.approx(100.0)
-        assert r303.box_03_cuota == pytest.approx(21.0)
+        assert r303.c07_base == pytest.approx(100.0)
+        assert r303.c09_cuota == pytest.approx(21.0)
         assert r303.oss_base == 0.0
         audit_01 = next(a for a in r303.audit if a.cell == "c07_base")
         recs = json.loads(audit_01.inputs_json)["records"]
@@ -155,9 +155,9 @@ class TestEuB2CSpanish21:
                                   desc="Calendly coaching", email_meta="test@example.de")],
                sample_rules)
         r303 = compute_modelo_303(2025, 1, conn, {"tax": {}})
-        assert r303.box_01_base == pytest.approx(100.0)
-        assert r303.box_03_cuota == pytest.approx(21.0)
-        assert r303.box_59_intracom_entregas == 0.0
+        assert r303.c07_base == pytest.approx(100.0)
+        assert r303.c09_cuota == pytest.approx(21.0)
+        assert r303.c59_entregas_intracom == 0.0
         assert compute_modelo_349(2025, 1, conn, {"tax": {}}).rows == []
 
     def test_eu_coaching_with_vat_id_is_b2b_and_lists_on_349(self, db_path, conn, sample_rules):
@@ -172,8 +172,8 @@ class TestEuB2CSpanish21:
                rules)
 
         r303 = compute_modelo_303(2025, 1, conn, {"tax": {}})
-        assert r303.box_01_base == 0.0
-        assert r303.box_59_intracom_entregas == pytest.approx(500.0)
+        assert r303.c07_base == 0.0
+        assert r303.c59_entregas_intracom == pytest.approx(500.0)
 
         r349 = compute_modelo_349(2025, 1, conn, {"tax": {}})
         assert len(r349.rows) == 1
@@ -337,8 +337,8 @@ class TestDeclaredReport:
         conn.commit()
 
         r303 = compute_modelo_303(2026, 1, conn, {"tax": {}})
-        assert r303.box_01_base == pytest.approx(100.0)
-        assert r303.export_base == pytest.approx(60.0)
+        assert r303.c07_base == pytest.approx(100.0)
+        assert r303.c120_no_sujetas_localizacion == pytest.approx(60.0)
         assert compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos == \
             pytest.approx(before_130)
 
@@ -374,7 +374,7 @@ class TestDeclaredReport:
         _store(db_path, [_payment("ch_1", "2026-01-10T10:00:00", 121.0, desc="Calendly coaching")],
                sample_rules)
         assert get_declared_report(conn, 2026, 1) is None
-        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).box_01_base == pytest.approx(100.0)
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).c07_base == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +436,7 @@ class TestFreezeSentReport:
     def test_freezes_the_files_eur_amounts_and_the_engine_uses_them(
             self, db_path, conn, sample_rules, tmp_path):
         self._three_charges(db_path, sample_rules)
-        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(61.37)
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).c120_no_sujetas_localizacion == pytest.approx(61.37)
 
         path = self._sent_q1(tmp_path)
         frozen = freeze_sent_report(conn, 2026, 1, path)
@@ -453,7 +453,7 @@ class TestFreezeSentReport:
         assert tuple(line) == ("usd", None, 60.0, 60.0, "2026-03-10T10:00:00")
 
         # The engine now uses the file's EUR amount, not the live re-conversion.
-        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(60.0)
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).c120_no_sujetas_localizacion == pytest.approx(60.0)
         assert compute_modelo_130(2026, 1, conn, {"tax": {}}).c01_ingresos == \
             pytest.approx(100.0 + 200.0 + 60.0)
 
@@ -487,7 +487,7 @@ class TestFreezeSentReport:
         resent = self._sent_q1(tmp_path, name="Stripe_Report_Q1_2026_v2.xlsx", usd_eur=59.5)
         v2 = freeze_sent_report(conn, 2026, 1, resent, supersede=True).report
         assert (v2.version, v2.file_name) == (2, "Stripe_Report_Q1_2026_v2.xlsx")
-        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).export_base == pytest.approx(59.5)
+        assert compute_modelo_303(2026, 1, conn, {"tax": {}}).c120_no_sujetas_localizacion == pytest.approx(59.5)
 
     def test_ids_missing_from_live_are_listed_not_fatal(self, db_path, conn, sample_rules, tmp_path):
         self._three_charges(db_path, sample_rules)

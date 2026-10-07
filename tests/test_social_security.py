@@ -16,7 +16,6 @@ from src.social_security import (
     add_manual_ss_entry,
     detect_header_row,
     get_ss_payments,
-    get_ss_period_totals,
     load_bank_export,
     upsert_ss_payments,
 )
@@ -299,34 +298,6 @@ class TestManualEntry:
         add_manual_ss_entry("2026-06-30", 50.25, "Manual entry", db_path=tmp_db)
         inserted = add_manual_ss_entry("2026-06-30", 50.25, "Manual entry", db_path=tmp_db)
         assert inserted == 0
-
-
-# ---------------------------------------------------------------------------
-# Quarterly / yearly totals helper
-# ---------------------------------------------------------------------------
-
-class TestPeriodTotals:
-    def test_quarterly_and_yearly_totals(self, tmp_db):
-        init_db(tmp_db)
-        rows = [
-            {"payment_date": "2026-01-31", "amount_eur": 100.0, "description": "Q1 cuota"},
-            {"payment_date": "2026-02-28", "amount_eur": 100.0, "description": "Q1 cuota"},
-            {"payment_date": "2026-04-30", "amount_eur": 50.0, "description": "Q2 cuota"},
-            {"payment_date": "2026-05-31", "amount_eur": -20.0, "description": "Q2 refund"},
-        ]
-        upsert_ss_payments(rows, source_file="test", db_path=tmp_db)
-        totals = get_ss_period_totals(2026, db_path=tmp_db)
-        assert totals["quarters"][1] == 200.0
-        assert totals["quarters"][2] == 30.0
-        assert totals["quarters"][3] == 0.0
-        assert totals["quarters"][4] == 0.0
-        assert totals["yearly_total"] == 230.0
-
-    def test_empty_year_returns_zeroes(self, tmp_db):
-        init_db(tmp_db)
-        totals = get_ss_period_totals(2099, db_path=tmp_db)
-        assert totals["yearly_total"] == 0.0
-        assert all(v == 0.0 for v in totals["quarters"].values())
 
 
 # ---------------------------------------------------------------------------

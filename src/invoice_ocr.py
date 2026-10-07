@@ -4,17 +4,12 @@ Accepts any PDF (invoice, receipt, ticket, nota de gastos, etc.) and extracts
 Spanish-accounting-relevant fields, returning a structured dict ready to store
 in the `invoices` table.
 
-Two backends are supported, selected by the ``provider`` argument /
-``invoice_ocr.provider`` config key / ``INVOICE_OCR_PROVIDER`` env var:
-
-- ``"hub"`` (default) — routes the PDF + prompt through the local-llm-hub
-  (http://127.0.0.1:8000) using the Anthropic SDK and a ``document`` content
-  block, mapped to the ``gemini_pro`` alias. No Google credentials needed.
-- ``"gemini"`` — the legacy direct path via the ``google-genai`` SDK, using a
-  Vertex AI ADC service account or a Gemini API key. Kept as a fallback.
-
-Both paths share the same extraction prompt and post-parsing, so the returned
-dict schema is identical regardless of provider.
+Extraction routes through the local-llm-hub (http://127.0.0.1:8000) using the
+Anthropic SDK and a ``document`` content block, mapped to the ``gemini_pro``
+alias — no Google credentials are needed on this machine, since the hub holds
+the Google session. The legacy direct ``google-genai`` path was removed
+(#166) once the hub's PDF-attachment reliability bug (local-llm-hub#63) was
+fixed.
 """
 from __future__ import annotations
 
@@ -29,23 +24,11 @@ from src.logger import get_logger
 
 log = get_logger(__name__)
 
-# Direct google-genai model id (legacy "gemini" provider path).
-MODEL = "gemini-3.1-flash-lite-preview"
-
-# local-llm-hub defaults (the "hub" provider path).
+# local-llm-hub defaults — every extraction call flows through the hub for
+# central LAN access and observability, and no Google credentials are needed
+# on this machine.
 HUB_BASE_URL = "http://127.0.0.1:8000"
 HUB_MODEL = "gemini_pro"  # stable alias — never the display name
-
-# Default provider for extraction. Override via config (invoice_ocr.provider)
-# or the INVOICE_OCR_PROVIDER env var.
-#
-# Defaults to "hub": every LLM call flows through local-llm-hub for central LAN
-# access and observability, and no Google credentials are needed on this machine.
-# The hub's PDF-attachment reliability bug (local-llm-hub#63) is fixed — the hub
-# now passes attachment dirs via `agy --add-dir`, so document/PDF blocks ingest
-# deterministically. The legacy "gemini" (Vertex / API-key) path remains fully
-# intact as a selectable fallback.
-DEFAULT_PROVIDER = "hub"
 
 _EXTRACTION_PROMPT = """
 You are an expert Spanish accountant and OCR assistant specialising in AEAT compliance.
@@ -183,24 +166,6 @@ QUALITY RULES:
 """
 
 
-def _resolve_provider(provider: Optional[str]) -> str:
-    """Pick the extraction backend: explicit arg › env › config › default."""
-    if provider:
-        return provider.strip().lower()
-    env = os.getenv("INVOICE_OCR_PROVIDER")
-    if env:
-        return env.strip().lower()
-    try:
-        from src.config import load_config
-
-        cfg_provider = load_config().get("invoice_ocr", {}).get("provider")
-        if cfg_provider:
-            return str(cfg_provider).strip().lower()
-    except Exception:  # config optional — fall through to default
-        log.debug("Could not read invoice_ocr.provider from config; using default.")
-    return DEFAULT_PROVIDER
-
-
 def _parse_number_string(val: str) -> float:
     """Parse a number the model returned as a string, in either locale.
 
@@ -232,12 +197,12 @@ def _parse_number_string(val: str) -> float:
 def _parse_json_object(raw_text: str) -> dict:
     """Parse the JSON object out of a model response.
 
-    Tolerates markdown fences and any prose the model may emit before or after
-    the object. The legacy ``gemini`` path constrains output with Gemini's
-    ``response_mime_type="application/json"``; the ``hub`` path cannot pass that
-    backend-specific flag, so the model occasionally wraps the JSON in fences or
-    appends a trailing comment. We first try a strict parse, then fall back to
-    extracting the first balanced top-level ``{...}`` object.
+    Tolerates markdown fences and any prose the model may emit before or
+    after the object — the hub path cannot pass Gemini's
+    ``response_mime_type="application/json"`` flag directly, so the model
+    occasionally wraps the JSON in fences or appends a trailing comment. We
+    first try a strict parse, then fall back to extracting the first
+    balanced top-level ``{...}`` object.
     """
     clean = raw_text.strip()
 
@@ -328,84 +293,24 @@ def _extract_via_hub(pdf_bytes: bytes, pdf_name: str, model: Optional[str] = Non
     return "".join(parts).strip()
 
 
-def _extract_via_gemini(pdf_bytes: bytes, pdf_name: str, api_key: Optional[str]) -> str:
-    """Send the PDF + prompt directly to Gemini; return the raw model text.
-
-    Legacy fallback path via ``google-genai`` (Vertex ADC or API key).
-    """
-    try:
-        from google import genai
-        from google.genai import types as genai_types
-    except ImportError as exc:
-        raise RuntimeError(
-            "google-genai package not installed. "
-            "Run: pip install google-genai"
-        ) from exc
-
-    key = api_key or os.getenv("GOOGLE_API_KEY")
-
-    # Three auth modes:
-    # 1. GOOGLE_APPLICATION_CREDENTIALS set → Vertex AI with ADC (service account JSON)
-    # 2. Key starts with "AIza" → standard Gemini API (AI Studio key)
-    # 3. Fallback → try standard Gemini API with whatever key is provided
-    adc_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    project = os.getenv("GOOGLE_CLOUD_PROJECT", "accounting-quarterly")
-    location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-
-    if adc_path:
-        log.info(
-            "Extracting %s via Vertex AI + ADC (project=%s, location=%s)…",
-            pdf_name, project, location,
-        )
-        client = genai.Client(vertexai=True, project=project, location=location)
-    else:
-        if not key:
-            raise RuntimeError(
-                "GOOGLE_API_KEY is not set in environment or .env file."
-            )
-        log.info("Extracting %s via Gemini API with API key…", pdf_name)
-        client = genai.Client(api_key=key)
-
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=[
-            genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-            _EXTRACTION_PROMPT,
-        ],
-        config=genai_types.GenerateContentConfig(
-            temperature=0,
-            response_mime_type="application/json",
-        ),
-    )
-    return (response.text or "").strip()
-
-
 def extract_invoice(
     pdf_path: str | Path,
-    api_key: Optional[str] = None,
-    provider: Optional[str] = None,
     model: Optional[str] = None,
 ) -> dict:
-    """Extract accounting data from a PDF.
+    """Extract accounting data from a PDF via local-llm-hub.
 
     Args:
         pdf_path: Path to the PDF file.
-        api_key:  Google API key for the ``gemini`` provider. Falls back to
-                  the GOOGLE_API_KEY env var. Ignored by the ``hub`` provider.
-        provider: ``"hub"`` (default) or ``"gemini"``. Falls back to the
-                  INVOICE_OCR_PROVIDER env var, then ``invoice_ocr.provider``
-                  in config.json, then ``DEFAULT_PROVIDER``.
-        model:    hub model id/alias for the ``hub`` provider. Falls back to
-                  the LLM_HUB_MODEL env var, then ``HUB_MODEL``. Ignored by
-                  the ``gemini`` provider.
+        model:    hub model id/alias. Falls back to the LLM_HUB_MODEL env
+                  var, then ``HUB_MODEL``.
 
     Returns:
         Parsed dict with extracted fields plus ``_raw_response`` and
-        ``_file_hash`` keys. Schema is identical across providers.
+        ``_file_hash`` keys.
 
     Raises:
-        RuntimeError: If the chosen backend's SDK is missing, credentials are
-                      missing, or the call / JSON parse fails.
+        RuntimeError: If the anthropic SDK is missing or the call / JSON
+                      parse fails.
         FileNotFoundError: If the PDF does not exist.
     """
     pdf_path = Path(pdf_path)
@@ -416,15 +321,7 @@ def extract_invoice(
         pdf_bytes = fh.read()
     file_hash = hashlib.md5(pdf_bytes).hexdigest()
 
-    resolved = _resolve_provider(provider)
-    if resolved == "hub":
-        raw_text = _extract_via_hub(pdf_bytes, pdf_path.name, model)
-    elif resolved == "gemini":
-        raw_text = _extract_via_gemini(pdf_bytes, pdf_path.name, api_key)
-    else:
-        raise RuntimeError(
-            f"Unknown invoice OCR provider {resolved!r}. Use 'hub' or 'gemini'."
-        )
+    raw_text = _extract_via_hub(pdf_bytes, pdf_path.name, model)
 
     log.debug("Raw OCR response for %s: %s", pdf_path.name, raw_text[:500])
 

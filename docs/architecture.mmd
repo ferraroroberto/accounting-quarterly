@@ -10,7 +10,7 @@ flowchart TB
   subgraph external["External services"]
     STRIPE["Stripe API\ncharges, fees, card country"]
     FRANKFURTER["Frankfurter API\nECB daily FX rates"]
-    HUB["local-llm-hub :8000\nGemini via Anthropic SDK (default OCR path)"]
+    HUB["local-llm-hub :8000\nGemini via Anthropic SDK (sole OCR path)"]
     ACCAPI["IntegraLOOP / BILOOP\nAccounting API"]
   end
 
@@ -20,8 +20,9 @@ flowchart TB
     CLASSIFIER["classifier.py + rules_engine.py\nactivity/geo classification,\neur_default foreign-customer warning"]
     RECLASSIFY["reclassify.py\nre-run classifier over stored rows"]
     DECLARED["declared_reports.py\nfrozen sent reports (immutable EUR amounts)"]
-    OCR["invoice_ocr.py\nhub (default) or direct Gemini/Vertex fallback"]
+    OCR["invoice_ocr.py\nlocal-llm-hub only (gemini_pro alias)"]
     INGEST["invoice_ingest.py\nOCR -> FX -> vendor registry -> DB save path\n(hash-based new/changed detection)"]
+    PAYMENTSLOADER["payments_loader.py\nperiod loading, FX conversion, classification\n(CLI-facing; app/data_loader.py adds @st.cache_data)"]
     SCANNER["invoice_scanner.py\ninvoice folder resolution + recursive PDF scan"]
     RELINK["relink.py\nre-point invoice records after PDFs move or rename\n(move record, then content hash; unmatched/ambiguous reported)"]
     PIPELINE["close_pipeline.py\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack, archive\n(idempotent, each reports its changes)"]
@@ -134,8 +135,11 @@ flowchart TB
   FILINGSHEET -->|result_boxes / operators| RECONCILIATION
   FILINGSHEET -->|versioned snapshots| DB
 
-  LOADER --> DB
-  LOADER --> CLASSIFIER
+  LOADER --> PAYMENTSLOADER
+  PAYMENTSLOADER --> DB
+  PAYMENTSLOADER --> CLASSIFIER
+  PAYMENTSLOADER --> STRIPECLIENT
+  PAYMENTSLOADER --> FX
   REPORTTABS --> LOADER
   REPORTTABS --> AGGEXPORT
   INVTABS --> INGEST
@@ -158,7 +162,7 @@ flowchart TB
   CLOSEQ --> PIPELINE
   CLOSEQ --> STRIPECLIENT
   CLOSEQ --> CLASSIFIER
-  CLOSEQ --> LOADER
+  CLOSEQ --> PAYMENTSLOADER
   CLOSEQ --> DB
   CLOSEQ --> FX
   CLOSEQ --> RECLASSIFY

@@ -134,7 +134,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
 │   ├── fixed_assets.py            # Fixed assets: simplified-table depreciation, VAT capital goods (303 30/31), regularisation
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
-│   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub default, direct Gemini fallback)
+│   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub only)
 │   ├── invoice_ingest.py          # OCR → FX → vendor registry → DB save path (OCR tab + close_quarter.py ocr)
 │   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
 │   ├── relink.py                  # Re-point invoice records after PDFs move/rename (move record, then content hash)
@@ -152,7 +152,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── currency.py                # FX rate management, charts, and conversion tool
 │   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
 │   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
-│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub / Gemini)
+│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub)
 │   ├── invoice_ledger.py          # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
 │   ├── invoice_dedupe_tab.py      # Duplicate Review tab: scan/confirm/apply invoice_dedupe.py groups
 │   ├── vendor_registry_tab.py     # Vendors tab: registry editor, apply, unknown vendors, spreadsheet import
@@ -852,14 +852,9 @@ The **Invoice OCR** tab extracts Spanish accounting data from any PDF — invoic
 
 ### Extraction provider
 
-Extraction runs through one of two interchangeable backends, selected by `invoice_ocr.provider` in `config.json` (or the `INVOICE_OCR_PROVIDER` env var, or the `provider=` argument to `extract_invoice()`). Both backends share the same prompt and post-parsing, so the stored fields are identical regardless of provider.
+Extraction always routes through local-llm-hub at `http://127.0.0.1:8000`, via the Anthropic SDK and a `document` content block, model alias `gemini_pro` — no Google credentials are needed on this machine, since the hub holds the Google session. This keeps all LLM access flowing through the local-llm-hub for central LAN access and observability. Override the hub endpoint/alias with `LLM_HUB_BASE_URL` / `LLM_HUB_MODEL` if needed.
 
-| Provider | How it calls | Credentials |
-|----------|-------------|-------------|
-| `hub` (default) | local-llm-hub at `http://127.0.0.1:8000` via the Anthropic SDK and a `document` content block, model alias `gemini_pro` | none (the hub holds the Google session) |
-| `gemini` | Direct `google-genai` SDK to Gemini / Vertex AI | `GOOGLE_API_KEY` or Vertex ADC (`GOOGLE_APPLICATION_CREDENTIALS`) |
-
-The `hub` path is the default: it keeps all LLM access flowing through the local-llm-hub (central LAN access and observability) and needs no Google key on this machine. It became the default once the hub's PDF-attachment reliability bug ([local-llm-hub#63](https://github.com/ferraroroberto/local-llm-hub/issues/63)) was fixed — the hub now passes attachment dirs via `agy --add-dir`, so document/PDF blocks ingest deterministically. Override the hub endpoint/alias with `LLM_HUB_BASE_URL` / `LLM_HUB_MODEL` if needed. To fall back to the legacy direct Gemini/Vertex path, set `invoice_ocr.provider` to `gemini` (or `INVOICE_OCR_PROVIDER=gemini`).
+The legacy direct `google-genai` ("gemini") path was removed once the hub's PDF-attachment reliability bug ([local-llm-hub#63](https://github.com/ferraroroberto/local-llm-hub/issues/63)) was fixed — the hub now passes attachment dirs via `agy --add-dir`, so document/PDF blocks ingest deterministically.
 
 ### Invoice directories
 
@@ -912,36 +907,9 @@ The resolved rate, its date and its source are stored per invoice (`fx_rate_used
 - **Row-selection checkboxes** — select one or more records and click **Delete selected**.
 - **Clear invoice table** — wipes all records (with confirmation); PDF files are never touched.
 
-### Hub provider (default — no Google key needed)
+### Credentials
 
-The default `hub` provider routes all PDF extraction through local-llm-hub and needs no Google API key. If `invoice_ocr.provider` is unset (or set to `hub` in `config.json`), no further credential setup is required — stop here.
-
-### Google API key (legacy `gemini` provider)
-
-Only needed if you explicitly set `invoice_ocr.provider` to `gemini` (or `INVOICE_OCR_PROVIDER=gemini`). Get a free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and add it to `.env`:
-
-```
-GOOGLE_API_KEY=AIzaSy...
-```
-
-Model used: `gemini-3.1-flash-lite-preview`.
-
-### Vertex AI (GCP service account)
-
-If you manage the API key through a GCP project (service account bound key), the Generative Language API must be enabled and unrestricted. Two pre-requisites in the GCP console:
-
-1. **Enable the API** — visit `https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=YOUR_PROJECT` and click Enable.
-2. **Remove API restrictions** on the key — Credentials → find the key → API restrictions → "Don't restrict key" (or add Generative Language API to the allowed list).
-
-For ADC-based auth (service account JSON), download the key file and set:
-
-```
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-GOOGLE_CLOUD_PROJECT=your-gcp-project-id
-GOOGLE_CLOUD_LOCATION=us-central1   # or europe-west1, etc.
-```
-
-When `GOOGLE_APPLICATION_CREDENTIALS` is set the module switches to Vertex AI mode automatically (no API key needed).
+Extraction routes through local-llm-hub and needs no Google API key — see [Extraction provider](#extraction-provider) above.
 
 ---
 

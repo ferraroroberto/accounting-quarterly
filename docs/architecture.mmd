@@ -39,6 +39,8 @@ flowchart TB
     TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130 (AEAT boxes, 13 reduction, 15 carry),\n349/347, OSS, EU B2C threshold, calendar"]
     TAXMODELS["tax_models.py\nresult dataclasses named after the AEAT boxes\n(aeat_boxes() / operators()), OSS rates"]
     PERIODS["periods.py\nquarter bounds (date / ISO / datetime)"]
+    TAXCODES["tax_codes.py\nEU VAT prefixes, NIF→geo, tax_treatment values and mappings"]
+    TAXDATA["tax_data.py\nconfig plumbing, record loaders, activity-start floor, per-row VAT figures"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
     TAXVALIDATOR["tax_validator.py\nfiled-return loader (receipts, yaml fallback)"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
@@ -60,7 +62,7 @@ flowchart TB
 
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing)"]
     LOADER["data_loader.py"]
-    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export)"]
+    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export) ·\nyear_picker.py (one year range for every picker)"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
     INVTABS["invoice_upload · invoice_ocr_tab (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe_tab · invoice_explorer · vendor_registry_tab ·\nfixed_assets_tab"]
     SSTAB["social_security_tab"]
@@ -118,6 +120,13 @@ flowchart TB
   TAXENGINE --> TAXMODELS
   TAXENGINE --> PERIODS
   FIXEDASSETS --> PERIODS
+  TAXENGINE --> TAXDATA
+  ANNUALPACK --> TAXDATA
+  TAXDATA --> PERIODS
+  TAXDATA --> VATRULES
+  DB --> TAXCODES
+  TAXENGINE --> TAXCODES
+  CLASSIFIER --> TAXCODES
   SNAPSHOTCODEC --> TAXMODELS
   TAXVALIDATOR --> FILEDRETURNS
   FILEDRETURNS --> DB

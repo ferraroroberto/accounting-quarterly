@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from app.tax_audit import _render_audit_table  # same per-cell drill-down as the Tax Audit tab
+from app.year_picker import year_input
 from src.database import get_connection, load_audit_entries
 from src.filed_returns import import_pdf
 from src.logger import get_logger
@@ -138,9 +139,7 @@ def _render_period_picker(periods: list[tuple[str, int, Optional[int]]]) -> tupl
             "Model", options=list(MODELS), format_func=lambda m: _MODEL_LABELS[m], key="rc_model",
         )
     with col_year:
-        year = int(st.number_input(
-            "Year", min_value=2020, max_value=2035, value=int(default_year), step=1, key="rc_year",
-        ))
+        year = year_input("rc_year", int(default_year))
     with col_quarter:
         quarter: Optional[int] = st.selectbox(
             "Quarter", options=[1, 2, 3, 4], index=int(default_quarter) - 1,

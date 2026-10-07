@@ -11,6 +11,28 @@ from typing import Optional
 
 from src.logger import get_logger
 from src.periods import quarter_iso_bounds
+from src.tax_codes import derive_tax_treatment_for_invoice
+from src.tax_data import (
+    activity_start_date,
+    activity_start_note,
+    clamp_start,
+    classified_quarter_end,
+    get_tax_entries_total,
+    get_vat_amount,
+    get_vat_base,
+    get_vat_treatment,
+    income_invoice_eur,
+    load_classified_for_quarter,
+    load_classified_ytd,
+    load_expense_invoices_for_quarter,
+    load_expense_invoices_ytd,
+    load_income_invoices_for_quarter,
+    load_income_invoices_ytd,
+    net_amount,
+    oss_country_code,
+    tax_settings,
+    load_app_config,
+)
 from src.tax_models import (
     MODELO130_BOX_FIELDS,
     AuditEntry,
@@ -26,7 +48,6 @@ from src.tax_models import (
     TaxDeadline,
     _tax_deadline_date,
 )
-from src.database import derive_tax_treatment_for_invoice
 from src.declared_reports import apply_frozen_amounts
 from src.fixed_assets import DepreciationResult, capital_asset_invoice_ids, depreciation_for_period
 from src.vat_rules import (
@@ -37,382 +58,11 @@ from src.vat_rules import (
     SPANISH_21_TREATMENTS,
     is_oss_registered,
     oss_rate,
-    vat_amount_on_base,
-    vat_base_from_inclusive,
-    vat_treatment,
 )
 
 log = get_logger(__name__)
 
 _DUE_SOON_DAYS = 15
-
-
-# ---------------------------------------------------------------------------
-# App-config plumbing
-# ---------------------------------------------------------------------------
-# The tax engine is config-aware: several ``config.tax`` settings alter the
-# computation (EU VAT-treatment overrides, IVA/OSS registration, prorrata,
-# fiscal regime). The public compute functions take an optional ``config``
-# dict; when it is ``None`` they fall back to an empty dict, i.e. the documented
-# defaults — this keeps the engine pure and the unit tests deterministic. The
-# app entry points (``compute_and_persist_tax_snapshots`` and the tax validator)
-# load the real ``config.json`` once and thread it down.
-
-def _tax_settings(config: Optional[dict]) -> dict:
-    """Return the ``tax`` sub-section of the app config (empty dict if absent)."""
-    return (config or {}).get("tax", {})
-
-
-def load_app_config() -> dict:
-    """Load ``config.json`` for the engine, returning ``{}`` if unavailable.
-
-    Guarded so the engine never crashes on a missing/broken config file — a
-    fresh checkout with no ``config.json`` simply runs with documented defaults.
-    """
-    try:
-        from src.config import load_config
-
-        return load_config()
-    except Exception:  # pragma: no cover - config is optional for the engine
-        return {}
-
-
-def _activity_start_date(config: Optional[dict]) -> Optional[str]:
-    """ISO date (``YYYY-MM-DD``) the business activity began, from ``tax.activity_start_date``.
-
-    ``None`` when the key is absent — every date-range query then keeps its
-    natural lower bound (documented default, unchanged behaviour). Set, it
-    floors every quarter/YTD range the tax models query: a transaction or
-    invoice dated before it never feeds a return (issue #133).
-    """
-    raw = _tax_settings(config).get("activity_start_date")
-    return str(raw)[:10] if raw else None
-
-
-def _clamp_start(start: str, config: Optional[dict]) -> str:
-    """Raise a query's ``start`` bound to ``tax.activity_start_date`` when that is later."""
-    floor = _activity_start_date(config)
-    return max(start, floor) if floor else start
-
-
-def _excluded_by_activity_start(
-    conn: sqlite3.Connection, config: Optional[dict], natural_start: str, end: str,
-    table: str, date_col: str, amount_sql: str, where_extra: str = "",
-) -> Optional[tuple[int, float]]:
-    """(count, total EUR) of ``table`` rows in ``[natural_start, end]`` left out of this
-    period by ``tax.activity_start_date`` — feeds the models' audit notes (issue #133).
-
-    ``None`` when no floor is set, or it does not reach into this period (nothing excluded).
-    """
-    floor = _activity_start_date(config)
-    if not floor or floor <= natural_start:
-        return None
-    cutoff = min(floor, end)
-    if cutoff <= natural_start:
-        return None
-    row = conn.execute(
-        f"SELECT COUNT(*), COALESCE(SUM({amount_sql}), 0) FROM {table} "
-        f"WHERE {date_col} >= ? AND {date_col} < ? {where_extra}",
-        (natural_start, cutoff),
-    ).fetchone()
-    n = row[0]
-    return (n, float(row[1])) if n else None
-
-
-# The records ``tax.activity_start_date`` can leave out, per source: the audit-note label, the table,
-# its date column, the EUR amount SQL and the filter that mirrors the matching loader's WHERE clause
-# (``_load_classified_range`` / the invoice loaders). One table, so the three notes stay in step with them.
-_ACTIVITY_START_SOURCES: dict[str, tuple[str, str, str, str, str]] = {
-    "stripe": ("Stripe transaction(s)", "transactions", "created_date",
-               "converted_amount - converted_amount_refunded",
-               "AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'"),
-    "income": ("issued invoice(s)", "invoices", "invoice_date",
-               "COALESCE(eur_received, subtotal_eur, 0)",
-               "AND direction = 'out' AND COALESCE(excluded, 0) = 0"),
-    "expense": ("received invoice(s)", "invoices", "invoice_date", "subtotal_eur",
-                "AND direction = 'in' AND COALESCE(excluded, 0) = 0"),
-}
-
-
-def _activity_start_note(
-    conn: sqlite3.Connection, config: Optional[dict], natural_start: str, ends: dict[str, str], model: str,
-) -> Optional[str]:
-    """Audit note for the records ``tax.activity_start_date`` left out of a ``model`` return.
-
-    ``ends`` maps each source in ``_ACTIVITY_START_SOURCES`` that feeds the return to the end bound
-    of its query. ``None`` when nothing was left out.
-    """
-    parts = []
-    for key, (label, table, date_col, amount_sql, where_extra) in _ACTIVITY_START_SOURCES.items():
-        if key not in ends:
-            continue
-        excl = _excluded_by_activity_start(
-            conn, config, natural_start, ends[key], table, date_col, amount_sql, where_extra)
-        if excl:
-            n, total = excl
-            parts.append(f"{n} {label} ({total:,.2f} EUR)")
-    if not parts:
-        return None
-    return (f"Dated before the activity start ({_activity_start_date(config)}) and left out of the {model}: "
-            + "; ".join(parts) + ".")
-
-
-# ---------------------------------------------------------------------------
-# Internal DB helpers
-# ---------------------------------------------------------------------------
-
-def _load_classified_range(
-    start: str, end: str, conn: sqlite3.Connection
-) -> list[dict]:
-    """Load classified transactions in ``[start, end]`` from an open connection.
-
-    Shared loader for the quarter- and YTD-scoped wrappers below: the SELECT,
-    table, ``activity_type`` filter and ordering are identical between them —
-    only the ``start`` bound differs.
-
-    Transactions that appear in a frozen (declared) Stripe report carry the
-    declared EUR amounts instead of the live ones, so later FX re-conversions
-    cannot move a quarter that was already sent to the gestor.
-    """
-    rows = conn.execute(
-        """SELECT id, created_date, converted_amount, converted_amount_refunded,
-                  activity_type, geo_region, card_country, email_meta,
-                  vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id,
-                  fee_application
-           FROM transactions
-           WHERE created_date >= ? AND created_date <= ?
-             AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
-           ORDER BY created_date""",
-        (start, end),
-    ).fetchall()
-    return apply_frozen_amounts([dict(r) for r in rows], conn)
-
-
-def _classified_quarter_end(year: int, quarter: int) -> str:
-    """End bound (inclusive, end-of-day) for transaction queries up to ``quarter``."""
-    return f"{quarter_iso_bounds(year, quarter)[1]}T23:59:59"
-
-
-def _load_classified_for_quarter(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Load classified transactions for a specific quarter from an open connection.
-
-    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
-    than the quarter start, raises the lower bound — a charge before it is left out.
-    """
-    month_start = (quarter - 1) * 3 + 1
-    start = _clamp_start(f"{year}-{month_start:02d}-01", config)
-    end = _classified_quarter_end(year, quarter)
-    return _load_classified_range(start, end, conn)
-
-
-def _load_classified_ytd(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Load classified transactions from Q1 through the given quarter.
-
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
-    from 1 January when set and later, same as the quarter-scoped loader.
-    """
-    end = _classified_quarter_end(year, quarter)
-    start = _clamp_start(f"{year}-01-01", config)
-    return _load_classified_range(start, end, conn)
-
-
-def _load_expense_invoices_range(
-    start: str, end: str, conn: sqlite3.Connection
-) -> list[dict]:
-    """Expense invoices (direction='in') in ``[start, end]``, keyed by ``invoice_date``.
-
-    The accounting date is the invoice date (``supply_date`` is informational
-    only), and rows marked ``excluded`` (duplicates, receipts, …) are skipped.
-    Shared loader for the quarter- and YTD-scoped wrappers below: the projection,
-    ``direction='in'`` filter, date keying and ordering are identical — only the
-    ``start`` bound differs.
-    """
-    rows = conn.execute(
-        """SELECT id, invoice_date AS tx_date,
-                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
-                  total_eur, category, geo_region, vat_treatment, tax_treatment,
-                  COALESCE(deductible_pct_vat, deductible_pct, 100.0) AS deductible_pct_vat,
-                  COALESCE(deductible_pct_irpf, deductible_pct, 100.0) AS deductible_pct_irpf,
-                  vendor_nif, vendor_name, description
-           FROM invoices
-           WHERE direction = 'in'
-             AND COALESCE(excluded, 0) = 0
-             AND invoice_date >= ?
-             AND invoice_date <= ?
-           ORDER BY tx_date""",
-        (start, end),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def _load_expense_invoices_for_quarter(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Expense invoices (direction='in') for the quarter, keyed by invoice_date.
-
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
-    when set and later than the quarter start.
-    """
-    start, end = quarter_iso_bounds(year, quarter)
-    return _load_expense_invoices_range(_clamp_start(start, config), end, conn)
-
-
-def _load_expense_invoices_ytd(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Expense invoices (direction='in') from Q1 through the given quarter (YTD).
-
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
-    from 1 January when set and later.
-    """
-    _, end = quarter_iso_bounds(year, quarter)
-    return _load_expense_invoices_range(_clamp_start(f"{year}-01-01", config), end, conn)
-
-
-def _load_income_invoices_range(
-    start: str, end: str, conn: sqlite3.Connection
-) -> list[dict]:
-    """Income invoices (direction='out') in ``[start, end]``, keyed by ``invoice_date``.
-
-    These are manually-issued invoices (bank transfer, etc.) NOT processed through
-    Stripe — Stripe income already lives in the ``transactions`` table.
-
-    Shared loader for the quarter- and YTD-scoped wrappers below: the projection,
-    ``direction='out'`` filter, invoice-date keying, ``excluded`` filter and
-    ordering are identical — only the ``start`` bound differs. Kept separate from
-    the expense loader because the projection differs (client_nif/client_name vs
-    vendor_nif/vendor_name).
-    """
-    rows = conn.execute(
-        """SELECT id, invoice_date AS tx_date,
-                  subtotal_eur, iva_rate, iva_amount, irpf_rate, irpf_amount,
-                  total_eur, category, geo_region, vat_treatment, tax_treatment,
-                  client_nif, client_name, description, eur_received
-           FROM invoices
-           WHERE direction = 'out'
-             AND COALESCE(excluded, 0) = 0
-             AND invoice_date >= ?
-             AND invoice_date <= ?
-           ORDER BY tx_date""",
-        (start, end),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def _load_income_invoices_ytd(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Income invoices (direction='out') from Q1 through the given quarter (YTD).
-
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
-    from 1 January when set and later.
-    """
-    _, end = quarter_iso_bounds(year, quarter)
-    return _load_income_invoices_range(_clamp_start(f"{year}-01-01", config), end, conn)
-
-
-def _load_income_invoices_for_quarter(
-    year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict] = None
-) -> list[dict]:
-    """Income invoices (direction='out') for the quarter only.
-
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
-    when set and later than the quarter start.
-    """
-    start, end = quarter_iso_bounds(year, quarter)
-    return _load_income_invoices_range(_clamp_start(start, config), end, conn)
-
-
-def _income_invoice_eur(inv: dict) -> float:
-    """Effective EUR value of an income (direction='out') invoice (issue #93).
-
-    ``eur_received`` wins when set — the money was actually converted on
-    receipt. Otherwise the stored ``subtotal_eur`` already holds the ECB rate
-    at the invoice date (resolved at OCR time by
-    ``src.fx_rates.resolve_invoice_amounts``), which is final per decision D5
-    (art. 79.Once LIVA) for income kept in a foreign-currency account — not a
-    provisional figure to be revisited later.
-    """
-    eur_received = inv.get("eur_received")
-    return float(eur_received) if eur_received is not None else (inv.get("subtotal_eur") or 0.0)
-
-
-def _net_amount(row: dict) -> float:
-    # Row-dict counterpart of Payment.net_amount (src/models.py) — same formula,
-    # different input shape (SQL row dict vs. Pydantic model); kept in sync by hand.
-    return round(row["converted_amount"] - row["converted_amount_refunded"], 2)
-
-
-def _get_vat_treatment(row: dict, config: Optional[dict] = None) -> str:
-    """Return stored vat_treatment, or derive it on-the-fly if missing.
-
-    The fallback derivation delegates to the shared treatment matrix in
-    ``src.vat_rules`` so the classifier and the engine cannot diverge. The
-    ``config`` dict is threaded through so the EU VAT-treatment overrides
-    (``tax.default_vat_treatment_eu_*``) and the ``tax.vat_registered`` flag
-    are honoured. Rows carrying an explicit stored treatment (manual override)
-    win over the derivation.
-    """
-    stored = row.get("vat_treatment")
-    if stored and stored != "UNKNOWN":
-        return stored
-    # Derive from activity × geo (fallback for rows not yet VAT-classified).
-    # buyer_vat_id (accounting-quarterly#113) decides the EU B2B/B2C split.
-    return vat_treatment(
-        row.get("activity_type"), row.get("geo_region"), config=config,
-        buyer_vat_id=row.get("buyer_vat_id"),
-    )
-
-
-def _oss_country_code(row: dict) -> str:
-    return (row.get("oss_country") or row.get("card_country") or "").upper()
-
-
-def _get_vat_base(row: dict, config: Optional[dict] = None) -> float:
-    """Return the ex-VAT taxable base for a transaction row.
-
-    Stripe amounts are VAT-inclusive (the customer paid the gross amount).
-    For Spain (IVA_ES_21) and EU B2C (OSS_EU) we extract the base by
-    dividing by (1 + rate).  For exports and EU B2B (ISP) the full net
-    amount is the income base — no VAT was charged.
-    """
-    if row.get("vat_base_eur") is not None:
-        return row["vat_base_eur"]
-    return vat_base_from_inclusive(
-        _net_amount(row), _get_vat_treatment(row, config), _oss_country_code(row)
-    )
-
-
-def _get_vat_amount(row: dict, config: Optional[dict] = None) -> float:
-    if row.get("vat_amount_eur") is not None:
-        return row["vat_amount_eur"]
-    return vat_amount_on_base(
-        _get_vat_base(row, config), _get_vat_treatment(row, config), _oss_country_code(row)
-    )
-
-
-def _get_tax_entries_total(
-    year: int, quarter: int, entry_type: str, conn: sqlite3.Connection, ytd: bool = False
-) -> float:
-    if ytd:
-        row = conn.execute(
-            """SELECT COALESCE(SUM(amount_eur), 0) AS total
-               FROM quarterly_tax_entries
-               WHERE year = ? AND quarter <= ? AND entry_type = ?""",
-            (year, quarter, entry_type),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            """SELECT COALESCE(SUM(amount_eur), 0) AS total
-               FROM quarterly_tax_entries
-               WHERE year = ? AND quarter = ? AND entry_type = ?""",
-            (year, quarter, entry_type),
-        ).fetchone()
-    return float(row["total"]) if row else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -521,16 +171,16 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
     # Stripe: aggregated per (geo, activity, treatment, OSS country) — the
     # gestor works with the quarterly summary, not individual charges.
     agg: dict[tuple, dict] = {}
-    for row in _load_classified_for_quarter(year, quarter, conn, config):
-        treatment = _get_vat_treatment(row, config)
-        base = _get_vat_base(row, config)
-        vat = _get_vat_amount(row, config)
-        oss_cc = _oss_country_code(row) if treatment == "OSS_EU" else ""
+    for row in load_classified_for_quarter(year, quarter, conn, config):
+        treatment = get_vat_treatment(row, config)
+        base = get_vat_base(row, config)
+        vat = get_vat_amount(row, config)
+        oss_cc = oss_country_code(row) if treatment == "OSS_EU" else ""
         key = (row.get("geo_region") or "UNKNOWN", row.get("activity_type") or "UNKNOWN",
                treatment, oss_cc)
         bucket = agg.setdefault(key, {"n": 0, "gross_eur": 0.0, "base_eur": 0.0, "vat_eur": 0.0})
         bucket["n"] += 1
-        bucket["gross_eur"] += _net_amount(row)
+        bucket["gross_eur"] += net_amount(row)
         bucket["base_eur"] += base
         bucket["vat_eur"] += vat
         if treatment in SPANISH_21_TREATMENTS:
@@ -562,9 +212,9 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
         col.records[box].append(rec)
 
     unclassified = 0
-    for inv in _load_income_invoices_for_quarter(year, quarter, conn, config):
+    for inv in load_income_invoices_for_quarter(year, quarter, conn, config):
         tt = _invoice_tax_treatment("out", inv)
-        base = _income_invoice_eur(inv)
+        base = income_invoice_eur(inv)
         vat = inv.get("iva_amount") or 0.0
         rec = {"source": "invoice_out", "id": inv.get("id"),
                "date": str(inv.get("tx_date", ""))[:10],
@@ -597,16 +247,16 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
         )
 
     natural_start = quarter_iso_bounds(year, quarter)[0]
-    note = _activity_start_note(
+    note = activity_start_note(
         conn, config, natural_start,
-        {"stripe": _classified_quarter_end(year, quarter), "income": quarter_iso_bounds(year, quarter)[1]}, "303")
+        {"stripe": classified_quarter_end(year, quarter), "income": quarter_iso_bounds(year, quarter)[1]}, "303")
     if note:
         col.notes.append(note)
 
 
 def _platform_fee_vat_treatment(config: Optional[dict]) -> str:
     """``tax.platform_fee_vat_treatment``: ``NON_EU_RC`` (default) or ``NONE`` (#147)."""
-    option = _tax_settings(config).get("platform_fee_vat_treatment", "NON_EU_RC")
+    option = tax_settings(config).get("platform_fee_vat_treatment", "NON_EU_RC")
     if option not in PLATFORM_FEE_VAT_TREATMENTS:
         raise ValueError(
             f"tax.platform_fee_vat_treatment must be one of {PLATFORM_FEE_VAT_TREATMENTS}, got {option!r}")
@@ -626,7 +276,7 @@ def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection
     col.platform_fee_treatment = _platform_fee_vat_treatment(config)
     if col.platform_fee_treatment == "NONE":
         return
-    rows = _load_classified_for_quarter(year, quarter, conn, config)
+    rows = load_classified_for_quarter(year, quarter, conn, config)
     fee_rows = [r for r in rows if r.get("fee_application")]
     col.fee_split_unknown = sum(1 for r in rows if r.get("fee_application") is None)
     rate = IVA_ES_RATE * 100.0
@@ -665,7 +315,7 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             if asset.vat_capital_good:
                 capital_by_invoice[asset.invoice_id].append(asset)
 
-    for inv in _load_expense_invoices_for_quarter(year, quarter, conn, config):
+    for inv in load_expense_invoices_for_quarter(year, quarter, conn, config):
         tt = _invoice_tax_treatment("in", inv)
         base = inv.get("subtotal_eur") or 0.0
         iva = inv.get("iva_amount") or 0.0
@@ -782,7 +432,7 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
         )
 
     natural_start, end = quarter_iso_bounds(year, quarter)
-    note = _activity_start_note(conn, config, natural_start, {"expense": end}, "303")
+    note = activity_start_note(conn, config, natural_start, {"expense": end}, "303")
     if note:
         col.notes.append(note)
 
@@ -826,7 +476,7 @@ def _prorrata_provisional(year: int, conn: sqlite3.Connection,
     to something other than 100 → the previous year's definitive % computed from
     the app's own data → 100 when the previous year has no operations.
     """
-    tax_cfg = _tax_settings(config)
+    tax_cfg = tax_settings(config)
     by_year = (tax_cfg.get("prorrata") or {}).get("definitive_pct_by_year") or {}
     prev = year - 1
     for key in (str(prev), prev):
@@ -842,7 +492,7 @@ def _prorrata_provisional(year: int, conn: sqlite3.Connection,
 
 
 def _q4_negative_option(config: Optional[dict], override: Optional[str]) -> str:
-    option = override or _tax_settings(config).get("modelo303_q4_negative_result", "compensate")
+    option = override or tax_settings(config).get("modelo303_q4_negative_result", "compensate")
     if option not in Q4_NEGATIVE_OPTIONS:
         raise ValueError(f"Q4 negative-result option must be one of {Q4_NEGATIVE_OPTIONS}, got {option!r}")
     return option
@@ -869,7 +519,7 @@ def _earliest_303_activity(conn: sqlite3.Connection, config: Optional[dict] = No
         dates.append(f"{row // 10}-{(row % 10 - 1) * 3 + 1:02d}-01")
     dates = [str(d)[:10] for d in dates if d]
     earliest = min(dates) if dates else None
-    floor = _activity_start_date(config)
+    floor = activity_start_date(config)
     if floor and (earliest is None or floor > earliest):
         return floor
     return earliest
@@ -927,7 +577,7 @@ def compute_modelo_303(
     deductible VAT in box 44. ``c46_sin_prorrata`` is 46 at 100% deduction
     ("gestor mode", for the reconciliation).
     """
-    tax_cfg = _tax_settings(config)
+    tax_cfg = tax_settings(config)
     vat_registered = tax_cfg.get("vat_registered", True) is not False
     prorrata_enabled = (tax_cfg.get("prorrata") or {}).get("enabled", True) is not False
     option = _q4_negative_option(config, q4_negative_result)
@@ -1216,11 +866,11 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     ytd_start = f"{year}-01-01"
 
     # 01 — Stripe VAT bases (frozen declared amounts win, see _load_classified_range).
-    rows = _load_classified_ytd(year, quarter, conn, config)
-    col.stripe_income = sum(_get_vat_base(r, config) for r in rows)
+    rows = load_classified_ytd(year, quarter, conn, config)
+    col.stripe_income = sum(get_vat_base(r, config) for r in rows)
     # 01 — issued invoices, gross of the IRPF withheld (D12); eur_received wins (#93).
-    income_invs = _load_income_invoices_ytd(year, quarter, conn, config)
-    col.inv_income = sum(_income_invoice_eur(inv) for inv in income_invs)
+    income_invs = load_income_invoices_ytd(year, quarter, conn, config)
+    col.inv_income = sum(income_invoice_eur(inv) for inv in income_invs)
     # 01 — exchange differences (#93 / D5): converting a foreign-currency balance
     # realises a gain/loss against the EUR booked; income of the conversion period.
     exch_rows = conn.execute(
@@ -1235,7 +885,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
 
     # 02 — expense invoices × deductible_pct_irpf; excluded rows are filtered by
     # the loader, capital assets enter through depreciation instead (#96).
-    expense_invs = _load_expense_invoices_ytd(year, quarter, conn, config)
+    expense_invs = load_expense_invoices_ytd(year, quarter, conn, config)
     capital_ids = capital_asset_invoice_ids(conn)
     capital_invs = [inv for inv in expense_invs if inv["id"] in capital_ids]
     expense_invs = [inv for inv in expense_invs if inv["id"] not in capital_ids]
@@ -1273,26 +923,26 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
         log.warning("⚠️ 130 %dQ%d: fee split unknown for %d Stripe charge(s) — their platform fees are "
                     "not in box 02; re-fetch with `stripe-fetch --backfill-fee-split`",
                     year, quarter, col.fee_split_unknown)
-    col.manual_gastos = _get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", conn, ytd=True)
+    col.manual_gastos = get_tax_entries_total(year, quarter, "GASTOS_DEDUCIBLES", conn, ytd=True)
 
     # 06 — IRPF withheld by clients on issued invoices (exact cents) + manual entries.
     col.inv_retenciones = sum((inv.get("irpf_amount") or 0.0) for inv in income_invs)
-    col.manual_retenciones = _get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", conn, ytd=True)
+    col.manual_retenciones = get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", conn, ytd=True)
 
     # Audit note: records dated before tax.activity_start_date that the YTD loaders
     # above left out of boxes 01/02 (issue #133).
-    col.activity_start_note = _activity_start_note(
+    col.activity_start_note = activity_start_note(
         conn, config, ytd_start, {"stripe": ytd_end, "income": ytd_end, "expense": ytd_end}, "130")
 
     # --- Audit records ------------------------------------------------------
     stripe_agg: dict[tuple, dict] = {}
     for r in rows:
         key = (r.get("geo_region") or "UNKNOWN", r.get("activity_type") or "UNKNOWN",
-               _get_vat_treatment(r, config))
+               get_vat_treatment(r, config))
         agg = stripe_agg.setdefault(key, {"n": 0, "gross_eur": 0.0, "base_eur": 0.0})
         agg["n"] += 1
-        agg["gross_eur"] = round(agg["gross_eur"] + _net_amount(r), 2)
-        agg["base_eur"] = round(agg["base_eur"] + _get_vat_base(r, config), 2)
+        agg["gross_eur"] = round(agg["gross_eur"] + net_amount(r), 2)
+        agg["base_eur"] = round(agg["base_eur"] + get_vat_base(r, config), 2)
 
     def _client(inv: dict) -> str:
         return str(inv.get("client_name") or inv.get("client_nif") or "")[:40]
@@ -1310,7 +960,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
              "description": str(inv.get("description") or "")[:50],
              "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
              "eur_received": (round(inv["eur_received"], 2) if inv.get("eur_received") is not None else None),
-             "eur_used": round(_income_invoice_eur(inv), 2),
+             "eur_used": round(income_invoice_eur(inv), 2),
              "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
              "vat_treatment": inv.get("vat_treatment") or ""}
             for inv in income_invs
@@ -1374,7 +1024,7 @@ def _gastos_dificil_justificacion(c01: float, gastos_reales: float, eligible: bo
 
 
 def _gdj_eligible(config: Optional[dict]) -> tuple[str, bool]:
-    regime = _tax_settings(config).get("regime", "estimacion_directa_simplificada")
+    regime = tax_settings(config).get("regime", "estimacion_directa_simplificada")
     return regime, regime == "estimacion_directa_simplificada"
 
 
@@ -1393,7 +1043,7 @@ def _previous_year_net_yield(year: int, conn: sqlite3.Connection,
     filed = load_filed_boxes(conn, "130", prev, "4T")
     if filed:
         return round(filed.get("03", 0.0), 2), "filed", {"period": f"{prev}-4T", "filed_03": filed.get("03", 0.0)}
-    configured = _tax_settings(config).get("previous_year_net_yield")
+    configured = tax_settings(config).get("previous_year_net_yield")
     if isinstance(configured, dict):
         configured = configured.get(str(prev), configured.get(prev))
     if configured is not None:
@@ -1633,7 +1283,7 @@ def compute_modelo_349(
     without a VAT id cannot be declared and are listed in ``unidentified``.
     ``config`` drives the Stripe VAT-treatment derivation.
     """
-    from src.database import _EU_VAT_PREFIXES, normalize_vat_id
+    from src.tax_codes import EU_VAT_PREFIXES, normalize_vat_id
     from src.vendor_registry import load_registry
 
     result = Modelo349Result(year=year, quarter=quarter)
@@ -1646,25 +1296,25 @@ def compute_modelo_349(
         b["base"] += base
         b["records"].append({**rec, "base_eur": round(base, 2)})
 
-    for row in _load_classified_for_quarter(year, quarter, db_conn, config):
-        if _get_vat_treatment(row, config) != "IVA_EU_B2B":
+    for row in load_classified_for_quarter(year, quarter, db_conn, config):
+        if get_vat_treatment(row, config) != "IVA_EU_B2B":
             continue
         _add("S", normalize_vat_id(row.get("buyer_vat_id")), row.get("email_meta") or "",
-             _get_vat_base(row, config),
+             get_vat_base(row, config),
              {"source": "stripe", "id": row["id"], "date": str(row["created_date"])[:10]})
 
-    for inv in _load_income_invoices_for_quarter(year, quarter, db_conn, config):
+    for inv in load_income_invoices_for_quarter(year, quarter, db_conn, config):
         if _invoice_tax_treatment("out", inv) != "EU_B2B":
             continue
         _add("S", normalize_vat_id(inv.get("client_nif")), inv.get("client_name") or "",
-             _income_invoice_eur(inv),
+             income_invoice_eur(inv),
              {"source": "invoice_out", "id": inv["id"], "date": str(inv["tx_date"])[:10]})
 
     registry = load_registry()
     # tax.activity_start_date (issue #133): purchases dated before it don't
     # belong to this business either, so the same lower bound applies here.
     start, end = quarter_iso_bounds(year, quarter)
-    start = _clamp_start(start, config)
+    start = clamp_start(start, config)
     purchases = db_conn.execute(
         """SELECT id, filename, invoice_date AS tx_date, subtotal_eur, iva_amount,
                   geo_region, vat_treatment, tax_treatment, vendor_nif, vendor_vat_id_norm, vendor_name
@@ -1705,7 +1355,7 @@ def compute_modelo_349(
                             "the 349 takes no zero/negative lines; rectify the original period instead.")
         else:
             result.rows.append(row)
-            if country not in _EU_VAT_PREFIXES:
+            if country not in EU_VAT_PREFIXES:
                 warnings.append(f"{vat} (key {key}) does not start with an EU country prefix — check it.")
     result.total = round(sum((r.base for r in result.rows), 0.0), 2)
     result.notes = " ".join(warnings)
@@ -1757,16 +1407,16 @@ def compute_oss_return(
             oss_registered=False,
         )]
         return result
-    rows = _load_classified_for_quarter(year, quarter, db_conn, config)
+    rows = load_classified_for_quarter(year, quarter, db_conn, config)
 
     by_country: dict[str, dict] = defaultdict(lambda: {"count": 0, "base": 0.0, "vat": 0.0})
     for row in rows:
-        treatment = _get_vat_treatment(row, config)
+        treatment = get_vat_treatment(row, config)
         if treatment != "OSS_EU":
             continue
         cc = (row.get("oss_country") or row.get("card_country") or "UNKNOWN").upper()
-        base = _get_vat_base(row, config)
-        vat = _get_vat_amount(row, config)
+        base = get_vat_base(row, config)
+        vat = get_vat_amount(row, config)
         by_country[cc]["count"] += 1
         by_country[cc]["base"] += base
         by_country[cc]["vat"] += vat
@@ -1831,7 +1481,7 @@ def compute_modelo_347(
     than 1 January, excludes transactions and invoices dated before it.
     """
     result = Modelo347Result(year=year)
-    start = _clamp_start(f"{year}-01-01", config)
+    start = clamp_start(f"{year}-01-01", config)
 
     # Stripe transactions from Spanish counterparties
     rows = db_conn.execute(
@@ -2102,17 +1752,17 @@ def compute_eu_b2c_threshold(
     )
     by_country: dict[str, float] = defaultdict(float)
     ytd = 0.0
-    for row in _load_classified_ytd(year, quarter, db_conn, config):
-        if _get_vat_treatment(row, config) not in EU_B2C_TREATMENTS:
+    for row in load_classified_ytd(year, quarter, db_conn, config):
+        if get_vat_treatment(row, config) not in EU_B2C_TREATMENTS:
             continue
-        base = _get_vat_base(row, config)
+        base = get_vat_base(row, config)
         ytd += base
         by_country[(row.get("card_country") or "UNKNOWN").upper()] += base
         result.n_transactions += 1
     prev = sum(
-        _get_vat_base(r, config)
-        for r in _load_classified_ytd(year - 1, 4, db_conn, config)
-        if _get_vat_treatment(r, config) in EU_B2C_TREATMENTS
+        get_vat_base(r, config)
+        for r in load_classified_ytd(year - 1, 4, db_conn, config)
+        if get_vat_treatment(r, config) in EU_B2C_TREATMENTS
     )
     result.ytd_base_eur = round(ytd, 2)
     result.previous_year_base_eur = round(prev, 2)

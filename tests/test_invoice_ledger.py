@@ -8,19 +8,21 @@ import sqlite3
 import pytest
 
 from src.database import (
-    EXCLUDED_REASONS,
-    TAX_TREATMENTS_IN,
-    TAX_TREATMENTS_OUT,
     backfill_invoice_ledger_fields,
-    derive_tax_treatment_for_invoice,
     get_connection,
     get_invoice_by_filename,
     init_db,
-    normalize_vat_id,
     parse_locked_fields,
     unlock_invoice_fields,
     update_invoice_fields,
     upsert_invoice,
+)
+from src.tax_codes import (
+    EXCLUDED_REASONS,
+    TAX_TREATMENTS_IN,
+    TAX_TREATMENTS_OUT,
+    derive_tax_treatment_for_invoice,
+    normalize_vat_id,
 )
 from src.tax_engine import compute_modelo_130, compute_modelo_303, compute_modelo_347
 

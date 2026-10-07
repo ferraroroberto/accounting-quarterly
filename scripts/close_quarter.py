@@ -416,12 +416,12 @@ def cmd_fx_recompute(args: argparse.Namespace) -> int:
     fix) still carry whatever EUR figure the LLM guessed. Writes unless
     `--dry-run` is given.
     """
-    from src.fx_rates import recompute_stored_invoice_fx
+    from src.fx_rates import FX_CROSS_CHECK_THRESHOLD_PCT, recompute_stored_invoice_fx
 
     result = recompute_stored_invoice_fx(dry_run=args.dry_run, since=args.since)
     mode = "DRY RUN — nothing written" if result.dry_run else "APPLIED"
     print(f"FX recompute ({mode}): scanned {result.scanned}, changed {result.changed}, "
-          f"stale {result.stale}, cross-check >1% {result.cross_check_flagged}, "
+          f"stale {result.stale}, cross-check >{FX_CROSS_CHECK_THRESHOLD_PCT:g}% {result.cross_check_flagged}, "
           f"locked (skipped) {result.locked_skipped}.")
     for row in result.rows:
         if row.locked_skipped:

@@ -9,6 +9,7 @@ import streamlit as st
 
 from app.annual_pack_tab import render as render_annual_pack
 from app.flash import flash, show_flash
+from app.year_picker import year_choices
 from src.config import reload_config
 from src.database import (
     add_tax_entry,
@@ -579,8 +580,8 @@ def render() -> None:
 
     col1, col2, col3 = st.columns([2, 2, 2])
     current_year = date.today().year
-    year = col1.selectbox("Year", list(range(current_year, current_year - 5, -1)), index=0,
-                          key="tax_year")
+    years = year_choices()[::-1]
+    year = col1.selectbox("Year", years, index=years.index(current_year), key="tax_year")
     quarter = col2.selectbox("Quarter", [1, 2, 3, 4],
                              format_func=_quarter_label, index=0, key="tax_quarter")
     with col3:

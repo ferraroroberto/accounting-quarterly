@@ -120,6 +120,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── invoice_dedupe.py          # Duplicate/receipt/out-of-period detection + exclusion (issue #92)
 │   ├── periods.py                 # Quarter start/end bounds (date, ISO string, datetime) shared by the engine, dedupe, close and UI
 │   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results + AuditEntry
+│   ├── tax_codes.py               # EU country / VAT prefixes, Spanish NIF → geography, tax_treatment values and legacy mapping
+│   ├── tax_data.py                # Shared by every tax model: config plumbing, record loaders, activity-start floor, per-row VAT figures
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage

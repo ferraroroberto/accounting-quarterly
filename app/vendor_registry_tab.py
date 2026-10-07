@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from app.flash import flash, show_flash
-from src.database import TAX_TREATMENTS_IN
+from src.tax_codes import TAX_TREATMENTS_IN
 from src.logger import get_logger
 from src.vendor_registry import (
     ACTIVITIES,

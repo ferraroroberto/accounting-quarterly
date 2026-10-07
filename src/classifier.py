@@ -7,6 +7,7 @@ from typing import Optional
 from src.logger import get_logger
 from src.models import ActivityType, ClassifiedPayment, GeoRegion, Payment
 from src.rules_engine import load_rules
+from src.tax_codes import EU_COUNTRY_CODES
 
 log = get_logger(__name__)
 
@@ -121,7 +122,7 @@ def classify_geography(
     if country:
         if country == "ES":
             return "SPAIN", f"country:{country}"
-        if country in _EU_COUNTRY_CODES:
+        if country in EU_COUNTRY_CODES:
             return "EU_NOT_SPAIN", f"country:{country}"
         return "OUTSIDE_EU", f"country:{country}"
 
@@ -131,15 +132,6 @@ def classify_geography(
     non_eur_default: GeoRegion = defaults.get("non_eur_default", "OUTSIDE_EU")  # type: ignore[assignment]
     return non_eur_default, f"non_eur_currency:{payment.currency}"
 
-
-# ISO-2 codes of EU member states, Spain excluded (checked separately as the
-# taxpayer's home country). Mirrors ``src.database._EU_VAT_PREFIXES`` — kept
-# as its own copy here since classifier.py must not import from database.py.
-_EU_COUNTRY_CODES: frozenset[str] = frozenset({
-    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "FI", "FR",
-    "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL",
-    "PL", "PT", "RO", "SE", "SI", "SK",
-})
 
 # EU member states that don't use the euro. A charge in one of these
 # currencies with no known country is still probably an EU B2C sale, not

@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.data_loader import first_data_year, get_classified_for_period
+from app.year_picker import year_choices
 from app.excel_download import render_excel_download
 from src.periods import quarter_datetime_bounds
 from src.aggregator import (
@@ -24,7 +25,7 @@ def render() -> None:
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
     first_year = first_data_year()
-    year_options: list[int | str] = ["Since inception", *list(range(first_year, current_year + 2))]
+    year_options: list[int | str] = ["Since inception", *year_choices()]
     default_year = current_year if current_year in year_options else first_year
 
     with col1:

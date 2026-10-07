@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from app.flash import flash, show_flash
+from app.year_picker import year_input
 from src.database import get_invoices, set_invoice_exclusion
 from src.invoice_dedupe import (
     DuplicateGroup,
@@ -148,10 +149,7 @@ def render() -> None:
         )
     today = date.today()
     with c_year:
-        year = st.number_input(
-            "Year", min_value=2000, max_value=2100, value=today.year, step=1,
-            key="dedupe_year", disabled=not scope_period,
-        )
+        year = year_input("dedupe_year", today.year, disabled=not scope_period)
     with c_quarter:
         quarter = st.selectbox(
             "Quarter", [1, 2, 3, 4], index=(today.month - 1) // 3, key="dedupe_quarter",

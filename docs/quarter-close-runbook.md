@@ -41,7 +41,7 @@ The filing sheet prints the exact deadlines of the quarter (moved for weekends a
 - [ ] **The Social Security bank export** covers the quarter (for step 7).
 - [ ] **The previous quarter's receipts are imported** (303, 130 and 349 of the previous quarter, and the previous year's Q4 130 in Q1). They start the credit chain (303 box 110) and the 130 chains (boxes 05, 13, 15). See step 17.
 - [ ] **Config for the year** (`config.json → tax`, or Configuration → Tax Settings): `prorrata.definitive_pct_by_year` holds the previous year's definitive %; `previous_year_net_yield` is set if the previous year's Q4 130 receipt cannot be imported; `oss_registered` still matches reality.
-- [ ] **The hub is up** for OCR (`http://127.0.0.1:8000`), unless `invoice_ocr.provider` is `gemini`.
+- [ ] **The hub is up** for OCR (`http://127.0.0.1:8000`).
 
 ---
 

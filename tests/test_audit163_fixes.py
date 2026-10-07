@@ -52,7 +52,7 @@ def test_extract_invoice_normalises_string_fields_in_both_locales(tmp_path, monk
     raw = ('{"subtotal_eur": "42.50", "fx_rate": "1.0832", "total_eur": "1.234,56", "iva_rate": "n/a", '
            '"iva_breakdown": [{"base_imponible": "100.00", "iva_amount": "21,00"}]}')
     monkeypatch.setattr(invoice_ocr, "_extract_via_hub", lambda *a, **k: raw)
-    data = invoice_ocr.extract_invoice(pdf, provider="hub")
+    data = invoice_ocr.extract_invoice(pdf)
     assert data["subtotal_eur"] == 42.5
     assert data["fx_rate"] == 1.0832
     assert data["total_eur"] == 1234.56

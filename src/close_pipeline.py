@@ -485,8 +485,8 @@ def step_stripe(ctx: CloseContext, fetch: Optional[Callable[[], Any]] = None) ->
     """Fetch (via ``fetch``) + billing backfill + reclassify the quarter, then list review warnings.
 
     ``fetch`` pulls the quarter from Stripe and persists it classified — the
-    CLI passes ``app.data_loader.get_classified_for_period`` in API mode (this
-    module never imports the UI package). ``None`` skips the fetch.
+    CLI passes ``src.payments_loader.get_classified_for_period`` in API mode
+    (this module never imports the UI package). ``None`` skips the fetch.
     """
     res = StepResult("stripe")
     before = {p.id: _payment_fingerprint(p) for p in _quarter_payments(ctx)}

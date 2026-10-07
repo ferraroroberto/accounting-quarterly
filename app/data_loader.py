@@ -1,4 +1,10 @@
-"""Shared data-loading utilities for Streamlit tabs (with caching)."""
+"""Shared data-loading utilities for Streamlit tabs (with caching).
+
+Thin UI wrapper — the actual period loading, FX conversion and classification
+logic lives in ``src/payments_loader.py`` (#166) so the CLI and close pipeline
+can use it without importing Streamlit. This module only adds the
+``@st.cache_data`` layer.
+"""
 from __future__ import annotations
 
 import sys
@@ -13,18 +19,10 @@ from typing import Optional
 
 import streamlit as st
 
-from src.periods import quarter_datetime_bounds
-from src.classifier import classify_batch
-from src.fx_rates import convert_to_eur, init_fx_table
-from src.logger import get_logger
+from src.database import get_transaction_date_bounds
 from src.models import ClassifiedPayment, Payment
-from src.rules_engine import load_rules
-from src.database import get_transaction_date_bounds, load_classified_payments, upsert_classified, upsert_payments
-from src.stripe_client import fetch_charges
-
-log = get_logger(__name__)
-
-
+from src.payments_loader import classify_payments as _classify_payments_uncached
+from src.payments_loader import get_classified_for_period as _get_classified_for_period
 
 # Fallback first year when no transactions are stored yet (e.g. a fresh DB).
 DEFAULT_FIRST_YEAR = 2023
@@ -41,48 +39,15 @@ def first_data_year(min_tx_dt: Optional[datetime] = None) -> int:
     return min_tx_dt.year if min_tx_dt else DEFAULT_FIRST_YEAR
 
 
-def load_payments_for_period_api(
-    start_date: datetime,
-    end_date: datetime,
-) -> list[Payment]:
-    """Load payments from Stripe API.
-
-    This function is intentionally not Streamlit-cached — every call hits the
-    API directly.
-    """
-    return fetch_charges(start_date, end_date)
-
-
-def apply_fx_conversion(payments: list[Payment]) -> list[Payment]:
-    """Convert non-EUR payments to EUR using stored FX rates."""
-    init_fx_table()
-    converted = []
-    for p in payments:
-        if p.currency != "eur" and p.fx_rate is None:
-            tx_date = p.created_date.date()
-            amount_eur, rate = convert_to_eur(p.converted_amount, p.currency, tx_date)
-            refund_eur, _ = convert_to_eur(p.converted_amount_refunded, p.currency, tx_date)
-            # ``fee`` comes from the balance transaction, already in the balance
-            # currency (EUR): converting it again would divide it by the rate (#144).
-            p = p.model_copy(update={
-                "amount_original": p.converted_amount,
-                "converted_amount": amount_eur,
-                "converted_amount_refunded": refund_eur,
-                "fx_rate": rate,
-            })
-        elif p.currency == "eur" and p.fx_rate is None:
-            p = p.model_copy(update={"fx_rate": 1.0})
-        converted.append(p)
-    return converted
-
-
 @st.cache_data(ttl=300, show_spinner=False)
-def classify_payments(payments_tuple: tuple) -> list[ClassifiedPayment]:
+def _classify_payments_cached(payments_tuple: tuple) -> list[ClassifiedPayment]:
     """Classify a tuple of payments (hashable for caching)."""
     payments = [Payment.model_validate_json(p) for p in payments_tuple]
-    rules = load_rules()
-    classified, _ = classify_batch(payments, rules)
-    return classified
+    return _classify_payments_uncached(payments)
+
+
+def _classify_cached(payments: list[Payment]) -> list[ClassifiedPayment]:
+    return _classify_payments_cached(tuple(p.model_dump_json() for p in payments))
 
 
 def get_classified_for_period(
@@ -93,34 +58,13 @@ def get_classified_for_period(
     *,
     input_mode: Optional[str] = None,
 ) -> list[ClassifiedPayment]:
-    mode = (input_mode or "api").lower()
-
-    if start_date is None or end_date is None:
-        if quarter:
-            start_date, end_date = quarter_datetime_bounds(year, quarter)
-        else:
-            start_date = datetime(year, 1, 1)
-            end_date = datetime(year, 12, 31, 23, 59, 59)
-
-    if mode == "db":
-        # Return stored classifications directly — no re-classification needed.
-        return load_classified_payments(start_date, end_date)
-
-    # API mode: fetch fresh data from Stripe, classify, and persist.
-    payments = load_payments_for_period_api(start_date, end_date)
-    payments = apply_fx_conversion(payments)
-    upsert_payments(payments, source="api")
-
-    classified = classify_payments(tuple(p.model_dump_json() for p in payments))
-    # Persist classification back to DB (best-effort).
-    try:
-        upsert_classified(classified)
-    except Exception as exc:
-        # UI can still function even if DB update fails (e.g. readonly file),
-        # but a silent failure here leaves the next "db" load with stale or
-        # unclassified rows, so it must be visible.
-        log.warning("⚠️ Could not persist classifications: %s", exc)
-    return classified
+    """Streamlit-facing wrapper over ``src.payments_loader.get_classified_for_period``,
+    with classification routed through the ``@st.cache_data``-wrapped classifier
+    above so repeated tab renders don't re-run the rules engine."""
+    return _get_classified_for_period(
+        year, quarter, start_date, end_date,
+        input_mode=input_mode, classify_fn=_classify_cached,
+    )
 
 
 def invalidate_cache():

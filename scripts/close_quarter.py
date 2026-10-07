@@ -110,15 +110,13 @@ from src.close_pipeline import (  # noqa: E402
 )
 from src.database import init_db  # noqa: E402
 from src.exceptions import InvalidSentReportError, ReportAlreadyFrozenError  # noqa: E402
+from src.payments_loader import get_classified_for_period  # noqa: E402
+from src.periods import quarter_datetime_bounds  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
 
 if TYPE_CHECKING:
     from src.reclassify import ReclassifyResult
-
-# app.data_loader pulls in Streamlit (for @st.cache_data); import it lazily,
-# only inside the subcommands that actually need it, so the other subcommands
-# stay free of Streamlit's "no runtime found" cache warning.
 
 
 def previous_quarter(today: datetime | None = None) -> tuple[int, int]:
@@ -145,7 +143,6 @@ def _emit(result: StepResult, with_output: bool = True) -> int:
 
 def _stripe_fetcher(year: int, quarter: int) -> Callable[[], object]:
     def fetch() -> object:
-        from app.data_loader import get_classified_for_period
         return get_classified_for_period(year, quarter, input_mode="api")
     return fetch
 
@@ -246,9 +243,6 @@ def cmd_stripe_check(args: argparse.Namespace) -> int:
 
 
 def cmd_stripe_fetch(args: argparse.Namespace) -> int:
-    from app.data_loader import get_classified_for_period
-    from src.periods import quarter_datetime_bounds
-
     if args.backfill_fee_split:
         return _backfill_fee_split(args, *quarter_datetime_bounds(args.year, args.quarter))
     from src.aggregator import calculate_grand_totals, get_transaction_count

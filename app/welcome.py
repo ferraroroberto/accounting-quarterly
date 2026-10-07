@@ -33,7 +33,7 @@ TAB_GUIDE: list[tuple[str, str]] = [
     ("Invoice OCR",
      "AI-powered extraction of Spanish accounting data from any PDF "
      "(invoice, receipt, ticket). Routes through the configured OCR backend "
-     "(local-llm-hub by default, Gemini as fallback) to parse vendor, "
+     "(local-llm-hub) to parse vendor, "
      "client, IVA, IRPF, and totals, and stores results in the `invoices` "
      "table. Supports in (expenses) and out (income) documents."),
     ("Invoice Ledger",

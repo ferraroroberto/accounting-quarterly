@@ -1,8 +1,7 @@
-"""Invoice OCR tab — extract accounting data from PDFs via the configured OCR backend."""
+"""Invoice OCR tab — extract accounting data from PDFs via local-llm-hub."""
 from __future__ import annotations
 
 import json
-import os
 
 import pandas as pd
 import streamlit as st
@@ -218,25 +217,7 @@ def render() -> None:
 
     st.subheader("Invoice OCR — AI Extraction for Spanish Accounting")
 
-    # Backend readiness check. The default "hub" provider routes through
-    # local-llm-hub and needs no Google credentials; the legacy "gemini"
-    # provider requires GOOGLE_API_KEY (or Vertex ADC).
-    from src.invoice_ocr import _resolve_provider
-
-    provider = _resolve_provider(None)
-    if provider == "gemini":
-        has_key = bool(os.getenv("GOOGLE_API_KEY")) or bool(
-            os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        )
-        if not has_key:
-            st.error(
-                "Provider is 'gemini' but neither GOOGLE_API_KEY nor "
-                "GOOGLE_APPLICATION_CREDENTIALS is set. Add one to your `.env` "
-                "file, or set invoice_ocr.provider to 'hub' in config.json."
-            )
-            return
-    else:
-        st.caption("Extraction provider: local-llm-hub (`gemini_pro`).")
+    st.caption("Extraction provider: local-llm-hub (`gemini_pro`).")
 
     st.info(
         "Upload invoices (PDFs) to the `data/invoices/in` or `data/invoices/out` directories, "

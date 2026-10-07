@@ -1,6 +1,7 @@
 """Transaction Browser tab content."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -159,70 +160,33 @@ def render() -> None:
                 _hidden = {"raw_source_json", "raw_source_type"}
                 display_cols = [c for c in raw_df.columns if c not in _hidden]
 
-                # Build display dataframe: checkbox FIRST, then the rest.
-                # Only the currently selected row gets True — so the table always
-                # shows exactly one tick (radio-button behaviour).
-                current_inspect = st.session_state.get("tb_inspect_id")
-                df_view = raw_df[display_cols].copy()
-                ids = df_view["id"].astype(str)
-                df_view.insert(0, "📋", ids == str(current_inspect) if current_inspect else False)
-
-                edited = st.data_editor(
-                    df_view,
+                event = st.dataframe(
+                    raw_df[display_cols],
                     width="stretch",
                     hide_index=True,
-                    disabled=[c for c in df_view.columns if c != "📋"],
-                    column_config={
-                        "📋": st.column_config.CheckboxColumn(
-                            "📋",
-                            help="Tick a row to inspect its raw Stripe payload",
-                            default=False,
-                            width="small",
-                        ),
-                    },
-                    key="tb_raw_editor",
+                    selection_mode="single-row",
+                    on_select="rerun",
+                    key="tb_raw_table",
                 )
-
-                # Detect which row the user interacted with:
-                # - any row now True that wasn't True before → new selection
-                # - currently selected row now False → deselect
-                try:
-                    prev_true = set(ids[df_view["📋"]].tolist())
-                    now_true  = set(edited.loc[edited["📋"] == True, "id"].astype(str).tolist())  # noqa: E712
-                    newly_checked = now_true - prev_true
-                    if newly_checked:
-                        st.session_state["tb_inspect_id"] = next(iter(newly_checked))
-                        st.rerun()
-                    elif current_inspect and current_inspect not in now_true:
-                        st.session_state["tb_inspect_id"] = None
-                        st.rerun()
-                except Exception:
-                    pass
+                selected = event.selection.rows if event and event.selection else []
 
                 # Payload inspector
                 st.markdown("**Inspect source payload**")
                 if "raw_source_json" not in raw_df.columns:
                     st.info("Raw source JSON not in result — click **Run DB search** again.")
+                elif not selected:
+                    st.caption("Select a row above to inspect its payload.")
                 else:
-                    inspect_id = st.session_state.get("tb_inspect_id")
-                    if not inspect_id:
-                        st.caption("Tick a row above to inspect its payload.")
+                    row = raw_df.iloc[selected[0]]
+                    st.caption(f"`{row['id']}` · source: `{row.get('raw_source_type')}`")
+                    raw_json_val = row.get("raw_source_json")
+                    if raw_json_val:
+                        try:
+                            st.json(json.loads(raw_json_val))
+                        except (TypeError, ValueError):
+                            st.code(str(raw_json_val))
                     else:
-                        row_match = raw_df[raw_df["id"].astype(str) == inspect_id]
-                        if row_match.empty:
-                            st.caption("Tick a row above to inspect its payload.")
-                        else:
-                            raw_json_val = row_match.iloc[0].get("raw_source_json")
-                            raw_type_val = row_match.iloc[0].get("raw_source_type")
-                            st.caption(f"`{inspect_id}` · source: `{raw_type_val}`")
-                            if raw_json_val:
-                                try:
-                                    import json as _json
-                                    st.json(_json.loads(raw_json_val))
-                                except Exception:
-                                    st.code(str(raw_json_val))
-                            else:
-                                st.info("No raw_source_json stored for this row.")
+                        st.info("No raw_source_json stored for this row.")
             else:
                 st.dataframe(raw_df, width="stretch", hide_index=True)
 

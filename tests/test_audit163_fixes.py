@@ -205,3 +205,21 @@ def test_transaction_browser_reloads_when_the_period_changes(monkeypatch):
     assert calls[-1] == (first[0], 2) and len(calls) == 2
     at.run()
     assert len(calls) == 2    # an unchanged period does not reload
+
+
+def test_transaction_browser_raw_table_uses_native_row_selection(monkeypatch):
+    """#168: the raw DB table is a native single-row-selection dataframe, not a hand-built checkbox editor."""
+    import app.transaction_browser as tab
+    import app.year_picker as year_picker
+
+    rows = [{"id": "ch_1", "created_date": "2025-01-02T10:00:00", "description": "d",
+             "raw_source_type": "stripe_api", "raw_source_json": '{"a": 1}'}]
+    monkeypatch.setattr(year_picker, "first_data_year", lambda: 2024)
+    monkeypatch.setattr(tab, "get_classified_for_period", lambda *a, **k: [])
+    monkeypatch.setattr(tab, "get_transaction_count_db", lambda *a, **k: 1)
+    monkeypatch.setattr(tab, "search_transactions_raw", lambda **k: ("SELECT 1", [], rows))
+    at = AppTest.from_function(_browser_page).run()
+    assert not at.exception, at.exception
+    assert len(at.dataframe) == 1
+    assert any("Select a row above" in c.value for c in at.caption)
+    assert not at.get("data_editor")

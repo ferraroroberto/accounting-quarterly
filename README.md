@@ -122,7 +122,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
-│   ├── tax_validator.py           # Validation: compare gestor-filed AEAT figures vs DB-computed values
+│   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
 │   ├── modelo_390.py              # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
 │   ├── modelo_347.py              # Modelo 347 purchases side (Spanish vendors > €3,005.06, exclusions)
@@ -176,7 +176,6 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
-│   ├── test_tax_validator.py      # Gestor-filed vs DB-computed validation
 │   ├── test_reconciliation.py     # Reconciliation matching, catalogue, 349 operators, export, adapter
 │   ├── test_tax_validation_tab.py # Reconciliation tab (AppTest, empty state)
 │   ├── test_filed_returns.py      # AEAT receipt parser/import (synthetic PDFs only)
@@ -474,7 +473,6 @@ Cuota payments are not issued as invoices — they appear as bank debits. Export
 - A **manual entry** fallback (expander below the import controls) lets you record a month missing from the bank export, or a refund, directly — subject to the same dedupe key.
 - The **Modelo 130** engine sums all SS payments from January 1 through the end of the selected quarter (YTD) and includes them in **box 02 — gastos deducibles**, alongside OCR-extracted expense invoices and manual entries. Legal basis: cuotas de autónomo are fully deductible under Art. 30 LIRPF (*régimen de estimación directa*).
 - The audit trail (Tax Audit tab) records `ss_gastos` and the full list of individual payments as named inputs to the `c02_gastos_reales` cell (box 02 split).
-- `src/social_security.py`'s `get_ss_period_totals()` returns quarterly + yearly totals net of refunds for a given year, for reporting or future use by the Modelo 130 engine.
 
 ### Quarterly breakdown
 
@@ -682,7 +680,7 @@ A git-ignored JSON file at the repo root (`divergences.json.example` ships fake 
 
 A differing box that matches an entry for its model, period and box shows 🟡 with the entry's tag and explanation; the first matching entry wins. A ⚪ row is never catalogued.
 
-The older `src/tax_validator.py` (`run_all_validations`, `ValidationLine`) is kept for its tests and its Modelo 390 → 130 income cross-check; the tab no longer renders it.
+`src/tax_validator.py` is now only the loader of the filed returns (`load_filings` / `find_filing`: imported receipts first, `validation.yaml` as the fallback); the comparison itself lives in `src/reconciliation.py`.
 
 ### Importing filed AEAT receipts
 

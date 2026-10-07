@@ -955,56 +955,6 @@ def load_classified_payments(
         conn.close()
 
 
-def load_payments(start_date: Optional[datetime] = None,
-                  end_date: Optional[datetime] = None,
-                  db_path: Optional[str | Path] = None) -> list[Payment]:
-    """Load payments from database, optionally filtered by date range."""
-    conn = get_connection(db_path)
-    try:
-        query = "SELECT * FROM transactions WHERE 1=1"
-        params: list = []
-        if start_date:
-            query += " AND created_date >= ?"
-            params.append(start_date.isoformat())
-        if end_date:
-            query += " AND created_date <= ?"
-            params.append(end_date.isoformat())
-        query += " ORDER BY created_date"
-
-        rows = conn.execute(query, params).fetchall()
-        payments = []
-        for row in rows:
-            payments.append(Payment(
-                id=row["id"],
-                created_date=datetime.fromisoformat(row["created_date"]),
-                converted_amount=row["converted_amount"],
-                converted_amount_refunded=row["converted_amount_refunded"],
-                description=row["description"],
-                fee=row["fee"],
-                currency=row["currency"],
-                payment_type_meta=row["payment_type_meta"],
-                event_api_id_meta=row["event_api_id_meta"],
-                email_meta=row["email_meta"],
-            ))
-        return payments
-    finally:
-        conn.close()
-
-
-def get_latest_transaction_date(db_path: Optional[str | Path] = None) -> Optional[datetime]:
-    """Get the most recent transaction date in the database."""
-    conn = get_connection(db_path)
-    try:
-        row = conn.execute(
-            "SELECT MAX(created_date) as max_date FROM transactions"
-        ).fetchone()
-        if row and row["max_date"]:
-            return datetime.fromisoformat(row["max_date"])
-        return None
-    finally:
-        conn.close()
-
-
 def get_transaction_date_bounds(
     db_path: Optional[str | Path] = None,
 ) -> tuple[Optional[datetime], Optional[datetime]]:
@@ -1660,45 +1610,9 @@ def delete_tax_entry(entry_id: int, db_path: Optional[str | Path] = None) -> boo
         conn.close()
 
 
-def get_tax_entries_ytd(year: int, quarter: int, entry_type: str,
-                        db_path: Optional[str | Path] = None) -> float:
-    """Sum a given entry_type from Q1 through the given quarter (YTD)."""
-    conn = get_connection(db_path)
-    try:
-        row = conn.execute(
-            """SELECT COALESCE(SUM(amount_eur), 0) AS total
-               FROM quarterly_tax_entries
-               WHERE year = ? AND quarter <= ? AND entry_type = ?""",
-            (year, quarter, entry_type),
-        ).fetchone()
-        return float(row["total"])
-    finally:
-        conn.close()
-
-
 # ---------------------------------------------------------------------------
 # tax_filing_status helpers
 # ---------------------------------------------------------------------------
-
-def get_filing_status(year: int, model: str, quarter: Optional[int] = None,
-                      db_path: Optional[str | Path] = None) -> Optional[dict]:
-    """Return the filing status record for the given year/model/quarter, or None."""
-    conn = get_connection(db_path)
-    try:
-        if quarter is None:
-            row = conn.execute(
-                "SELECT * FROM tax_filing_status WHERE year = ? AND model = ? AND quarter IS NULL",
-                (year, model),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM tax_filing_status WHERE year = ? AND model = ? AND quarter = ?",
-                (year, model, quarter),
-            ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
 
 def upsert_filing_status(year: int, model: str, quarter: Optional[int],
                          status: str, amount_eur: Optional[float] = None,
@@ -1727,20 +1641,6 @@ def upsert_filing_status_conn(conn: sqlite3.Connection, year: int, model: str, q
                filed_at = excluded.filed_at""",
         (year, model, quarter, status, amount_eur, notes, filed_at),
     )
-
-
-def get_all_filing_statuses(year: int,
-                             db_path: Optional[str | Path] = None) -> list[dict]:
-    """Return all filing status records for the given year."""
-    conn = get_connection(db_path)
-    try:
-        rows = conn.execute(
-            "SELECT * FROM tax_filing_status WHERE year = ? ORDER BY model, quarter",
-            (year,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
 
 
 # Quarter value for annual-only snapshots (e.g. Modelo 347).

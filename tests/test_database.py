@@ -8,12 +8,10 @@ import pytest
 from src.database import (
     backfill_tax_snapshot_legacy_keys,
     get_connection,
-    get_latest_transaction_date,
     get_transaction_count_db,
     get_uploaded_files,
     init_db,
     load_classified_payments,
-    load_payments,
     load_tax_snapshots_for_period,
     record_upload,
     upsert_classified,
@@ -34,8 +32,7 @@ class TestDatabase:
         assert inserted == 5
         assert updated == 0
 
-        loaded = load_payments(db_path=tmp_db)
-        assert len(loaded) == 5
+        assert get_transaction_count_db(db_path=tmp_db) == 5
 
     def test_upsert_idempotent(self, tmp_db, sample_payments):
         init_db(tmp_db)
@@ -52,22 +49,6 @@ class TestDatabase:
         inserted, updated = upsert_payments(modified, db_path=tmp_db)
         assert inserted == 0
         assert updated == 1
-
-    def test_load_with_date_filter(self, tmp_db, sample_payments):
-        init_db(tmp_db)
-        upsert_payments(sample_payments, db_path=tmp_db)
-
-        start = datetime(2025, 2, 1)
-        end = datetime(2025, 2, 28, 23, 59, 59)
-        loaded = load_payments(start, end, db_path=tmp_db)
-        assert len(loaded) == 2  # ch_test_002 and ch_test_005
-
-    def test_get_latest_date(self, tmp_db, sample_payments):
-        init_db(tmp_db)
-        upsert_payments(sample_payments, db_path=tmp_db)
-        latest = get_latest_transaction_date(db_path=tmp_db)
-        assert latest is not None
-        assert latest.month == 3
 
     def test_transaction_count(self, tmp_db, sample_payments):
         init_db(tmp_db)
@@ -236,12 +217,12 @@ class TestTaxSnapshotLegacyKeyMigration:
         rows = load_tax_snapshots_for_period(2026, 1, conn)
         payload = next(r["payload_json"] for r in rows if r["model"] == "303")
         result = decode_snapshot("303", payload)
-        assert result.box_28_base_soportado == pytest.approx(60.0)
-        assert result.box_29_cuota_soportado == pytest.approx(15.0)
+        assert result.c28_base == pytest.approx(60.0)
+        assert result.c29_cuota == pytest.approx(15.0)
         conn.close()
 
     def test_decode_snapshot_tolerates_unmigrated_legacy_keys(self):
         """Even without the startup migration, decode_snapshot alone must not crash."""
         result = decode_snapshot("303", _legacy_modelo303_payload())
-        assert result.box_28_base_soportado == pytest.approx(60.0)
-        assert result.box_29_cuota_soportado == pytest.approx(15.0)
+        assert result.c28_base == pytest.approx(60.0)
+        assert result.c29_cuota == pytest.approx(15.0)

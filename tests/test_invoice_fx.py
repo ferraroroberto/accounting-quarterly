@@ -222,7 +222,7 @@ class TestIncomeEurReceived:
         rid = _ingest("out", db, filename="out/usd-income-303.pdf")
         update_invoice_fields(rid, {"eur_received": 80.0}, db_path=db)
         result = compute_modelo_303(2025, 1, conn)
-        assert result.export_base == pytest.approx(80.0)
+        assert result.c120_no_sujetas_localizacion == pytest.approx(80.0)
 
     def test_no_eur_received_uses_ecb_booked_value_as_final(self, db, conn):
         _store_usd_rate(db)

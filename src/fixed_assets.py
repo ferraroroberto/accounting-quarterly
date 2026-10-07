@@ -12,8 +12,8 @@ Durable purchases are not expensed in the quarter they are bought:
 - **VAT (Modelo 303).** An asset with a unit base above €3,005.06 is a *bien de
   inversión* (art. 108 LIVA): its deductible VAT goes in boxes 30/31 at the
   business-use share (art. 95.Tres LIVA) and it enters a 5-year regularisation
-  register (arts. 107-109 LIVA). This module computes and exposes both; wiring
-  them into the 303 box model is #97.
+  register (arts. 107-109 LIVA). This module computes and exposes both; the 303
+  engine reads them (boxes 30/31, and the regularisation in box 43).
 
 Storage: ``fixed_assets`` (one row per asset unit) and ``fixed_asset_vat_usage``
 (the VAT business-use % actually applied in each year of the regularisation
@@ -398,7 +398,7 @@ class RegularisationRow:
     recorded: bool          # False → assumed unchanged from the year of acquisition
     delta_points: float     # pct_used − initial pct
     applies: bool           # |delta| > 10 points, in years 2..5
-    adjustment_eur: float   # + extra deduction / − VAT to repay (303 box 44 at Q4)
+    adjustment_eur: float   # + extra deduction / − VAT to repay (303 box 43 at Q4)
 
 
 def vat_regularisation_register(asset: FixedAsset,
@@ -686,7 +686,7 @@ def load_vat_usage(conn: sqlite3.Connection, asset_id: int) -> dict[int, float]:
 
 
 # ---------------------------------------------------------------------------
-# DB-backed entry points (consumed by the tax engine: 130 now, 303 in #97)
+# DB-backed entry points (consumed by the tax engine: 130 and 303)
 # ---------------------------------------------------------------------------
 
 def depreciation_for_period(
@@ -711,7 +711,7 @@ def capital_goods_vat_for_period(year: int, quarter: int, conn: sqlite3.Connecti
 
 
 def vat_regularisation_for_year(conn: sqlite3.Connection, year: int) -> list[dict[str, Any]]:
-    """Every capital good's regularisation row for ``year`` (feeds 303 box 44 at Q4 — #97)."""
+    """Every capital good's regularisation row for ``year`` (feeds 303 box 43 at Q4)."""
     out = []
     for a in load_fixed_assets(conn):
         for row in vat_regularisation_register(a, load_vat_usage(conn, a.id)):

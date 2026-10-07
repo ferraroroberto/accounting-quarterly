@@ -358,25 +358,3 @@ def add_manual_ss_entry(
         db_path=db_path,
     )
     return inserted
-
-
-# ---------------------------------------------------------------------------
-# Reporting helpers
-# ---------------------------------------------------------------------------
-
-def get_ss_period_totals(year: int, db_path: Optional[str | Path] = None) -> dict:
-    """Return quarterly and yearly SS contribution totals (net of refunds) for `year`.
-
-    Shape: {"year": year, "quarters": {1: total, 2: total, 3: total, 4: total},
-    "yearly_total": total}. Intended for the Modelo 130 engine (box 02 YTD) and
-    for reporting; `tax_engine.py` currently computes its own YTD sum inline
-    from the same table and is not yet wired to call this.
-    """
-    rows = get_ss_payments(start_date=f"{year}-01-01", end_date=f"{year}-12-31", db_path=db_path)
-    quarters = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-    for row in rows:
-        month = int(str(row["payment_date"])[5:7])
-        q = (month - 1) // 3 + 1
-        quarters[q] = round(quarters[q] + float(row["amount_eur"]), 2)
-    yearly_total = round(sum(quarters.values()), 2)
-    return {"year": year, "quarters": quarters, "yearly_total": yearly_total}

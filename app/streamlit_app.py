@@ -92,29 +92,12 @@ with st.sidebar:
     st.caption(f"SS payments stored: {_stats['ss_count']}")
 
 # --- Main content: horizontal tabs ---
+from app.welcome import TAB_NAMES
+
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr, tab_invoice_ledger,
  tab_invoice_dedupe, tab_vendors, tab_fixed_assets, tab_invoice_explorer, tab_ss, tab_tax,
- tab_filing_sheet, tab_validation, tab_audit) = st.tabs([
-    "Welcome",
-    "Quarter Report",
-    "Transaction Browser",
-    "History & Charts",
-    "Currency",
-    "Configuration",
-    "Invoice Upload",
-    "Invoice OCR",
-    "Invoice Ledger",
-    "Duplicate Review",
-    "Vendors",
-    "Fixed Assets",
-    "Invoice Explorer",
-    "Seguridad Social",
-    "Tax Obligations",
-    "Filing Sheet",
-    "Reconciliation",
-    "Tax Audit",
-])
+ tab_filing_sheet, tab_validation, tab_audit) = st.tabs(TAB_NAMES)
 
 # --- Tab imports and rendering ---
 from app.welcome import render as render_welcome

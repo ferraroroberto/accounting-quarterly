@@ -29,7 +29,7 @@ def _render_without_filed_return() -> None:
     tax_validation._cached_filed_periods = lambda: []
     tax_validation._cached_logged_audit = lambda *a: []
     tax_validation._cached_reconciliation = lambda model, year, quarter: Reconciliation(
-        model=model, year=year, quarter=quarter, filed_found=False, engine="legacy",
+        model=model, year=year, quarter=quarter, filed_found=False,
         lines=[ReconLine("07", "Base 21 %", None, 100.0), ReconLine("09", "Cuota 21 %", None, 21.0)],
     )
     tax_validation.render()
@@ -43,7 +43,7 @@ def _render_with_nothing_at_all() -> None:
     tax_validation._cached_filed_periods = lambda: []
     tax_validation._cached_logged_audit = lambda *a: []
     tax_validation._cached_reconciliation = lambda model, year, quarter: Reconciliation(
-        model=model, year=year, quarter=quarter, filed_found=False, engine="legacy",
+        model=model, year=year, quarter=quarter, filed_found=False,
     )
     tax_validation.render()
 
@@ -55,7 +55,7 @@ def _render_with_filed_return() -> None:
     tax_validation._cached_filed_periods = lambda: [("303", 2025, 2)]
     tax_validation._cached_logged_audit = lambda *a: []
     tax_validation._cached_reconciliation = lambda model, year, quarter: Reconciliation(
-        model=model, year=year, quarter=quarter, filed_found=True, engine="legacy",
+        model=model, year=year, quarter=quarter, filed_found=True,
         filed_source="db", filed_date="2025-07-18",
         lines=[ReconLine("07", "Base 21 %", 100.0, 100.0), ReconLine("46", "Resultado", 5.0, 9.0),
                ReconLine("110", "", 3.0, None)],

@@ -89,7 +89,7 @@ You are now acting as a **gestor administrativo colegiado** specialised in tax a
 
 | Plazo | Modelo | Período |
 |---|---|---|
-| 20 enero | 303, 130, 349 | Q4 2025 |
+| 30 enero | 303, 130, 349 | Q4 2025 |
 | 31 enero | OSS | Q4 2025 |
 | 28 febrero | 347 | Anual 2025 |
 | 30 enero | 390, 180, 190 | Anual 2025 |

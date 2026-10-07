@@ -46,6 +46,9 @@ flowchart TB
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
+    TAXDEADLINES["tax_deadlines.py
+filing / direct-debit deadlines, business-day rules,
+shared by the filing sheet and the Obligations calendar"]
     FILINGSHEET["filing_sheet.py\nfiling sheet: AEAT form order, credit chain,\ndeadlines (direct debit / filing), mark filed\n(immutable FILED snapshot versions)"]
     MODELO390["modelo_390.py\nModelo 390 from the four 303 results\n(per-rate rows, pro-rata, compensation, volume)"]
     ANNUALPACK["annual_pack.py + modelo_347.py + pl_by_activity.py\n347 purchases, P&L per IAE activity (ties to 130 Q4),\nmarkdown/CSV export + CLI"]
@@ -119,6 +122,8 @@ flowchart TB
   TAXENGINE --> SNAPSHOTCODEC --> DB
   TAXENGINE --> TAXMODELS
   TAXENGINE --> PERIODS
+  TAXENGINE -->|calendar dates| TAXDEADLINES
+  FILINGSHEET -->|filing_deadline| TAXDEADLINES
   FIXEDASSETS --> PERIODS
   TAXENGINE --> TAXDATA
   ANNUALPACK --> TAXDATA

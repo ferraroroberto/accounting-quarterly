@@ -139,6 +139,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
 │   ├── relink.py                  # Re-point invoice records after PDFs move/rename (move record, then content hash)
 │   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"
+│   ├── tax_deadlines.py           # Filing / direct-debit deadlines + business-day rules, shared by the filing sheet and the Obligations calendar
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
 │   ├── logger.py                  # Rotating file logger
 │   └── exceptions.py              # Custom exception classes
@@ -171,6 +172,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_fx_rates.py
 │   ├── test_rules_engine.py
 │   ├── test_aggregator.py
+│   ├── test_tax_deadlines.py      # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
 │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
 │   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
 │   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
@@ -189,7 +191,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
 │   ├── test_close_pipeline.py     # Every close step on a temp DB (OCR/ECB/Stripe mocked), idempotence, skill ↔ CLI
 │   ├── test_relink.py             # Relink matching (move record, hash, unmatched, ambiguous, swap) + archive step
-│   ├── test_filing_sheet.py       # Filing sheet boxes, deadlines, filed-version freeze, triggers, migration
+│   ├── test_filing_sheet.py       # Filing sheet boxes, filed-version freeze, triggers, migration
 │   ├── test_filing_sheet_tab.py   # Filing Sheet tab (AppTest)
 │   └── test_invoice_ocr_tab.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
 ├── data/
@@ -726,7 +728,7 @@ The **Filing Sheet** tab (and `scripts/close_quarter.py sheet`, which writes `fi
 - **Modelo 130** boxes 01–19 and the result (box 19).
 - **Modelo 349** summary boxes and the operator list (country, VAT id, name, key, base).
 - Only non-zero boxes by default (**Show zero boxes** lists every modelled box). In the tab each value sits in a copyable block, formatted as the Sede form expects (`1234,56`); the markdown has the same value in its last column.
-- **Deadlines** per model: filing until the 20th of the month after the quarter (Q4: 30 January), moved to the next business day when it falls on a weekend or holiday; **direct debit** (303/130 only) until the latest day leaving at least three business days or five calendar days before that — the 15th for the 20th, 27 January for 30 January 2026 (Orden HAC/241/2025, BOE-A-2025-5048, amending Orden EHA/1658/2009; AEAT *calendario del contribuyente*, "Plazos de presentación de autoliquidaciones con domiciliación bancaria"). Only national holidays plus Maundy Thursday and Good Friday are built in — check the AEAT calendar each period.
+- **Deadlines** per model: filing until the 20th of the month after the quarter (Q4: 30 January), moved to the next business day when it falls on a weekend or holiday; **direct debit** (303/130 only) until the latest day leaving at least three business days or five calendar days before that — the 15th for the 20th, 27 January for 30 January 2026 (Orden HAC/241/2025, BOE-A-2025-5048, amending Orden EHA/1658/2009; AEAT *calendario del contribuyente*, "Plazos de presentación de autoliquidaciones con domiciliación bancaria"). Only national holidays plus Maundy Thursday and Good Friday are built in — check the AEAT calendar each period. The Tax Obligations calendar shows the same last filing day (`src/tax_deadlines.py` is the one source); its OSS, 390 and 347 dates are moved to the next business day the same way.
 
 ### Mark filed (immutable filed snapshots)
 

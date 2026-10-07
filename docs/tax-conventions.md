@@ -256,9 +256,10 @@ None of them changes the result; all of them count in the pro-rata numerator.
 
 ## 11. Filing and direct-debit deadlines
 
-**Rule.** `src/filing_sheet.py` computes, per quarter:
+**Rule.** `src/tax_deadlines.py` (used by the filing sheet and the Obligations calendar alike) computes, per quarter:
 - **Filing** of the 303, 130 and 349: 1–20 of the month after the quarter; Q4: 1–30 January; moved to the next business day on a weekend or holiday.
 - **Direct debit** (303 and 130 only; the 349 has no payment): the latest day leaving at least three business days or five calendar days before the end of the filing period, moved back to a business day. That is the 15th for a 20th, and 27 January for 30 January 2026.
+- The Obligations calendar shows the same last filing day for these three, and moves the OSS return (last day of the month after the quarter) and the annual 390 and 347 to the next business day the same way.
 - Only national holidays plus Maundy Thursday and Good Friday are built in. Check the AEAT *calendario del contribuyente* each period.
 
 **Legal basis.** 303: art. 71.4 RIVA. 130: art. 111.1 RIRPF. 349: art. 81 RIVA. Direct debit: art. 3 of Orden EHA/1658/2009 as amended by Orden HAC/241/2025 (BOE-A-2025-5048); AEAT "Plazos de presentación de autoliquidaciones con domiciliación bancaria".

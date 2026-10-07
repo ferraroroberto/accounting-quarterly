@@ -13,7 +13,7 @@ import pytest
 
 import src.reconciliation as rc
 import src.tax_validator as tax_validator
-from src.database import init_db, upsert_audit_entries_conn
+from src.database import init_db, load_audit_entries_conn, upsert_audit_entries_conn
 from src.filed_returns import FiledReturn, Operator349, store_filed_return
 from src.reconciliation import (
     STATUS_CATALOGUED,
@@ -30,7 +30,6 @@ from src.reconciliation import (
     build_lines,
     classify,
     load_catalogue,
-    load_logged_audit,
     operator_box,
     parse_entry,
     reconcile,
@@ -428,9 +427,9 @@ class TestAuditDrillDown:
         upsert_audit_entries_conn(db_conn, [entry], "2025-04-01T00:00:00")
         newer = AuditEntry.of("303", 2025, 1, "box_01_base", "Base", "f", 2.0)
         upsert_audit_entries_conn(db_conn, [newer], "2025-04-02T00:00:00")
-        rows = load_logged_audit(db_conn, "303", 2025, 1)
+        rows = load_audit_entries_conn(db_conn, 2025, 1, "303")
         assert [r["value"] for r in rows] == [2.0]
-        assert load_logged_audit(db_conn, "303", 2025, 2) == []
+        assert load_audit_entries_conn(db_conn, 2025, 2, "303") == []
 
     def test_live_audit_is_carried_on_the_reconciliation(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)

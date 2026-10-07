@@ -6,7 +6,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import first_data_year, get_classified_for_period, invalidate_cache, quarter_dates
+from app.data_loader import first_data_year, get_classified_for_period, invalidate_cache
+from src.periods import quarter_datetime_bounds
 from src.classifier import eur_default_foreign_warning
 from src.database import (
     get_transaction_count_db,
@@ -39,7 +40,7 @@ def render() -> None:
         geo_filter = fc2.selectbox("Geography", ["All", "SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU"], key="tb_geo")
 
     if quarter:
-        start_dt, end_dt = quarter_dates(year, quarter)
+        start_dt, end_dt = quarter_datetime_bounds(year, quarter)
     else:
         start_dt, end_dt = datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
 

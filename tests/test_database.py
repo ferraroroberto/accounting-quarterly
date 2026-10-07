@@ -226,3 +226,44 @@ class TestTaxSnapshotLegacyKeyMigration:
         result = decode_snapshot("303", _legacy_modelo303_payload())
         assert result.c28_base == pytest.approx(60.0)
         assert result.c29_cuota == pytest.approx(15.0)
+
+
+class TestUpsertPaymentsColumns:
+    """``upsert_payments`` is driven by one column tuple: every column is written and change-checked."""
+
+    BASE = dict(
+        id="ch_cols", created_date=datetime(2025, 2, 3, 10, 0, 0), converted_amount=100.0,
+        converted_amount_refunded=0.0, description="d", fee=3.0, fee_stripe=1.0, fee_application=2.0,
+        currency="eur", payment_type_meta="p", event_api_id_meta="e", email_meta="m@example.com",
+        card_country="ES", billing_country="ES", amount_original=100.0, fx_rate=1.0,
+        stripe_customer_id="cus_1", stripe_payment_intent_id="pi_1", stripe_balance_transaction_id="txn_1",
+        stripe_invoice_id="in_1", raw_source={"a": 1}, raw_source_type="stripe_api",
+    )
+    CHANGES = dict(
+        converted_amount=101.0, converted_amount_refunded=5.0, description="d2", fee=3.5, fee_stripe=1.5,
+        fee_application=2.5, currency="usd", payment_type_meta="p2", event_api_id_meta="e2", email_meta="n@example.com",
+        card_country="FR", billing_country="FR", amount_original=120.0, fx_rate=1.2, stripe_customer_id="cus_2",
+        stripe_payment_intent_id="pi_2", stripe_balance_transaction_id="txn_2", stripe_invoice_id="in_2",
+        raw_source={"a": 2}, raw_source_type="other",
+    )
+
+    def test_every_column_round_trips_and_triggers_an_update(self, tmp_db):
+        init_db(tmp_db)
+        assert upsert_payments([Payment(**self.BASE)], db_path=tmp_db) == (1, 0)
+        assert upsert_payments([Payment(**self.BASE)], db_path=tmp_db) == (0, 0)
+        conn = get_connection(tmp_db)
+        try:
+            row = conn.execute("SELECT * FROM transactions WHERE id = 'ch_cols'").fetchone()
+        finally:
+            conn.close()
+        for col, value in self.BASE.items():
+            if col in ("id", "created_date", "raw_source"):
+                continue
+            assert row[col] == value, col
+        assert json.loads(row["raw_source_json"]) == {"a": 1}
+
+        for field, new in self.CHANGES.items():
+            payment = Payment(**{**self.BASE, field: new})
+            assert upsert_payments([payment], db_path=tmp_db) == (0, 1), field
+            # restore, so the next field is checked against the same baseline
+            assert upsert_payments([Payment(**self.BASE)], db_path=tmp_db) == (0, 1), field

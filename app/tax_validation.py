@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from app.tax_audit import _render_audit_table  # same per-cell drill-down as the Tax Audit tab
-from src.database import get_connection
+from src.database import get_connection, load_audit_entries
 from src.filed_returns import import_pdf
 from src.logger import get_logger
 from src.reconciliation import (
@@ -34,7 +34,6 @@ from src.reconciliation import (
     audit_entries_for_box,
     list_filed_periods,
     load_catalogue,
-    load_logged_audit,
     reconcile,
     save_catalogue,
     to_markdown,
@@ -77,11 +76,7 @@ def _cached_reconciliation(model: str, year: int, quarter: Optional[int]) -> Rec
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _cached_logged_audit(model: str, year: int, quarter: int) -> list[dict]:
-    conn = get_connection()
-    try:
-        return load_logged_audit(conn, model, year, quarter)
-    finally:
-        conn.close()
+    return load_audit_entries(year, quarter, model)
 
 
 def _clear_caches() -> None:

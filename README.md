@@ -118,6 +118,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, SS, tax, audit)
 │   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── invoice_dedupe.py          # Duplicate/receipt/out-of-period detection + exclusion (issue #92)
+│   ├── periods.py                 # Quarter start/end bounds (date, ISO string, datetime) shared by the engine, dedupe, close and UI
 │   ├── tax_models.py              # Dataclasses for Modelo303, Modelo130, OSS, 347, 349 results + AuditEntry
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
 │   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar

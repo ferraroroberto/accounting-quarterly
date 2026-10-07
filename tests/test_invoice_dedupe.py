@@ -22,7 +22,6 @@ from src.invoice_dedupe import (
     detect_out_of_period,
     detect_receipt_pairs,
     find_duplicate_groups,
-    quarter_bounds,
 )
 from src.tax_engine import compute_modelo_130, compute_modelo_303
 
@@ -214,10 +213,6 @@ class TestEmailCopies:
 # ---------------------------------------------------------------------------
 
 class TestOutOfPeriod:
-    def test_quarter_bounds(self):
-        assert quarter_bounds(2026, 2) == ("2026-04-01", "2026-06-30")
-        assert quarter_bounds(2025, 4) == ("2025-10-01", "2025-12-31")
-
     def test_row_outside_quarter_flagged(self, db):
         _add(db, filename="a.pdf", invoice_date="2025-07-15", file_hash="H1")  # Q3, sweeping Q2
         groups = detect_out_of_period(_rows(db), 2025, 2)

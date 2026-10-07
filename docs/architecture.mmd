@@ -38,6 +38,7 @@ flowchart TB
     VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
     TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130 (AEAT boxes, 13 reduction, 15 carry),\n349/347, OSS, EU B2C threshold, calendar"]
     TAXMODELS["tax_models.py\nresult dataclasses named after the AEAT boxes\n(aeat_boxes() / operators()), OSS rates"]
+    PERIODS["periods.py\nquarter bounds (date / ISO / datetime)"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
     TAXVALIDATOR["tax_validator.py\nfiled-return loader (receipts, yaml fallback)"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
@@ -115,6 +116,8 @@ flowchart TB
   TAXENGINE --> DECLARED
   TAXENGINE --> SNAPSHOTCODEC --> DB
   TAXENGINE --> TAXMODELS
+  TAXENGINE --> PERIODS
+  FIXEDASSETS --> PERIODS
   SNAPSHOTCODEC --> TAXMODELS
   TAXVALIDATOR --> FILEDRETURNS
   FILEDRETURNS --> DB

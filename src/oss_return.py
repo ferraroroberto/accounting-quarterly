@@ -1,7 +1,6 @@
 """OSS quarterly return and the EU B2C distance-selling threshold watch.
 
-Moved verbatim out of ``src.tax_engine`` (#174). Reads its records through ``src.tax_data``;
-``compute_oss_return`` and ``compute_eu_b2c_threshold`` are the public entry points.
+Reads its records through ``src.tax_data``; ``compute_oss_return`` and ``compute_eu_b2c_threshold`` are the public entry points.
 """
 from __future__ import annotations
 

@@ -47,7 +47,7 @@ from src.tax_data import (
     load_expense_invoices_ytd,
     load_income_invoices_ytd,
 )
-from src.tax_engine import compute_modelo_130
+from src.modelo_130 import compute_modelo_130
 from src.vendor_registry import ACTIVITIES, ACTIVITY_IAE
 
 log = get_logger(__name__)

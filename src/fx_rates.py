@@ -582,7 +582,7 @@ _FX_WRITE_FIELDS: tuple[str, ...] = (
 # If a user has locked any of these on a row (a manual correction via the
 # Invoice Ledger), the whole row is skipped — its EUR figures are no longer
 # ours to touch. `eur_received` is deliberately not in this set: it already
-# wins over `subtotal_eur` in the tax engine (src.tax_engine._income_invoice_eur)
+# wins over `subtotal_eur` in the tax engine (src.tax_data.income_invoice_eur)
 # regardless of what this function does, and recomputing `subtotal_eur` here
 # never overwrites it.
 _FX_LOCK_GUARDS: frozenset[str] = frozenset({"subtotal_eur", "iva_amount", "total_eur"})

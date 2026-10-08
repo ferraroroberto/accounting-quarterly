@@ -20,11 +20,8 @@ from src.database import (
     get_connection,
 )
 from src.declared_reports import get_declared_report
-from src.tax_engine import (
-    compute_and_persist_tax_snapshots,
-    compute_eu_b2c_threshold,
-    get_tax_calendar,
-)
+from src.oss_return import compute_eu_b2c_threshold
+from src.tax_engine import compute_and_persist_tax_snapshots, get_tax_calendar
 from src.tax_snapshot_codec import decode_snapshot
 from src.tax_models import (
     EUB2CThresholdResult,

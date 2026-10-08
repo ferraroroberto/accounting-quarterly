@@ -1,7 +1,6 @@
 """Modelo 349 (intra-EU operations recapitulative statement).
 
-Moved verbatim out of ``src.tax_engine`` (#174). Reads its records through ``src.tax_data``;
-``compute_modelo_349`` is the public entry point.
+Reads its records through ``src.tax_data``; ``compute_modelo_349`` is the public entry point.
 """
 from __future__ import annotations
 

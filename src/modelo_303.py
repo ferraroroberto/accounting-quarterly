@@ -1,7 +1,7 @@
 """Modelo 303 (quarterly VAT): AEAT box model, pro-rata and credit chain.
 
-Moved verbatim out of ``src.tax_engine`` (#174). Reads its records through ``src.tax_data`` and the
-tax-code derivations in ``src.tax_codes``; ``compute_modelo_303`` is the public entry point.
+Reads its records through ``src.tax_data`` and the tax-code derivations in ``src.tax_codes``;
+``compute_modelo_303`` is the public entry point.
 """
 from __future__ import annotations
 

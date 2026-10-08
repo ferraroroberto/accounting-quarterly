@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from src.database import init_db
-from src.tax_engine import compute_modelo_349
+from src.modelo_349 import compute_modelo_349
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
 
 

@@ -40,7 +40,7 @@ from src.fixed_assets import (  # noqa: E402
     update_fixed_asset,
     vat_regularisation_register,
 )
-from src.tax_engine import compute_modelo_130  # noqa: E402
+from src.modelo_130 import compute_modelo_130  # noqa: E402
 
 QUARTERLY = {"assets": {"posting_mode": "quarterly"}}
 

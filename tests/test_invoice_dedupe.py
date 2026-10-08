@@ -23,7 +23,8 @@ from src.invoice_dedupe import (
     detect_receipt_pairs,
     find_duplicate_groups,
 )
-from src.tax_engine import compute_modelo_130, compute_modelo_303
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
 
 ES_CIF = "B00000000"
 

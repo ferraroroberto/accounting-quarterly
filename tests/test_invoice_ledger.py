@@ -24,7 +24,9 @@ from src.tax_codes import (
     derive_tax_treatment_for_invoice,
     normalize_vat_id,
 )
-from src.tax_engine import compute_modelo_130, compute_modelo_303, compute_modelo_347
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
+from src.modelo_347 import compute_modelo_347
 
 # Synthetic, structurally valid ids — not real taxpayers.
 ES_CIF = "B00000000"

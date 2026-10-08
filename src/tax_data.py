@@ -1,6 +1,6 @@
 """Config plumbing, record loaders and per-row figures shared by every tax model.
 
-Everything the Modelo 303 / 130 / 349 / 347 / OSS computations (``src.tax_engine``) and the P&L by
+Everything the Modelo 303 / 130 / 349 / 347 / OSS computations (``src.modelo_303`` and siblings) and the P&L by
 activity (``src.pl_by_activity``) read their records through: the ``config.tax`` accessors, the
 ``tax.activity_start_date`` floor and its audit note, the quarter / year-to-date loaders for Stripe
 transactions and invoices, and the VAT base / treatment of a row. No model logic lives here.

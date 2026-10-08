@@ -51,7 +51,8 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from src.logger import get_logger
-from src.tax_engine import compute_modelo_303, load_app_config, prorrata_pct
+from src.modelo_303 import compute_modelo_303, prorrata_pct
+from src.tax_data import load_app_config
 from src.tax_models import AuditEntry, Modelo303Result
 
 log = get_logger(__name__)

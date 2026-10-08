@@ -663,7 +663,7 @@ def upsert_classified(payments: list[ClassifiedPayment],
     Also writes ``buyer_vat_id`` (the customer's EU VAT id, resolved by
     ``src.classifier.customer_vat_id`` — accounting-quarterly#113) so the
     tax engine's on-the-fly ``vat_treatment`` derivation and Modelo 349 key S
-    grouping (``src.tax_engine._load_classified_for_quarter``) can read it
+    grouping (``src.tax_data.load_classified_for_quarter``) can read it
     straight from the ``transactions`` table.
     """
     conn = get_connection(db_path)

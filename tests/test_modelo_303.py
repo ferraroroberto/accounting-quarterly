@@ -9,7 +9,7 @@ import pytest
 from src.database import add_tax_entry, init_db
 from src.filed_returns import FiledReturn, store_filed_return
 from src.fixed_assets import FixedAsset, add_fixed_asset
-from src.tax_engine import compute_modelo_303, prorrata_pct
+from src.modelo_303 import compute_modelo_303, prorrata_pct
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
 
 # Box keys agreed with the reconciliation view (#100).

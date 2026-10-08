@@ -2,7 +2,7 @@
 
 The activity × geography → ``vat_treatment`` matrix, the OSS rate lookup, and
 the VAT-inclusive base extraction live here once and are consumed by
-``src.tax_engine._get_vat_treatment`` / ``_get_vat_base`` / ``_get_vat_amount``,
+``src.tax_data.get_vat_treatment`` / ``get_vat_base`` / ``get_vat_amount``,
 which derive each transaction's figures lazily from this matrix. Keeping the
 rules in a single module prevents the divergence that a second, parallel copy
 would reintroduce.

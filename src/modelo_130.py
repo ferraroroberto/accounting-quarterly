@@ -1,7 +1,6 @@
 """Modelo 130 (quarterly IRPF instalment): AEAT box model, box 13 reduction and negative carry.
 
-Moved verbatim out of ``src.tax_engine`` (#174). Reads its records through ``src.tax_data``;
-``compute_modelo_130`` is the public entry point.
+Reads its records through ``src.tax_data``; ``compute_modelo_130`` is the public entry point.
 """
 from __future__ import annotations
 

@@ -37,7 +37,8 @@ flowchart TB
 
   subgraph taxcore["src/ — Spanish tax engine"]
     VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
-    TAXENGINE["tax_engine.py\nModelo 303 (AEAT boxes, pro-rata, credit chain),\n130 (AEAT boxes, 13 reduction, 15 carry),\n349/347, OSS, EU B2C threshold, calendar"]
+    MODELS["modelo_303.py · modelo_130.py · modelo_349.py ·\nmodelo_347.py (sales + purchases) · oss_return.py\n303 (AEAT boxes, pro-rata, credit chain), 130 (13 reduction, 15 carry),\n349, 347, OSS return, EU B2C threshold"]
+    TAXENGINE["tax_engine.py\ntax calendar + snapshot persistence,\nre-exports the compute_* functions"]
     TAXMODELS["tax_models.py\nresult dataclasses named after the AEAT boxes\n(aeat_boxes() / operators()), OSS rates"]
     PERIODS["periods.py\nquarter bounds (date / ISO / datetime)"]
     TAXCODES["tax_codes.py\nEU VAT prefixes, NIF→geo, tax_treatment values and mappings"]
@@ -52,7 +53,7 @@ filing / direct-debit deadlines, business-day rules,
 shared by the filing sheet and the Obligations calendar"]
     FILINGSHEET["filing_sheet.py\nfiling sheet: AEAT form order, credit chain,\ndeadlines (direct debit / filing), mark filed\n(immutable FILED snapshot versions)"]
     MODELO390["modelo_390.py\nModelo 390 from the four 303 results\n(per-rate rows, pro-rata, compensation, volume)"]
-    ANNUALPACK["annual_pack.py + modelo_347.py + pl_by_activity.py\n347 purchases, P&L per IAE activity (ties to 130 Q4),\nmarkdown/CSV export + CLI"]
+    ANNUALPACK["annual_pack.py + pl_by_activity.py\nannual pack: 347 sales + purchases, P&L per IAE activity (ties to 130 Q4),\nmarkdown/CSV export + CLI"]
   end
 
   subgraph localfiles["git-ignored local config"]
@@ -104,6 +105,7 @@ shared by the filing sheet and the Obligations calendar"]
   PIPELINE --> DECLARED
   PIPELINE --> AGGEXPORT
   PIPELINE --> TAXENGINE
+  PIPELINE --> MODELS
   PIPELINE --> RECONCILIATION
   PIPELINE -->|sheet renderer| FILINGSHEET
   VENDORSFILE --> VENDORS --> DB
@@ -115,37 +117,40 @@ shared by the filing sheet and the Obligations calendar"]
   SHARED -.-> CLASSIFIER
   SHARED -.-> DB
 
-  DB --> VATRULES --> TAXENGINE
+  DB --> VATRULES --> MODELS
   RECLASSIFY --> CLASSIFIER
   RECLASSIFY --> DB
   DECLARED --> DBFILE
-  TAXENGINE --> DECLARED
+  MODELS --> DECLARED
+  TAXENGINE --> MODELS
   TAXENGINE --> SNAPSHOTCODEC --> DB
+  MODELS --> TAXMODELS
   TAXENGINE --> TAXMODELS
-  TAXENGINE --> PERIODS
+  MODELS --> PERIODS
   TAXENGINE -->|calendar dates| TAXDEADLINES
   FILINGSHEET -->|filing_deadline| TAXDEADLINES
   FIXEDASSETS --> PERIODS
+  MODELS --> TAXDATA
   TAXENGINE --> TAXDATA
   ANNUALPACK --> TAXDATA
   TAXDATA --> PERIODS
   TAXDATA --> VATRULES
   DB --> TAXCODES
-  TAXENGINE --> TAXCODES
+  MODELS --> TAXCODES
   CLASSIFIER --> TAXCODES
   SNAPSHOTCODEC --> TAXMODELS
   TAXVALIDATOR --> FILEDRETURNS
   FILEDRETURNS --> DB
-  TAXENGINE --> FIXEDASSETS
-  TAXENGINE -->|303 box 110 from filed 87 + 72| FILEDRETURNS
-  TAXENGINE -->|349 key I: vendor VAT id + legal name| VENDORS
+  MODELS --> FIXEDASSETS
+  MODELS -->|303 box 110 from filed 87 + 72| FILEDRETURNS
+  MODELS -->|349 key I: vendor VAT id + legal name| VENDORS
   FIXEDASSETS --> DBFILE
-  RECONCILIATION --> TAXENGINE
+  RECONCILIATION --> MODELS
   RECONCILIATION --> TAXVALIDATOR
   RECONCILIATION --> MODELO390
-  MODELO390 --> TAXENGINE
+  MODELO390 --> MODELS
   ANNUALPACK --> MODELO390
-  ANNUALPACK --> TAXENGINE
+  ANNUALPACK --> MODELS
   ANNUALPACK -->|347 NIF + P&L activity fallback| VENDORS
   ANNUALPACK --> FIXEDASSETS
   DIVERGENCESFILE --> RECONCILIATION
@@ -167,6 +172,7 @@ shared by the filing sheet and the Obligations calendar"]
   INVTABS --> FIXEDASSETS
   SSTAB --> SOCSEC
   TAXTABS --> TAXENGINE
+  TAXTABS --> MODELS
   TAXTABS --> RECONCILIATION
   TAXTABS --> FILEDRETURNS
   TAXTABS --> SNAPSHOTCODEC

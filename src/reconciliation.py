@@ -46,12 +46,10 @@ from src.exceptions import StripeAutomationError
 from src.filed_returns import VALIDATOR_KEYS
 from src.logger import get_logger
 from src.modelo_390 import MODELO390_LABELS, compute_modelo_390
-from src.tax_engine import (
-    compute_modelo_130,
-    compute_modelo_303,
-    compute_modelo_349,
-    load_app_config,
-)
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
+from src.modelo_349 import compute_modelo_349
+from src.tax_data import load_app_config
 from src.tax_validator import find_filing, load_filings
 
 log = get_logger(__name__)

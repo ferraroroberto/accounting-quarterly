@@ -83,16 +83,13 @@ from src.reconciliation import (
 )
 from src.social_security import get_ss_payments, load_bank_export, upsert_ss_payments
 from src.stripe_client import backfill_billing_details_from_raw_source
-from src.tax_engine import (
-    compute_and_persist_tax_snapshots,
-    compute_eu_b2c_threshold,
-    compute_modelo_130,
-    compute_modelo_303,
-    compute_modelo_347,
-    compute_modelo_349,
-    compute_oss_return,
-    load_app_config,
-)
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
+from src.modelo_347 import compute_modelo_347
+from src.modelo_349 import compute_modelo_349
+from src.oss_return import compute_eu_b2c_threshold, compute_oss_return
+from src.tax_data import load_app_config
+from src.tax_engine import compute_and_persist_tax_snapshots
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
 from src.tax_validator import find_filing, load_filings
 from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices

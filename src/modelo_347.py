@@ -1,8 +1,7 @@
 """Modelo 347: both sides of the annual operations declaration with Spanish counterparties.
 
-``compute_modelo_347`` is the sales side (moved here from ``src.tax_engine``, #174). The purchases
-side, ``compute_modelo_347_purchases`` (acquisitions from Spanish vendors above €3,005.06 a year,
-#103), applies these rules
+``compute_modelo_347`` is the sales side. ``compute_modelo_347_purchases`` is the purchases side
+(acquisitions from Spanish vendors above €3,005.06 a year, #103), which applies these rules
 (Reglamento General de gestión e inspección tributaria, RD 1065/2007):
 
 - art. 33.1: declare every person or entity with whom the operations of the

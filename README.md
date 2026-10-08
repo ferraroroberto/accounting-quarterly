@@ -127,7 +127,7 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── modelo_130.py              # Modelo 130 (AEAT boxes, box 13 reduction, negative carry)
 │   ├── modelo_349.py              # Modelo 349 (intra-EU operations, per operator and key)
 │   ├── oss_return.py              # OSS quarterly return and the EU B2C distance-selling threshold watch
-│   ├── tax_engine.py              # Spanish tax computation: calendar, tax snapshots
+│   ├── tax_engine.py              # Tax calendar and snapshot persistence; re-exports each model's compute_* function
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
@@ -935,7 +935,7 @@ The tax engine uses `excluded`, `invoice_date`, the split business-use percentag
 
 A foreign-currency income invoice with no `eur_received` is booked at the ECB rate on the invoice date — final, not provisional (see above). If that foreign-currency balance is **later converted** to EUR, the conversion realises a gain or loss against the EUR figure originally booked, which must be recorded as activity income (or a loss) in the quarter of conversion, not the invoice's own quarter.
 
-The Invoice Ledger tab's **income** view has an "Exchange rate differences" form for this: pick the invoice (optional), the conversion date, the foreign-currency amount converted, and the EUR actually obtained. It computes `gain_loss_eur = eur_obtained − booked_eur` and stores it in the `fx_exchange_differences` table (`src.fx_rates.record_exchange_difference` / `get_exchange_differences`). Every recorded gain/loss dated within a quarter's year-to-date window is added to that quarter's Modelo 130 box 01 income (`src.tax_engine.compute_modelo_130`) — on top of, not instead of, the invoice's own booked income, which keeps counting in its own quarter as usual.
+The Invoice Ledger tab's **income** view has an "Exchange rate differences" form for this: pick the invoice (optional), the conversion date, the foreign-currency amount converted, and the EUR actually obtained. It computes `gain_loss_eur = eur_obtained − booked_eur` and stores it in the `fx_exchange_differences` table (`src.fx_rates.record_exchange_difference` / `get_exchange_differences`). Every recorded gain/loss dated within a quarter's year-to-date window is added to that quarter's Modelo 130 box 01 income (`src.modelo_130.compute_modelo_130`) — on top of, not instead of, the invoice's own booked income, which keeps counting in its own quarter as usual.
 
 ---
 

@@ -379,7 +379,7 @@ class AuditEntry:
         """Build an entry, JSON-serialising ``inputs`` into ``inputs_json``.
 
         Single construction site for every ``compute_modelo_*`` function in
-        ``src/tax_engine.py`` — they all built the same shape by hand before.
+        the per-model modules (``src/modelo_303.py`` …) — they all built the same shape by hand before.
         """
         return cls(
             model=model, year=year, quarter=quarter,

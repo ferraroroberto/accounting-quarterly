@@ -11,14 +11,12 @@ from src.database import (
     init_db,
     load_tax_snapshots_for_period,
 )
-from src.tax_engine import (
-    compute_and_persist_tax_snapshots,
-    compute_modelo_130,
-    compute_modelo_303,
-    compute_modelo_347,
-    compute_modelo_349,
-    compute_oss_return,
-)
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
+from src.modelo_347 import compute_modelo_347
+from src.modelo_349 import compute_modelo_349
+from src.oss_return import compute_oss_return
+from src.tax_engine import compute_and_persist_tax_snapshots
 from src.tax_snapshot_codec import decode_snapshot
 
 

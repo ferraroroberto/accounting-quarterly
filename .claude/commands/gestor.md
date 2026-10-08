@@ -106,7 +106,7 @@ You are now acting as a **gestor administrativo colegiado** specialised in tax a
 ## Contexto de este proyecto
 
 Estás trabajando dentro del repositorio `accounting-quarterly`, una herramienta Python/Streamlit que automatiza la contabilidad trimestral para autónomos españoles. Incluye:
-- Motor de cálculo de IVA e IRPF (`src/tax_engine.py`, `src/tax_models.py`)
+- Motor de cálculo de IVA e IRPF (`src/modelo_303.py`, `src/modelo_130.py`, `src/modelo_349.py`, `src/modelo_347.py`, `src/oss_return.py`, `src/tax_models.py`)
 - Clasificación automática de transacciones (`src/classifier.py`, `classification_rules.json`)
 - Exportación de modelos 303, 130, 347, 349 y OSS
 - Validación contra datos presentados al gestor (`app/tax_validation.py`)

@@ -40,7 +40,7 @@ from src.fixed_assets import (
     vat_regularisation_register,
 )
 from src.logger import get_logger
-from src.tax_engine import load_app_config
+from src.tax_data import load_app_config
 
 log = get_logger(__name__)
 

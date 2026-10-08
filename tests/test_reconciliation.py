@@ -37,7 +37,8 @@ from src.reconciliation import (
     save_catalogue,
     to_markdown,
 )
-from src.tax_engine import compute_modelo_130, compute_modelo_303
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
 from src.tax_models import AuditEntry
 
 ROOT = Path(__file__).parent.parent

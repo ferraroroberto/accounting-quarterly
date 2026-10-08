@@ -32,13 +32,10 @@ from src.exceptions import (
 )
 from src.models import Payment
 from src.reclassify import reclassify_stored
-from src.tax_engine import (
-    compute_eu_b2c_threshold,
-    compute_modelo_130,
-    compute_modelo_303,
-    compute_modelo_349,
-    compute_oss_return,
-)
+from src.modelo_130 import compute_modelo_130
+from src.modelo_303 import compute_modelo_303
+from src.modelo_349 import compute_modelo_349
+from src.oss_return import compute_eu_b2c_threshold, compute_oss_return
 from src.vat_rules import vat_amount_on_base, vat_base_from_inclusive, vat_treatment
 
 

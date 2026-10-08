@@ -326,7 +326,7 @@ def _render_exchange_differences(income_records: list[dict]) -> None:
 
     The gain or loss vs. the EUR originally booked (ECB rate at accrual, or an
     earlier `eur_received`) feeds Modelo 130 box 01 (`c01_ingresos`) in the quarter of
-    conversion — see `tax_engine.compute_modelo_130`.
+    conversion — see `modelo_130.compute_modelo_130`.
     """
     st.markdown("**Exchange rate differences** — later conversion of a foreign-currency income balance")
     st.caption(

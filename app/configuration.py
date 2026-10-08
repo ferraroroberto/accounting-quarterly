@@ -382,7 +382,7 @@ geographic classification instead of manual overrides.
             "`EU_B2C_ES21`, since there is no OSS return to declare it on)."
         )
         # IVA_EU_B2C is intentionally excluded: compute_modelo_303's aggregation
-        # (src/tax_engine.py) has no devengado box or audit-record bucket for it,
+        # (src/modelo_303.py) has no devengado box or audit-record bucket for it,
         # so selecting it would silently drop the income from the quarterly VAT
         # return. Only offer treatments the engine actually accounts for.
         EU_B2C_OPTIONS = ["EU_B2C_ES21", "OSS_EU"]

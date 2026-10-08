@@ -127,12 +127,12 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── modelo_130.py              # Modelo 130 (AEAT boxes, box 13 reduction, negative carry)
 │   ├── modelo_349.py              # Modelo 349 (intra-EU operations, per operator and key)
 │   ├── oss_return.py              # OSS quarterly return and the EU B2C distance-selling threshold watch
-│   ├── tax_engine.py              # Spanish tax computation: Modelo 347 sales side, calendar, snapshots
+│   ├── tax_engine.py              # Spanish tax computation: calendar, tax snapshots
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
 │   ├── modelo_390.py              # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
-│   ├── modelo_347.py              # Modelo 347 purchases side (Spanish vendors > €3,005.06, exclusions)
+│   ├── modelo_347.py              # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── pl_by_activity.py          # P&L per IAE activity (826/861/751) tied to the Q4 Modelo 130
 │   ├── annual_pack.py             # Annual pack: 390 + 347 + P&L, markdown/CSV export + CLI
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI

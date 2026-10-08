@@ -1,6 +1,8 @@
-"""Modelo 347 purchases side: acquisitions from Spanish vendors above €3,005.06 a year (#103).
+"""Modelo 347: both sides of the annual operations declaration with Spanish counterparties.
 
-The sales side is ``src.tax_engine.compute_modelo_347``. Rules applied here
+``compute_modelo_347`` is the sales side (moved here from ``src.tax_engine``, #174). The purchases
+side, ``compute_modelo_347_purchases`` (acquisitions from Spanish vendors above €3,005.06 a year,
+#103), applies these rules
 (Reglamento General de gestión e inspección tributaria, RD 1065/2007):
 
 - art. 33.1: declare every person or entity with whom the operations of the
@@ -29,9 +31,11 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Optional
 
+from src.declared_reports import apply_frozen_amounts
 from src.logger import get_logger
 from src.tax_codes import normalize_vat_id
-from src.tax_models import AuditEntry
+from src.tax_data import clamp_start
+from src.tax_models import AuditEntry, Modelo347Result, Modelo347Row
 
 log = get_logger(__name__)
 
@@ -182,4 +186,144 @@ def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
     log.info("ℹ️ Modelo 347 %s purchases: %d declarable vendor(s), %d below threshold, %d unidentified, "
              "%d excluded invoice(s)", year, len(result.rows), result.below_threshold,
              len(result.unidentified), len(result.excluded))
+    return result
+
+
+def compute_modelo_347(
+    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo347Result:
+    """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties).
+
+    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
+    than 1 January, excludes transactions and invoices dated before it.
+    """
+    result = Modelo347Result(year=year)
+    start = clamp_start(f"{year}-01-01", config)
+
+    # Stripe transactions from Spanish counterparties
+    rows = db_conn.execute(
+        """SELECT id, email_meta, buyer_vat_id, converted_amount, converted_amount_refunded,
+                  geo_region, strftime('%m', created_date) as month
+           FROM transactions
+           WHERE strftime('%Y', created_date) = ?
+             AND created_date >= ?
+             AND geo_region = 'SPAIN'
+             AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
+           ORDER BY created_date""",
+        (str(year), start),
+    ).fetchall()
+    rows = apply_frozen_amounts([dict(r) for r in rows], db_conn)
+
+    # Income invoices issued to Spanish clients.
+    # `iva_amount` is selected alongside the base because Modelo 347 reports the
+    # importe *IVA incluido* — see the gross-basis note on the accumulation loop.
+    inv_rows = db_conn.execute(
+        """SELECT COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
+                  client_nif,
+                  subtotal_eur,
+                  iva_amount,
+                  strftime('%m', invoice_date) AS month
+           FROM invoices
+           WHERE direction = 'out'
+             AND geo_region = 'SPAIN'
+             AND COALESCE(excluded, 0) = 0
+             AND invoice_date >= ?
+             AND invoice_date <= ?
+             AND subtotal_eur IS NOT NULL""",
+        (start, f"{year}-12-31"),
+    ).fetchall()
+
+    # Both loops key by a normalised identity — NIF/VAT-ID first (the actual tax
+    # ID AEAT uses to identify a counterparty), falling back to a
+    # source-appropriate secondary identifier (email for Stripe, name for
+    # invoices) only when no NIF is on record. Mirrors compute_modelo_349's
+    # buyer_vat_id / client_nif keying so a counterparty known by the same NIF
+    # on both sides (a Stripe payment plus a manually-issued invoice)
+    # aggregates into one row instead of two separate below-threshold ones.
+    # Both loops must accumulate on the SAME basis, or the single threshold
+    # below compares a mixture of two. Modelo 347 declares the importe total de
+    # las operaciones **IVA incluido** (Art. 33 RD 1065/2007), so ``gross`` is
+    # VAT-inclusive on both sides: Stripe rows are already VAT-inclusive (see
+    # README, "VAT-inclusive pricing"), invoices contribute base + cuota.
+    # Deliberately NOT ``total_eur`` — that column is subtotal + IVA − IRPF
+    # (``src/invoice_ocr.py``), and the IRPF retención is a withholding on
+    # payment, not a reduction of the operation's amount.
+    by_counterparty: dict[str, dict] = {}
+    for row in rows:
+        nif = row["buyer_vat_id"] or ""
+        email = row["email_meta"] or "UNKNOWN"
+        key = nif or email
+        gross = row["converted_amount"] - row["converted_amount_refunded"]
+        month = int(row["month"])
+        q = (month - 1) // 3 + 1
+        if key not in by_counterparty:
+            by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": email}
+        by_counterparty[key]["total"] += gross
+        by_counterparty[key]["quarters"][q] += gross
+        if not by_counterparty[key]["nif"] and nif:
+            by_counterparty[key]["nif"] = nif
+
+    for row in inv_rows:
+        nif = row["client_nif"] or ""
+        name = row["counterparty"]
+        key = nif or name
+        gross = (row["subtotal_eur"] or 0.0) + (row["iva_amount"] or 0.0)
+        month_str = row["month"]
+        if not month_str:
+            continue
+        month = int(month_str)
+        q = (month - 1) // 3 + 1
+        if key not in by_counterparty:
+            by_counterparty[key] = {"total": 0.0, "quarters": defaultdict(float), "nif": nif, "name": name}
+        by_counterparty[key]["total"] += gross
+        by_counterparty[key]["quarters"][q] += gross
+        if not by_counterparty[key]["nif"] and nif:
+            by_counterparty[key]["nif"] = nif
+        if by_counterparty[key]["name"] in ("", "UNKNOWN") and name not in ("", "UNKNOWN"):
+            by_counterparty[key]["name"] = name
+
+    total_counterparties = len(by_counterparty)
+    below_threshold = 0
+    for key, info in by_counterparty.items():
+        total = round(info["total"], 2)
+        if total > result.threshold:  # art. 33.1 RD 1065/2007: "hayan superado"
+            result.rows.append(Modelo347Row(
+                counterparty_name=info["name"] or key,
+                counterparty_nif=info.get("nif", ""),
+                total_operations=total,
+                quarter_breakdown={q: round(v, 2) for q, v in info["quarters"].items()},
+            ))
+        else:
+            below_threshold += 1
+
+    result.rows.sort(key=lambda r: r.total_operations, reverse=True)
+
+    # --- Audit trail ---
+    _a = partial(AuditEntry.of, "347", year, 0)
+    audit = []
+    for r in result.rows:
+        identity = r.counterparty_nif or r.counterparty_name
+        audit.append(_a(
+            f"counterparty_{r.counterparty_name[:30]}",
+            f"Operaciones con {r.counterparty_name}",
+            f"SUM(importe IVA incluido) WHERE geo_region='SPAIN' AND "
+            f"counterparty(nif||email/name)='{identity}' — basis: transactions "
+            f"(converted_amount − converted_amount_refunded) + invoices "
+            f"(subtotal_eur + iva_amount) — threshold > €{result.threshold:,.2f}",
+            r.total_operations,
+            counterparty=r.counterparty_name,
+            counterparty_nif=r.counterparty_nif,
+            quarter_breakdown=r.quarter_breakdown,
+        ))
+    audit.append(_a(
+        "summary",
+        "Resumen Modelo 347",
+        f"Counterparties > €{result.threshold:,.2f} threshold",
+        float(len(result.rows)),
+        total_counterparties_spain=total_counterparties,
+        above_threshold=len(result.rows),
+        below_threshold=below_threshold,
+        threshold_eur=result.threshold,
+    ))
+    result.audit = audit
     return result

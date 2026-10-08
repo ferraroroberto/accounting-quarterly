@@ -126,7 +126,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── modelo_303.py              # Modelo 303 (AEAT boxes, pro-rata, credit chain)
 │   ├── modelo_130.py              # Modelo 130 (AEAT boxes, box 13 reduction, negative carry)
 │   ├── modelo_349.py              # Modelo 349 (intra-EU operations, per operator and key)
-│   ├── tax_engine.py              # Spanish tax computation: Modelo 347, OSS, EU B2C threshold, calendar
+│   ├── oss_return.py              # OSS quarterly return and the EU B2C distance-selling threshold watch
+│   ├── tax_engine.py              # Spanish tax computation: Modelo 347 sales side, calendar, snapshots
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export

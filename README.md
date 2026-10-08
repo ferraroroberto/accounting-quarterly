@@ -123,7 +123,8 @@ Transaction data is fetched from the Stripe API and stored in the local SQLite d
 │   ├── tax_codes.py               # EU country / VAT prefixes, Spanish NIF → geography, tax_treatment values and legacy mapping
 │   ├── tax_data.py                # Shared by every tax model: config plumbing, record loaders, activity-start floor, per-row VAT figures
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
-│   ├── tax_engine.py              # Spanish tax computation: Modelo 303/130/349/347, OSS, EU B2C threshold, calendar
+│   ├── modelo_303.py              # Modelo 303 (AEAT boxes, pro-rata, credit chain)
+│   ├── tax_engine.py              # Spanish tax computation: Modelo 130/349/347, OSS, EU B2C threshold, calendar
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export

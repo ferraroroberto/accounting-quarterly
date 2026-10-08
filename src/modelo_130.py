@@ -504,4 +504,4 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
            "17 − 18 (negative: deductible in box 15 of later quarters of the year)", r.c19_resultado,
            negativos_pendientes_posteriores=r.negativos_pendientes_posteriores),
     ]
-
+

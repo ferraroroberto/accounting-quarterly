@@ -12,6 +12,7 @@ from typing import Optional
 
 from src.declared_reports import apply_frozen_amounts
 from src.periods import quarter_iso_bounds
+from src.tax_codes import derive_tax_treatment_for_invoice
 from src.vat_rules import vat_amount_on_base, vat_base_from_inclusive, vat_treatment
 
 # ---------------------------------------------------------------------------
@@ -332,6 +333,13 @@ def get_vat_treatment(row: dict, config: Optional[dict] = None) -> str:
     return vat_treatment(
         row.get("activity_type"), row.get("geo_region"), config=config,
         buyer_vat_id=row.get("buyer_vat_id"),
+    )
+
+
+def invoice_tax_treatment(direction: str, inv: dict) -> Optional[str]:
+    """The ledger ``tax_treatment``, derived from the legacy columns when unset."""
+    return inv.get("tax_treatment") or derive_tax_treatment_for_invoice(
+        direction, inv.get("vat_treatment"), inv.get("geo_region"), inv.get("iva_amount")
     )
 
 

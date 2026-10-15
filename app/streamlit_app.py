@@ -18,6 +18,14 @@ from src.social_security import get_ss_count
 # @st.cache_resource this schema setup (executescript, PRAGMA passes, and
 # backfills) would replay on every rerender instead of once per session.
 
+st.set_page_config(
+    page_title="Stripe Accounting Dashboard",
+    page_icon="S",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
 @st.cache_resource(show_spinner=False)
 def _init_app() -> None:
     init_db()
@@ -29,14 +37,6 @@ def _init_app() -> None:
 
 
 _init_app()
-
-
-st.set_page_config(
-    page_title="Stripe Accounting Dashboard",
-    page_icon="S",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 
 # ── Cached sidebar stats (5-minute TTL) ─────────────────────────────────────

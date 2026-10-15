@@ -195,9 +195,17 @@ def render() -> None:
 
     with st.form("add_override"):
         oc1, oc2, oc3 = st.columns(3)
-        override_key = oc1.text_input("Client name / email / keyword", help="Substring match applied to description or email")
-        override_region = oc2.selectbox("Region", ["SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU"])
-        override_type = oc3.selectbox("Match on", ["Name/Description", "Email"])
+        override_key = oc1.text_input(
+            "Client name / email / keyword",
+            help="Substring match applied to description or email",
+            key="tb_override_key",
+        )
+        override_region = oc2.selectbox(
+            "Region", ["SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU"], key="tb_override_region"
+        )
+        override_type = oc3.selectbox(
+            "Match on", ["Name/Description", "Email"], key="tb_override_type"
+        )
         submitted = st.form_submit_button("Add Override", key="add_override_submit")
 
         if submitted and override_key.strip():

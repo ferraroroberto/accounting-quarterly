@@ -10,6 +10,7 @@ import pandas as pd
 
 from src.database import get_connection
 from src.logger import get_logger
+from src.numeric_parsing import parse_locale_number
 
 log = get_logger(__name__)
 
@@ -83,13 +84,8 @@ def _parse_amount(value) -> Optional[float]:
     s = str(value).strip()
     for ch in ("€", "$", "£", " ", "\xa0"):
         s = s.replace(ch, "")
-    if "," in s and "." in s:
-        # Assume dot is thousand sep, comma is decimal: 1.234,56 → 1234.56
-        s = s.replace(".", "").replace(",", ".")
-    elif "," in s:
-        s = s.replace(",", ".")
     try:
-        return -float(s)
+        return -parse_locale_number(s)
     except ValueError:
         return None
 

@@ -25,6 +25,8 @@ from src.tax_engine import compute_and_persist_tax_snapshots, get_tax_calendar
 from src.tax_snapshot_codec import decode_snapshot
 from src.tax_models import (
     EUB2CThresholdResult,
+    MODELO130_BOX_LABELS,
+    MODELO303_BOX_LABELS,
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
@@ -129,32 +131,14 @@ def _render_tax_calendar(year: int) -> None:
 # Sub-section B: Modelo 303
 # ---------------------------------------------------------------------------
 
-_M303_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("IVA devengado", (
-        ("01", "Base 4%"), ("03", "Cuota 4%"), ("04", "Base 10%"), ("06", "Cuota 10%"),
-        ("07", "Base 21%"), ("09", "Cuota 21%"),
-        ("10", "Adq. intracomunitarias — base"), ("11", "Adq. intracomunitarias — cuota"),
-        ("12", "Otras operaciones con ISP — base"), ("13", "Otras operaciones con ISP — cuota"),
-        ("27", "Total cuota devengada"),
-    )),
-    ("IVA deducible", (
-        ("28", "Interiores corrientes — base"), ("29", "Interiores corrientes — cuota"),
-        ("30", "Bienes de inversión — base"), ("31", "Bienes de inversión — cuota"),
-        ("36", "Adq. intracom. corrientes — base"), ("37", "Adq. intracom. corrientes — cuota"),
-        ("43", "Regularización bienes de inversión"), ("44", "Regularización prorrata definitiva"),
-        ("45", "Total a deducir"), ("46", "Resultado régimen general (27 − 45)"),
-    )),
-    ("Información adicional", (
-        ("59", "Entregas intracomunitarias"), ("60", "Exportaciones"),
-        ("120", "No sujetas por reglas de localización"), ("123", "No sujetas — OSS"),
-    )),
-    ("Resultado", (
-        ("64", "Suma de resultados"), ("65", "% atribuible al Estado"), ("66", "Atribuible al Estado"),
-        ("110", "Cuotas a compensar pendientes (periodos anteriores)"),
-        ("78", "Cuotas a compensar aplicadas"), ("87", "Pendientes para periodos posteriores"),
-        ("69", "Resultado de la autoliquidación"), ("71", "Resultado"),
-        ("72", "A compensar"), ("73", "A devolver"),
-    )),
+# Box grouping/order for this tab's display only — labels are the single
+# canonical MODELO303_BOX_LABELS table (src/tax_models.py, #189), shared with
+# the reconciliation view and the filing sheet.
+_M303_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("IVA devengado", ("01", "03", "04", "06", "07", "09", "10", "11", "12", "13", "27")),
+    ("IVA deducible", ("28", "29", "30", "31", "36", "37", "43", "44", "45", "46")),
+    ("Información adicional", ("59", "60", "120", "123")),
+    ("Resultado", ("64", "65", "66", "110", "78", "87", "69", "71", "72", "73")),
 )
 
 
@@ -182,13 +166,13 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
     boxes = result.aeat_boxes()
     always = {"27", "45", "46", "64", "66", "71"}
     for title, rows in _M303_SECTIONS:
-        shown = [(b, label, boxes[b]) for b, label in rows if boxes.get(b) or b in always]
+        shown = [(b, boxes[b]) for b in rows if boxes.get(b) or b in always]
         if not shown:
             continue
         st.markdown(f"##### {title}")
         st.dataframe(
-            [{"Casilla": b, "Concepto": label,
-              "Importe": f"{v:,.2f} %" if b == "65" else _fmt_eur(v)} for b, label, v in shown],
+            [{"Casilla": b, "Concepto": MODELO303_BOX_LABELS.get(b, b),
+              "Importe": f"{v:,.2f} %" if b == "65" else _fmt_eur(v)} for b, v in shown],
             width="stretch", hide_index=True,
         )
 
@@ -224,25 +208,14 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 # Sub-section C: Modelo 130
 # ---------------------------------------------------------------------------
 
-_M130_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("I. Actividades económicas en estimación directa (año acumulado)", (
-        ("01", "Ingresos computables"), ("02", "Gastos fiscalmente deducibles"),
-        ("03", "Rendimiento neto (01 − 02)"), ("04", "20% del importe positivo de 03"),
-        ("05", "Pagos fraccionados de trimestres anteriores"),
-        ("06", "Retenciones e ingresos a cuenta"), ("07", "Pago fraccionado previo (04 − 05 − 06)"),
-    )),
-    ("II. Actividades agrícolas, ganaderas, forestales y pesqueras", (
-        ("08", "Volumen de ingresos"), ("09", "2% de 08"), ("10", "Retenciones e ingresos a cuenta"),
-        ("11", "Pago fraccionado previo (09 − 10)"),
-    )),
-    ("III. Total liquidación", (
-        ("12", "Suma de pagos fraccionados previos (07 + 11)"),
-        ("13", "Minoración art. 110.3.c RIRPF"), ("14", "Diferencia (12 − 13)"),
-        ("15", "Resultados negativos de trimestres anteriores"),
-        ("16", "Deducción préstamo vivienda habitual"), ("17", "Total (14 − 15 − 16)"),
-        ("18", "Resultado de la autoliquidación anterior (complementaria)"),
-        ("19", "Resultado de la autoliquidación (17 − 18)"),
-    )),
+# Box grouping/order for this tab's display only — labels are the single
+# canonical MODELO130_BOX_LABELS table (src/tax_models.py, #189), shared with
+# the reconciliation view and the filing sheet.
+_M130_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("I. Actividades económicas en estimación directa (año acumulado)",
+     ("01", "02", "03", "04", "05", "06", "07")),
+    ("II. Actividades agrícolas, ganaderas, forestales y pesqueras", ("08", "09", "10", "11")),
+    ("III. Total liquidación", ("12", "13", "14", "15", "16", "17", "18", "19")),
 )
 
 
@@ -272,12 +245,13 @@ def _render_modelo_130(year: int, quarter: int,
     boxes = result.aeat_boxes()
     always = {"01", "02", "03", "07", "12", "14", "17", "19"}
     for title, rows in _M130_SECTIONS:
-        shown = [(b, label, boxes[b]) for b, label in rows if boxes.get(b) or b in always]
+        shown = [(b, boxes[b]) for b in rows if boxes.get(b) or b in always]
         if not shown:
             continue
         st.markdown(f"##### {title}")
         st.dataframe(
-            [{"Casilla": b, "Concepto": label, "Importe": _fmt_eur(v)} for b, label, v in shown],
+            [{"Casilla": b, "Concepto": MODELO130_BOX_LABELS.get(b, b), "Importe": _fmt_eur(v)}
+             for b, v in shown],
             width="stretch", hide_index=True,
         )
 

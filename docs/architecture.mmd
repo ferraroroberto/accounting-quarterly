@@ -32,6 +32,7 @@ flowchart TB
     DEDUPE["invoice_dedupe.py\nduplicate/receipt/out-of-period detectors + apply"]
     DB["database.py\nSQLite read/write"]
     SHARED["models.py · config.py · _json_store.py\nshared types + cached JSON config"]
+    NUMPARSE["numeric_parsing.py\nlocale-aware number-string parsing\n(shared by invoice_ocr.py + social_security.py, #189)"]
     AGGEXPORT["aggregator.py + excel_exporter.py\nmonthly aggregation, regional totals + Excel report"]
   end
 
@@ -116,6 +117,8 @@ shared by the filing sheet and the Obligations calendar"]
   SHARED -.-> STRIPECLIENT
   SHARED -.-> CLASSIFIER
   SHARED -.-> DB
+  NUMPARSE -.-> OCR
+  NUMPARSE -.-> SOCSEC
 
   DB --> VATRULES --> MODELS
   RECLASSIFY --> CLASSIFIER

@@ -55,6 +55,26 @@ _RECEIPT_PAIR_MAX_DAYS = 3
 
 ROOT = Path(__file__).parent.parent
 
+# Single source for the swept-file naming scheme and its output root (#189):
+# ``close_pipeline.step_sweep``/``_pack_invoices`` encode with ``flat_sweep_name``;
+# ``load_sweep_rows`` below decodes with ``_parse_sweep_name``. Keeping both ends
+# in one module means a change to one can't silently desync the other.
+SWEEP_ROOT = ROOT / "tmp" / "close_quarter"
+
+
+def flat_sweep_name(direction: str, rel: str) -> str:
+    """Encode an invoice's (direction, relative path) into its flat sweep filename."""
+    return f"{direction.upper()} - " + rel.replace("\\", " - ").replace("/", " - ")
+
+
+def _parse_sweep_name(name: str) -> Optional[tuple[str, str]]:
+    """Decode a swept filename to (direction, flattened rel path), or None if it doesn't match."""
+    if name.startswith("IN - "):
+        return "in", name[len("IN - "):]
+    if name.startswith("OUT - "):
+        return "out", name[len("OUT - "):]
+    return None
+
 
 @dataclass(frozen=True)
 class DuplicateGroup:
@@ -444,15 +464,15 @@ def load_sweep_rows(
     """Invoice rows whose swept copy lives in ``tmp/close_quarter/<year>_Q<quarter>/``
     (or ``sweep_dir`` when given).
 
-    ``scripts/close_quarter.py``'s sweep renames files (``"IN - " + rel path
-    with separators flattened to " - "``), so the reverse match here is
-    best-effort: it recovers the original relative filename assuming the
-    filename itself contains no literal ``" - "``, and looks it up by
+    ``close_pipeline.step_sweep``'s sweep renames files via ``flat_sweep_name``
+    (direction prefix + rel path with separators flattened to ``" - "``), so the
+    reverse match here is best-effort: it recovers the original relative filename
+    assuming the filename itself contains no literal ``" - "``, and looks it up by
     (direction, filename). Files that don't resolve to a known invoice row are
     skipped. Returns ``[]`` if the sweep folder doesn't exist.
     """
     if sweep_dir is None:
-        sweep_dir = ROOT / "tmp" / "close_quarter" / f"{year}_Q{quarter}"
+        sweep_dir = SWEEP_ROOT / f"{year}_Q{quarter}"
     if not sweep_dir.is_dir():
         return []
     rows_by_key = {
@@ -462,13 +482,10 @@ def load_sweep_rows(
     for path in sweep_dir.iterdir():
         if not path.is_file():
             continue
-        name = path.name
-        if name.startswith("IN - "):
-            direction, rel = "in", name[len("IN - "):]
-        elif name.startswith("OUT - "):
-            direction, rel = "out", name[len("OUT - "):]
-        else:
+        parsed = _parse_sweep_name(path.name)
+        if parsed is None:
             continue
+        direction, rel = parsed
         for sep in ("/", "\\"):
             candidate = rel.replace(" - ", sep)
             row = rows_by_key.get((direction, candidate))

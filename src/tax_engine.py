@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from src.logger import get_logger
 from src.modelo_130 import compute_modelo_130
@@ -94,10 +94,32 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
     return deadlines
 
 
-def compute_and_persist_tax_snapshots(
+def compute_tax_results(
     year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> dict[str, Any]:
+    """Run every obligation engine for the selected period, keyed by snapshot model.
+
+    The single place the model list lives (#189) — ``compute_and_persist_tax_snapshots``
+    persists exactly these results instead of recomputing them, and callers that need
+    the results *and* a change check (e.g. ``close_pipeline.step_compute``) call this
+    once and pass the results on to persist.
+    """
+    if config is None:
+        config = load_app_config()
+    return {
+        "303": compute_modelo_303(year, quarter, db_conn, config),
+        "130": compute_modelo_130(year, quarter, db_conn, config),
+        "OSS": compute_oss_return(year, quarter, db_conn, config),
+        "349": compute_modelo_349(year, quarter, db_conn, config),
+        "347": compute_modelo_347(year, db_conn, config),
+    }
+
+
+def compute_and_persist_tax_snapshots(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None,
+    results: Optional[dict[str, Any]] = None,
 ) -> str:
-    """Run all obligation engines for the selected period and persist JSON snapshots.
+    """Persist JSON snapshots for the selected period's tax obligations.
 
     Quarterly models (303, 130, OSS, 349) use ``quarter``; Modelo 347 is annual and is
     stored with ``quarter`` = ``TAX_SNAPSHOT_QUARTER_ANNUAL`` (0).
@@ -105,6 +127,11 @@ def compute_and_persist_tax_snapshots(
     The app config is loaded once here and threaded through every engine so the
     ``config.tax`` settings (EU VAT overrides, IVA/OSS registration, prorrata,
     regime) drive the computation. Callers may pass an explicit ``config`` dict.
+
+    ``results``, when given, must be the dict ``compute_tax_results`` returns —
+    callers that already computed it (to check for changes before persisting)
+    pass it through so each model is computed exactly once. Otherwise it is
+    computed here.
 
     Returns the shared ISO ``computed_at`` timestamp written on every snapshot row.
     """
@@ -117,26 +144,17 @@ def compute_and_persist_tax_snapshots(
 
     if config is None:
         config = load_app_config()
+    if results is None:
+        results = compute_tax_results(year, quarter, db_conn, config)
 
     computed_at = datetime.now().isoformat(timespec="seconds")
 
-    r303 = compute_modelo_303(year, quarter, db_conn, config)
-    upsert_tax_snapshot_conn(db_conn, year, quarter, "303", encode_snapshot("303", r303), computed_at)
-    upsert_audit_entries_conn(db_conn, r303.audit, computed_at)
+    for model in ("303", "130", "OSS", "349"):
+        result = results[model]
+        upsert_tax_snapshot_conn(db_conn, year, quarter, model, encode_snapshot(model, result), computed_at)
+        upsert_audit_entries_conn(db_conn, result.audit, computed_at)
 
-    r130 = compute_modelo_130(year, quarter, db_conn, config)
-    upsert_tax_snapshot_conn(db_conn, year, quarter, "130", encode_snapshot("130", r130), computed_at)
-    upsert_audit_entries_conn(db_conn, r130.audit, computed_at)
-
-    r_oss = compute_oss_return(year, quarter, db_conn, config)
-    upsert_tax_snapshot_conn(db_conn, year, quarter, "OSS", encode_snapshot("OSS", r_oss), computed_at)
-    upsert_audit_entries_conn(db_conn, r_oss.audit, computed_at)
-
-    r349 = compute_modelo_349(year, quarter, db_conn, config)
-    upsert_tax_snapshot_conn(db_conn, year, quarter, "349", encode_snapshot("349", r349), computed_at)
-    upsert_audit_entries_conn(db_conn, r349.audit, computed_at)
-
-    r347 = compute_modelo_347(year, db_conn, config)
+    r347 = results["347"]
     upsert_tax_snapshot_conn(
         db_conn, year, TAX_SNAPSHOT_QUARTER_ANNUAL, "347",
         encode_snapshot("347", r347), computed_at,

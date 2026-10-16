@@ -33,7 +33,7 @@ from src.database import (
 from src.logger import get_logger
 from src.reconciliation import normalize_box, result_boxes, result_operators
 from src.tax_deadlines import SHEET_MODELS, FilingDeadline, filing_deadline
-from src.tax_models import MODELO303_BOX_FIELDS
+from src.tax_models import BOX_LABELS, MODELO303_BOX_FIELDS
 from src.tax_snapshot_codec import decode_snapshot
 
 log = get_logger(__name__)
@@ -46,53 +46,8 @@ MODEL_TITLES = {
     "349": "Modelo 349 — operaciones intracomunitarias",
 }
 
-# Box -> concept, as printed on the forms.
-BOX_LABELS: dict[str, dict[str, str]] = {
-    "303": {
-        "01": "Régimen general 4 % — base imponible", "03": "Régimen general 4 % — cuota",
-        "04": "Régimen general 10 % — base imponible", "06": "Régimen general 10 % — cuota",
-        "07": "Régimen general 21 % — base imponible", "09": "Régimen general 21 % — cuota",
-        "10": "Adquisiciones intracomunitarias — base", "11": "Adquisiciones intracomunitarias — cuota",
-        "12": "Otras operaciones con inversión del sujeto pasivo — base",
-        "13": "Otras operaciones con inversión del sujeto pasivo — cuota",
-        "27": "Total cuota devengada",
-        "28": "Operaciones interiores corrientes — base", "29": "Operaciones interiores corrientes — cuota",
-        "30": "Operaciones interiores bienes de inversión — base",
-        "31": "Operaciones interiores bienes de inversión — cuota",
-        "36": "Adquisiciones intracomunitarias corrientes — base",
-        "37": "Adquisiciones intracomunitarias corrientes — cuota",
-        "43": "Regularización bienes de inversión", "44": "Regularización por aplicación del porcentaje definitivo de prorrata",
-        "45": "Total a deducir", "46": "Resultado régimen general",
-        "59": "Entregas intracomunitarias de bienes y servicios", "60": "Exportaciones y operaciones asimiladas",
-        "120": "Operaciones no sujetas por reglas de localización",
-        "123": "Operaciones no sujetas — ventas a distancia / OSS",
-        "64": "Suma de resultados", "65": "% atribuible a la Administración del Estado",
-        "66": "Atribuible a la Administración del Estado",
-        "110": "Cuotas a compensar pendientes de periodos anteriores",
-        "78": "Cuotas a compensar de periodos anteriores aplicadas en este periodo",
-        "87": "Cuotas a compensar pendientes para periodos posteriores",
-        "69": "Resultado de la autoliquidación", "71": "Resultado de la liquidación",
-        "72": "A compensar", "73": "A devolver",
-    },
-    "130": {
-        "01": "Ingresos computables (desde el 1 de enero)", "02": "Gastos fiscalmente deducibles",
-        "03": "Rendimiento neto (01 − 02)", "04": "20 % del importe positivo de 03",
-        "05": "A deducir: pagos fraccionados de trimestres anteriores", "06": "Retenciones e ingresos a cuenta",
-        "07": "Pago fraccionado previo del trimestre (04 − 05 − 06)",
-        "08": "Actividades agrícolas — volumen de ingresos", "09": "Actividades agrícolas — 2 % de 08",
-        "10": "Actividades agrícolas — retenciones", "11": "Actividades agrícolas — pago fraccionado previo",
-        "12": "Suma de pagos fraccionados previos (07 + 11)",
-        "13": "Minoración por aplicación de la deducción del art. 110.3.c) RIRPF",
-        "14": "Diferencia (12 − 13)", "15": "A deducir: resultados negativos de trimestres anteriores",
-        "16": "A deducir: pago de préstamos para la vivienda habitual", "17": "Total (14 − 15 − 16)",
-        "18": "A deducir: resultado de la declaración anterior (complementaria)",
-        "19": "Resultado de la declaración (17 − 18)",
-    },
-    "349": {
-        "01": "Número total de operadores intracomunitarios", "02": "Importe de las operaciones intracomunitarias",
-        "03": "Número total de operadores con rectificaciones", "04": "Importe de las rectificaciones",
-    },
-}
+# Box -> concept, as printed on the forms. Canonical table: src/tax_models.BOX_LABELS
+# (#189) — shared with the reconciliation view and the Tax Obligations tab.
 
 # Modelo 303 box -> form section, following the form order of MODELO303_BOX_FIELDS
 # (page 1 liquidación; page 3 información adicional + resultado).

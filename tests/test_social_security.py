@@ -12,6 +12,7 @@ from src.database import init_db
 from src.social_security import (
     DEFAULT_CONCEPT_PATTERNS,
     _matches_concept,
+    _parse_amount,
     _parse_date,
     add_manual_ss_entry,
     detect_header_row,
@@ -118,6 +119,32 @@ class TestParseDate:
     def test_returns_none_for_unparseable(self):
         assert _parse_date("not a date") is None
         assert _parse_date(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Amount parsing — sign-flipped (debit → positive contribution) and locale-
+# aware (#189: shares src.numeric_parsing.parse_locale_number with invoice_ocr).
+# ---------------------------------------------------------------------------
+
+class TestParseAmount:
+    def test_numeric_cell_is_sign_flipped(self):
+        assert _parse_amount(-50.25) == 50.25
+        assert _parse_amount(45.00) == -45.00
+
+    def test_spanish_locale_string(self):
+        # Dot = thousands, comma = decimal.
+        assert _parse_amount("-1.234,56") == 1234.56
+
+    def test_us_locale_string(self):
+        # Comma = thousands, dot = decimal — must NOT be read as Spanish.
+        assert _parse_amount("-1,234.56") == 1234.56
+
+    def test_currency_symbol_and_whitespace_stripped(self):
+        assert _parse_amount("-€ 50,25") == 50.25
+
+    def test_returns_none_for_unparseable(self):
+        assert _parse_amount("n/a") is None
+        assert _parse_amount(None) is None
 
 
 # ---------------------------------------------------------------------------

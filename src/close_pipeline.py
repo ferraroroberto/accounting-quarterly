@@ -62,9 +62,11 @@ from src.fx_rates import (
     recompute_stored_invoice_fx,
 )
 from src.invoice_dedupe import (
+    SWEEP_ROOT,
     apply_groups,
     find_duplicate_groups,
     find_numbering_conflicts,
+    flat_sweep_name,
     load_sweep_rows,
 )
 from src.invoice_ingest import extract_and_save, pending_files
@@ -83,13 +85,9 @@ from src.reconciliation import (
 )
 from src.social_security import get_ss_payments, load_bank_export, upsert_ss_payments
 from src.stripe_client import backfill_billing_details_from_raw_source
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
-from src.modelo_347 import compute_modelo_347
-from src.modelo_349 import compute_modelo_349
-from src.oss_return import compute_eu_b2c_threshold, compute_oss_return
+from src.oss_return import compute_eu_b2c_threshold
 from src.tax_data import load_app_config
-from src.tax_engine import compute_and_persist_tax_snapshots
+from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
 from src.tax_validator import find_filing, load_filings
 from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
@@ -97,7 +95,7 @@ from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
 log = get_logger(__name__)
 
 ROOT = Path(__file__).parent.parent
-DEFAULT_OUT_ROOT = ROOT / "tmp" / "close_quarter"
+DEFAULT_OUT_ROOT = SWEEP_ROOT  # single source: src/invoice_dedupe.py (#189)
 GESTOR_NOTES_PATH = ROOT / "gestor_notes.md"  # git-ignored free-text notes for the accountant
 PACK_INVOICES_DIR = "invoices"  # gestor-pack's copy of the quarter's ledger invoices, under the quarter folder
 
@@ -218,10 +216,6 @@ def _in_quarter(ctx: CloseContext, iso_date: Optional[str]) -> bool:
 # 1. sweep
 # ---------------------------------------------------------------------------
 
-def _flat_name(prefix: str, rel: str) -> str:
-    return f"{prefix} - " + rel.replace("\\", " - ").replace("/", " - ")
-
-
 def step_sweep(ctx: CloseContext) -> StepResult:
     """Copy invoice PDFs not yet catalogued in the DB nor copied before into the quarter folder.
 
@@ -247,7 +241,7 @@ def step_sweep(ctx: CloseContext) -> StepResult:
             rel = str(pdf.relative_to(base))
             if rel in known[direction] or rel in already:
                 continue
-            shutil.copy2(pdf, dest / _flat_name(prefix, rel))
+            shutil.copy2(pdf, dest / flat_sweep_name(prefix, rel))
             copied.append(rel)
             res.changes.append(f"copied {prefix:<3} {rel}")
         manifest[direction] = sorted(already | set(copied))
@@ -574,18 +568,6 @@ def step_reta(ctx: CloseContext, export_file: str | Path) -> StepResult:
 # 8. compute
 # ---------------------------------------------------------------------------
 
-def _compute_all(ctx: CloseContext, conn: sqlite3.Connection) -> dict[str, Any]:
-    """Every engine ``compute_and_persist_tax_snapshots`` persists, keyed by snapshot model."""
-    y, q, cfg = ctx.year, ctx.quarter, ctx.config
-    return {
-        "303": compute_modelo_303(y, q, conn, cfg),
-        "130": compute_modelo_130(y, q, conn, cfg),
-        "OSS": compute_oss_return(y, q, conn, cfg),
-        "349": compute_modelo_349(y, q, conn, cfg),
-        "347": compute_modelo_347(y, conn, cfg),
-    }
-
-
 def _box_summary(model: str, result: Any) -> str:
     boxes = {b: v for b, v in result_boxes(model, result).items() if abs(v) >= 0.005}
     if not boxes:
@@ -603,12 +585,13 @@ def step_compute(ctx: CloseContext) -> StepResult:
     res = StepResult("compute")
     conn = ctx.connect()
     try:
-        results = _compute_all(ctx, conn)
+        results = compute_tax_results(ctx.year, ctx.quarter, conn, ctx.config)
         stored = {row["model"]: row for row in load_tax_snapshots_for_period(ctx.year, ctx.quarter, conn)}
         changed = [m for m, r in results.items()
                    if stored.get(m) is None or stored[m]["payload_json"] != encode_snapshot(m, r)]
         if changed:
-            computed_at = compute_and_persist_tax_snapshots(ctx.year, ctx.quarter, conn, ctx.config)
+            computed_at = compute_and_persist_tax_snapshots(
+                ctx.year, ctx.quarter, conn, ctx.config, results=results)
             res.changes.append(f"saved snapshots at {computed_at} (changed: {', '.join(changed)})")
         else:
             res.info.append(f"Snapshots unchanged since {stored['303']['computed_at']}.")
@@ -926,7 +909,7 @@ def _pack_invoices(ctx: CloseContext, res: StepResult) -> dict[str, int]:
             res.warnings.append(f"{r['direction'].upper()} {r['filename']}: PDF not found at {source} "
                                 f"— not in the pack")
             continue
-        name = _flat_name(r["direction"].upper(), r["filename"])
+        name = flat_sweep_name(r["direction"], r["filename"])
         if name in wanted:
             res.warnings.append(f"{r['direction'].upper()} {r['filename']}: same pack name as "
                                 f"{wanted[name]} — not in the pack, rename one of them")

@@ -50,6 +50,7 @@ from src.modelo_130 import compute_modelo_130
 from src.modelo_303 import compute_modelo_303
 from src.modelo_349 import compute_modelo_349
 from src.tax_data import load_app_config
+from src.tax_models import BOX_LABELS as _CANONICAL_BOX_LABELS
 from src.tax_validator import find_filing, load_filings
 
 log = get_logger(__name__)
@@ -84,48 +85,11 @@ CATALOGUE_FIELDS = (
 
 OPERATOR_PREFIX = "op:"
 
-# Short labels for the boxes the view is likely to show. A box without a label
-# still reconciles; it just shows no description.
+# Canonical table: src/tax_models.BOX_LABELS (#189) — shared with the filing
+# sheet and the Tax Obligations tab. 390's labels live in src/modelo_390.py
+# (that model has no filing-sheet/obligations-tab view to share with).
 BOX_LABELS: dict[str, dict[str, str]] = {
-    "303": {
-        "01": "Base 4 %", "03": "Cuota 4 %", "04": "Base 10 %", "06": "Cuota 10 %",
-        "07": "Base 21 %", "09": "Cuota 21 %",
-        "10": "Adquisiciones intracomunitarias — base", "11": "Adquisiciones intracomunitarias — cuota",
-        "12": "Otras operaciones con inversión del sujeto pasivo — base",
-        "13": "Otras operaciones con inversión del sujeto pasivo — cuota",
-        "27": "Total cuota devengada",
-        "28": "Deducible: interiores corrientes — base", "29": "Deducible: interiores corrientes — cuota",
-        "30": "Deducible: interiores bienes de inversión — base",
-        "31": "Deducible: interiores bienes de inversión — cuota",
-        "36": "Deducible: adquisiciones intracomunitarias corrientes — base",
-        "37": "Deducible: adquisiciones intracomunitarias corrientes — cuota",
-        "44": "Regularización prorrata", "45": "Total a deducir",
-        "46": "Resultado régimen general (27 − 45)",
-        "59": "Entregas intracomunitarias (informativo)",
-        "60": "Exportaciones y asimiladas (informativo)",
-        "64": "Suma de resultados", "65": "% atribuible a la Administración del Estado",
-        "66": "Atribuible a la Administración del Estado",
-        "69": "Resultado", "71": "Resultado de la liquidación",
-        "72": "A compensar (último periodo)", "73": "A devolver",
-        "78": "Cuotas a compensar de periodos anteriores aplicadas",
-        "87": "Cuotas a compensar pendientes para periodos posteriores",
-        "110": "Cuotas a compensar pendientes de periodos anteriores",
-        "120": "Operaciones no sujetas por reglas de localización (informativo)",
-    },
-    "130": {
-        "01": "Ingresos computables (YTD)", "02": "Gastos fiscalmente deducibles (YTD)",
-        "03": "Rendimiento neto (01 − 02)", "04": "20 % de 03",
-        "05": "Pagos fraccionados de trimestres anteriores", "06": "Retenciones e ingresos a cuenta (YTD)",
-        "07": "Pago fraccionado previo (04 − 05 − 06)", "11": "Actividades agrícolas (suma)",
-        "12": "Suma de pagos fraccionados previos", "13": "Minoración art. 110.3.c RIRPF",
-        "14": "Diferencia (12 − 13)", "15": "Resultados negativos de trimestres anteriores",
-        "16": "Deducción vivienda habitual", "17": "Total (14 − 15 − 16)",
-        "18": "Complementaria: resultado anterior", "19": "Resultado de la declaración",
-    },
-    "349": {
-        "01": "Número total de operadores", "02": "Importe de las operaciones intracomunitarias",
-        "03": "Número de operadores con rectificaciones", "04": "Importe de las rectificaciones",
-    },
+    **_CANONICAL_BOX_LABELS,
     "390": dict(MODELO390_LABELS),
 }
 

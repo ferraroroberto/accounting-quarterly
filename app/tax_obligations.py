@@ -525,8 +525,10 @@ def _save_filing_button(model: str, year: int, quarter: int | None, amount: floa
     col1, col2 = st.columns([2, 1])
     notes = col1.text_input(f"Notes for Modelo {model} {period_label}", key=f"notes_{key}")
     if col2.button(f"Save Computed ({model} {period_label})", key=f"btn_{key}"):
-        upsert_filing_status(year=year, model=model, quarter=quarter,
-                             status="COMPUTED", amount_eur=amount, notes=notes)
+        if not upsert_filing_status(year=year, model=model, quarter=quarter,
+                                    status="COMPUTED", amount_eur=amount, notes=notes):
+            st.warning(f"Modelo {model} {period_label} is already filed — status left unchanged.")
+            return
         amt = f"€{amount:,.2f}" if amount is not None else "—"
         st.success(f"Modelo {model} {period_label} saved as COMPUTED ({amt}).")
 

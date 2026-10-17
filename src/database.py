@@ -1420,30 +1420,41 @@ def delete_tax_entry(entry_id: int, db_path: Optional[str | Path] = None) -> boo
 def upsert_filing_status(year: int, model: str, quarter: Optional[int],
                          status: str, amount_eur: Optional[float] = None,
                          notes: str = "", filed_at: Optional[str] = None,
-                         db_path: Optional[str | Path] = None) -> None:
-    """Insert or update a filing status record."""
+                         db_path: Optional[str | Path] = None) -> bool:
+    """Insert or update a filing status record. Returns whether the row was written."""
     conn = get_connection(db_path)
     try:
-        upsert_filing_status_conn(conn, year, model, quarter, status, amount_eur, notes, filed_at)
+        written = upsert_filing_status_conn(conn, year, model, quarter, status, amount_eur, notes, filed_at)
         conn.commit()
     finally:
         conn.close()
+    return written
 
 
 def upsert_filing_status_conn(conn: sqlite3.Connection, year: int, model: str, quarter: Optional[int],
                               status: str, amount_eur: Optional[float] = None,
-                              notes: str = "", filed_at: Optional[str] = None) -> None:
-    """``upsert_filing_status`` on an open connection (the caller commits)."""
-    conn.execute(
+                              notes: str = "", filed_at: Optional[str] = None) -> bool:
+    """``upsert_filing_status`` on an open connection (the caller commits).
+
+    A FILED row is never downgraded: a non-FILED status for a period already
+    marked filed leaves the row untouched and returns ``False`` (#187).
+    """
+    cur = conn.execute(
         """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(year, model, COALESCE(quarter, -1)) DO UPDATE SET
                status = excluded.status,
                amount_eur = excluded.amount_eur,
                notes = excluded.notes,
-               filed_at = excluded.filed_at""",
+               filed_at = excluded.filed_at
+           WHERE tax_filing_status.status != 'FILED' OR excluded.status = 'FILED'""",
         (year, model, quarter, status, amount_eur, notes, filed_at),
     )
+    if cur.rowcount == 0:
+        log.info("ℹ️ Modelo %s %s Q%s is already FILED; %s status not written",
+                 model, year, quarter or "annual", status)
+        return False
+    return True
 
 
 # Quarter value for annual-only snapshots (e.g. Modelo 347).

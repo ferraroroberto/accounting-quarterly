@@ -407,7 +407,9 @@ geographic classification instead of manual overrides.
 
         st.divider()
         if st.button("Save Tax Settings", type="primary", key="save_tax_settings"):
-            cfg["tax"] = {
+            # Update only the keys this form edits: the tax section also holds
+            # settings it doesn't show (prorrata, activity_start_date, …) (#187).
+            cfg.setdefault("tax", {}).update({
                 "regime": regime,
                 "vat_registered": vat_registered,
                 "oss_registered": oss_registered,
@@ -415,6 +417,6 @@ geographic classification instead of manual overrides.
                 "default_vat_treatment_eu_coaching": eu_coaching,
                 "default_vat_treatment_eu_newsletter": eu_newsletter,
                 "default_vat_treatment_eu_illustrations": eu_illustrations,
-            }
+            })
             save_config(cfg)
             st.success("Tax settings saved to config.json")

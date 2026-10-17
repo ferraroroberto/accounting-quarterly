@@ -24,7 +24,6 @@ from src.reconciliation import (
     Divergence,
     Reconciliation,
     ReconLine,
-    app_boxes,
     apply_catalogue,
     audit_entries_for_box,
     build_lines,
@@ -324,10 +323,15 @@ def _file(conn, model: str, boxes: dict[str, float], operators=(), period: str =
     ))
 
 
-class TestAppBoxesAdapter:
+def _app_side(rec: Reconciliation) -> dict[str, float]:
+    """The app value of every reconciliation row that has one."""
+    return {ln.box: ln.app for ln in rec.lines if ln.app is not None}
+
+
+class TestReconcileAppSide:
     def test_303_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_303(2025, 1, db_conn, CFG)
-        boxes = app_boxes("303", 2025, 1, db_conn, CFG)
+        boxes = _app_side(reconcile("303", 2025, 1, db_conn, CFG))
         assert boxes == result.aeat_boxes()
         # 121 gross Spanish sale → 21 % row: base 100 in 07, 21 in 09 (01/03 is the 4 % row).
         assert (boxes["07"], boxes["09"], boxes["27"]) == (100.0, 21.0, 21.0)
@@ -335,7 +339,7 @@ class TestAppBoxesAdapter:
 
     def test_130_uses_the_engines_aeat_boxes(self, db_conn):
         result = compute_modelo_130(2025, 1, db_conn, CFG)
-        boxes = app_boxes("130", 2025, 1, db_conn, CFG)
+        boxes = _app_side(reconcile("130", 2025, 1, db_conn, CFG))
         assert boxes == result.aeat_boxes()
         assert list(boxes) == [f"{n:02d}" for n in range(1, 20)]
         # Box 02 includes the 5 % allowance, as on the form.
@@ -349,7 +353,8 @@ class TestAppBoxesAdapter:
                 return {"07": 1.0, "10": 2.0, "110": 3.0}
 
         monkeypatch.setattr(rc, "compute_modelo_303", lambda *a, **k: NewResult())
-        assert app_boxes("303", 2025, 1, db_conn, CFG) == {"07": 1.0, "10": 2.0, "110": 3.0}
+        rec = reconcile("303", 2025, 1, db_conn, CFG)
+        assert _app_side(rec) == {"07": 1.0, "10": 2.0, "110": 3.0}
 
     def test_result_with_operators_is_used_for_349(self, db_conn, monkeypatch):
         class New349:
@@ -374,7 +379,7 @@ class TestReconcile:
         assert {"07", "27", "110", "71"} <= {ln.box for ln in rec.lines}
 
     def test_filed_303_exact_catalogued_uncatalogued_and_missing(self, db_conn):
-        app = app_boxes("303", 2025, 1, db_conn, CFG)
+        app = _app_side(reconcile("303", 2025, 1, db_conn, CFG))
         _file(db_conn, "303", {"07": app["07"], "09": app["09"], "27": app["27"],
                                "46": round(app["46"] - 3.21, 2), "110": 50.0, "33": 5.0})
         cat = [Divergence(model="303", year=2025, quarter=1, box="46", expected_delta=3.21,

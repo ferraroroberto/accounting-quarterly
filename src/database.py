@@ -280,49 +280,6 @@ def backfill_invoice_classifications(conn: sqlite3.Connection) -> int:
     return updated
 
 
-# Pre-e08a3ff9 (#42) Modelo303Result field names -> current AEAT-casilla-matching
-# names. Mirrors src.tax_snapshot_codec._MODELO303_LEGACY_RENAMES; kept here too so
-# stale rows are rewritten in place at startup, not just tolerated on read.
-_MODELO303_LEGACY_SNAPSHOT_RENAMES: dict[str, str] = {
-    "box_28_iva_soportado": "box_29_cuota_soportado",
-    "box_29_base_soportado": "box_28_base_soportado",
-}
-
-
-def backfill_tax_snapshot_legacy_keys(conn: sqlite3.Connection) -> int:
-    """Rewrite Modelo 303 snapshot rows still using pre-rename box_28/29 keys.
-
-    Commit e08a3ff9 renamed ``Modelo303Result.box_28_iva_soportado`` to
-    ``box_29_cuota_soportado`` and ``box_29_base_soportado`` to
-    ``box_28_base_soportado``. Snapshots persisted before that rename still carry
-    the legacy keys in ``payload_json`` and fail to decode (``decode_snapshot``
-    tolerates this on read, but the stored row stays stale until rewritten here).
-    Returns the number of rows migrated.
-    """
-    rows = conn.execute(
-        """SELECT year, quarter, snapshot_version, payload_json FROM tax_computation_snapshots
-           WHERE model = '303' AND status != 'FILED'"""
-    ).fetchall()
-    updated = 0
-    for row in rows:
-        data = json.loads(row["payload_json"])
-        if not any(old_key in data for old_key in _MODELO303_LEGACY_SNAPSHOT_RENAMES):
-            continue
-        for old_key, new_key in _MODELO303_LEGACY_SNAPSHOT_RENAMES.items():
-            if old_key in data:
-                data[new_key] = data.pop(old_key)
-        conn.execute(
-            """UPDATE tax_computation_snapshots SET payload_json = ?
-               WHERE year = ? AND quarter = ? AND model = '303' AND snapshot_version = ?""",
-            (json.dumps(data, ensure_ascii=False), row["year"], row["quarter"], row["snapshot_version"]),
-        )
-        updated += 1
-    if updated:
-        conn.commit()
-        log.info("ℹ️ Migrated %d stale Modelo 303 snapshot row(s) to current box_28/29 field names", updated)
-    return updated
-
-
 def _ensure_tax_entries_schema(conn: sqlite3.Connection) -> None:
     """Add ``quarterly_tax_entries.vat_rate`` (percent) on DBs that predate it (#97).
 
@@ -572,7 +529,6 @@ def init_db(db_path: Optional[str | Path] = None) -> None:
         _ensure_tax_snapshots_schema(conn)
         backfill_invoice_classifications(conn)
         backfill_invoice_ledger_fields(conn)
-        backfill_tax_snapshot_legacy_keys(conn)
         log.info("ℹ️ Database initialised at %s", _DB_PATH)
     finally:
         conn.close()

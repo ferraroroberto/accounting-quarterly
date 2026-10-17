@@ -184,50 +184,13 @@ def _parse_json_object(raw_text: str) -> dict:
     after the object — the hub path cannot pass Gemini's
     ``response_mime_type="application/json"`` flag directly, so the model
     occasionally wraps the JSON in fences or appends a trailing comment. We
-    first try a strict parse, then fall back to extracting the first
-    balanced top-level ``{...}`` object.
+    decode the first ``{...}`` object and ignore whatever surrounds it.
     """
-    clean = raw_text.strip()
-
-    # Strip wrapping markdown fences if present.
-    if clean.startswith("```"):
-        lines = clean.splitlines()
-        clean = "\n".join(
-            line for line in lines if not line.startswith("```")
-        ).strip()
-
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        pass
-
-    # Fall back: scan for the first balanced top-level object, ignoring braces
-    # inside string literals.
-    start = clean.find("{")
+    start = raw_text.find("{")
     if start == -1:
         raise ValueError("no JSON object found in response")
-    depth = 0
-    in_str = False
-    escape = False
-    for i in range(start, len(clean)):
-        ch = clean[i]
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(clean[start : i + 1])
-    raise ValueError("unterminated JSON object in response")
+    obj, _ = json.JSONDecoder().raw_decode(raw_text, start)
+    return obj
 
 
 def _extract_via_hub(pdf_bytes: bytes, pdf_name: str, model: Optional[str] = None) -> str:

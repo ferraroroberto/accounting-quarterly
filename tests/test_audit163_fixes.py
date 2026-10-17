@@ -165,8 +165,10 @@ def _quarter_report_page() -> None:
 
 def test_quarter_report_custom_range_then_since_inception_does_not_crash(monkeypatch):
     import app.quarter_report as tab
+    import app.year_picker as year_picker
 
     monkeypatch.setattr(tab, "first_data_year", lambda: 2024)
+    monkeypatch.setattr(year_picker, "first_data_year", lambda: 2024)
     monkeypatch.setattr(tab, "get_classified_for_period", lambda *a, **k: [])
     at = AppTest.from_function(_quarter_report_page).run()
     assert not at.exception

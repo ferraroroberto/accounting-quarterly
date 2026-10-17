@@ -37,6 +37,19 @@ def isolated_divergence_catalogue(tmp_path, monkeypatch):
     return path
 
 
+@pytest.fixture(autouse=True)
+def isolated_default_db(tmp_path, monkeypatch):
+    """Point the default SQLite path at a per-test temp file: a test that reaches
+    ``get_connection()`` without a ``db_path`` never opens (or creates) the shared
+    ``data/accounting.db``, so its outcome can't depend on that file's state (#201).
+    Returns the temp DB path."""
+    import src.database as database
+
+    path = tmp_path / "default.db"
+    monkeypatch.setattr(database, "_DB_PATH", path)
+    return path
+
+
 @pytest.fixture
 def sample_rules():
     """Minimal classification rules for testing."""

@@ -114,14 +114,25 @@ def render() -> None:
         defaults = geo_rules.get("defaults", {})
 
         st.markdown("""
-Classification priority order:
+**EUR charges** — currency alone decides the branch:
 
 | Priority | Condition | Region |
 |----------|-----------|--------|
-| 1 | Currency is **not EUR** | non_eur_default |
-| 2 | EUR + explicit **name/email override** | override value |
-| 3 | EUR + activity is **NEWSLETTER** | eur_newsletter_default |
-| 4 | EUR + any other activity | eur_default |
+| 1 | EUR + explicit name/email override | override value |
+| 2 | EUR + activity is **NEWSLETTER** | eur_newsletter_default |
+| 3 | EUR + any other activity | eur_default |
+
+**Non-EUR charges** — classified by the *charge country* first (card issuing country → Stripe billing address → Stripe customer address, first one set wins); currency is only a fallback when no country is known at all:
+
+| Priority | Condition | Region |
+|----------|-----------|--------|
+| 1 | Charge country known, `ES` | SPAIN |
+| 2 | Charge country known, other EU member state | EU_NOT_SPAIN |
+| 3 | Charge country known, non-EU | OUTSIDE_EU |
+| 4 | No charge country, currency is an EU non-euro currency (DKK/SEK/PLN/CZK/HUF/RON/BGN) | EU_NOT_SPAIN, flagged for review |
+| 5 | No charge country, any other non-EUR currency | non_eur_default |
+
+The three defaults below configure the EUR rows 2-3 and non-EUR row 5. Name/email overrides apply only to EUR charges.
 """)
 
         REGION_OPTIONS = ["SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU"]
@@ -144,7 +155,7 @@ Classification priority order:
                 key="geo_eur_newsletter",
             )
         with col3:
-            st.markdown("**Non-EUR currency**")
+            st.markdown("**Non-EUR, no charge country**")
             non_eur_default = st.selectbox(
                 "non_eur_default",
                 REGION_OPTIONS,
@@ -365,11 +376,12 @@ geographic classification instead of manual overrides.
                  "(EU_B2C_ES21, art. 73 LIVA — below the €10,000 EU threshold).",
         )
         vat_proration = col3.number_input(
-            "VAT proration % (prorrata)", min_value=0, max_value=100,
+            "VAT proration % (legacy provisional fallback)", min_value=0, max_value=100,
             value=tax.get("vat_proration_percentage", 100),
             key="tax_vat_prorrata",
-            help="Prorrata general applied to deducible IVA (Modelo 303 casilla 29). "
-                 "100 = fully deductible.",
+            help="Legacy flat pro-rata %. Only used, as the provisional %, when it is not 100 "
+                 "and the previous year has no `prorrata.definitive_pct_by_year` entry in the "
+                 "config.",
         )
 
         st.markdown("##### EU VAT defaults")

@@ -298,7 +298,7 @@ def _render_vat_register(assets: list[FixedAsset]) -> None:
     register = vat_regularisation_register(a, usage)
     st.dataframe(pd.DataFrame([asdict(r) for r in register]), width="stretch", hide_index=True)
     st.caption("Adjustment = VAT borne / 5 × (% of the year − % of the acquisition year), only when the "
-               "change exceeds 10 points (arts. 107-109 LIVA). It belongs in 303 box 44 of Q4.")
+               "change exceeds 10 points (arts. 107-109 LIVA). It belongs in 303 box 43 of Q4.")
     years = [r.year for r in register][1:]
     if not years:
         return

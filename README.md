@@ -252,9 +252,9 @@ Rules are evaluated in priority order; the first match wins.
 | 2 | Charge country known, other EU member state | EU_NOT_SPAIN |
 | 3 | Charge country known, non-EU | OUTSIDE_EU |
 | 4 | No charge country, currency is an EU non-euro currency (DKK/SEK/PLN/CZK/HUF/RON/BGN) | EU_NOT_SPAIN, flagged for review (`non_eur_currency_eu_review` rule — weaker signal than a known country) |
-| 5 | No charge country, any other non-EUR currency | OUTSIDE_EU |
+| 5 | No charge country, any other non-EUR currency | `non_eur_default` (OUTSIDE_EU unless changed) |
 
-The default region for each EUR condition is configurable in the Geographic Rules section of the Configuration tab. Name/email overrides apply only to EUR charges; the charge-country rule cannot be overridden by name/email today.
+The default region for each EUR condition, and for non-EUR row 5 (`non_eur_default`), is configurable in the Geographic Rules section of the Configuration tab. Name/email overrides apply only to EUR charges; the charge-country rule cannot be overridden by name/email today.
 
 **Foreign-customer warning.** A EUR charge that falls through to the `eur_default` rule is flagged with ⚠ when the customer looks non-Spanish: a card or billing-address country other than `ES`, or an email (Stripe customer email, billing email, or one written in the description) on a country-code domain other than `.es` (generic-use ccTLDs such as `.io`, `.co`, `.me` are ignored). The flag shows in `close_quarter.py stripe-fetch`, the Transaction Browser (**Review** column) and the Quarter Report. Fix it with a geographic override.
 

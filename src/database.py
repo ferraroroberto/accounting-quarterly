@@ -162,7 +162,7 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         # Geographic / VAT classification (mirrors transactions table)
         "geo_region": "TEXT",        # SPAIN | EU_NOT_SPAIN | OUTSIDE_EU | UNKNOWN
         "vat_treatment": "TEXT",     # IVA_ES_21 | IVA_EU_B2B | IVA_EXPORT | IVA_EXEMPT | OSS_EU
-        "activity_type": "TEXT",     # CONSULTING | TRAINING | SOFTWARE | SUBSCRIPTIONS | …
+        "activity_type": "TEXT",     # IAE activity: COACHING | NEWSLETTER | ILLUSTRATIONS (NULL until set)
         "supply_country": "TEXT",    # ISO-2 country code of the vendor / client
         # Invoice ledger (#90). The accounting date is `invoice_date`;
         # `supply_date` is informational only.
@@ -945,8 +945,9 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
             tax_treatment = derive_tax_treatment_for_invoice(
                 direction, vat_treatment, geo_region, iva_amount
             )
-        # Map category → activity_type when not explicitly set
-        activity_type = data.get("activity_type") or data.get("category")
+        # activity_type is an IAE activity only (COACHING | NEWSLETTER | ILLUSTRATIONS), set by
+        # the vendor registry or the ledger. The OCR expense `category` lives in its own column.
+        activity_type = data.get("activity_type")
         # The split VAT/IRPF percentages default to the OCR's single deductible_pct.
         ded_pct = data.get("deductible_pct", 100)
         ded_default = 100.0 if ded_pct is None else ded_pct

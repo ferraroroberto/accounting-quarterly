@@ -149,6 +149,17 @@ def _address_country(details: Optional[dict]) -> str:
     return str((details.get("address") or {}).get("country") or "").strip().upper()
 
 
+def _billing_country(payment: Payment) -> str:
+    """Upper-cased billing-address country, or ``""``.
+
+    Read from the raw Stripe charge when it is present, else from the stored
+    ``billing_country`` column — a row loaded back from SQLite or one with no
+    raw charge JSON still carries it there (#187).
+    """
+    billing_cc = _address_country((payment.raw_source or {}).get("billing_details"))
+    return billing_cc or (payment.billing_country or "").strip().upper()
+
+
 def _charge_country(payment: Payment) -> Optional[str]:
     """Best-known charge country: card issuing country -> billing -> customer address.
 
@@ -160,11 +171,11 @@ def _charge_country(payment: Payment) -> Optional[str]:
     if card_cc:
         return card_cc
 
-    raw = payment.raw_source or {}
-    billing_cc = _address_country(raw.get("billing_details"))
+    billing_cc = _billing_country(payment)
     if billing_cc:
         return billing_cc
 
+    raw = payment.raw_source or {}
     customer = raw.get("customer")
     if isinstance(customer, dict):
         customer_cc = _address_country(customer)
@@ -199,7 +210,7 @@ def foreign_customer_hint(payment: Payment) -> Optional[str]:
     if card_cc and card_cc != "ES":
         reasons.append(f"card country {card_cc}")
     billing = ((payment.raw_source or {}).get("billing_details") or {})
-    billing_cc = _address_country(billing)
+    billing_cc = _billing_country(payment)
     if billing_cc and billing_cc != "ES" and billing_cc != card_cc:
         reasons.append(f"billing country {billing_cc}")
     text = f"{payment.email_meta or ''} {billing.get('email') or ''} {payment.description or ''}"

@@ -302,6 +302,31 @@ class TestReclassify:
         result = reclassify_stored(datetime(2024, 6, 1), rules=sample_rules, db_path=db_path)
         assert result.scanned == 0 and result.changes == []
 
+    @pytest.mark.parametrize("stored", [
+        # Billing country from the fetch, raw charge JSON kept.
+        {"billing_country": "DE",
+         "raw_source": {"billing_details": {"address": {"country": "DE"}}}},
+        # Billing-country column only (no raw charge JSON stored).
+        {"billing_country": "DE"},
+        # Customer address only, present in the raw charge JSON alone.
+        {"raw_source": {"customer": {"address": {"country": "DE"}}}},
+    ])
+    def test_keeps_country_of_billing_country_only_non_eur_charge(
+        self, db_path, conn, sample_rules, stored
+    ):
+        # A USD charge with no card country, placed in the EU by its billing /
+        # customer address at fetch, must not be flipped to OUTSIDE_EU by the
+        # currency fallback when the stored row is reclassified (#187).
+        _store(db_path, [_payment("ch_usd_de", "2026-02-10T10:00:00", 121.0, currency="usd",
+                                  **stored)], sample_rules)
+        row = conn.execute("SELECT geo_region, geo_rule FROM transactions WHERE id='ch_usd_de'")
+        assert tuple(row.fetchone()) == ("EU_NOT_SPAIN", "country:DE")
+
+        result = reclassify_stored(datetime(2026, 1, 1), rules=sample_rules, db_path=db_path)
+        assert result.changes == []
+        row = conn.execute("SELECT geo_region, geo_rule FROM transactions WHERE id='ch_usd_de'")
+        assert tuple(row.fetchone()) == ("EU_NOT_SPAIN", "country:DE")
+
 
 # ---------------------------------------------------------------------------
 # Frozen declared report
@@ -561,6 +586,21 @@ class TestForeignCustomerWarning:
     def test_billing_country_from_raw_source(self):
         p = self._coaching(raw_source={"billing_details": {"address": {"country": "DE"}}})
         assert foreign_customer_hint(p) == "billing country DE"
+
+    @pytest.mark.parametrize("stored", [
+        {"billing_country": "DE",
+         "raw_source": {"billing_details": {"address": {"country": "DE"}}}},
+        {"billing_country": "DE"},
+    ])
+    def test_billing_country_survives_a_db_round_trip(self, db_path, sample_rules, stored):
+        # The close-quarter `stripe` step warns from rows loaded back out of
+        # SQLite, so the billing-country signal must survive the load (#187).
+        _store(db_path, [self._coaching(**stored)], sample_rules)
+        [cp] = load_classified_payments(db_path=db_path)
+        assert cp.geo_rule == "eur_default"
+        assert eur_default_foreign_warning(cp) == (
+            "EUR charge classified SPAIN by eur_default, but billing country DE"
+        )
 
     @pytest.mark.parametrize("email", ["a@example.es", "a@example.com", "a@example.io", None])
     def test_spanish_or_generic_domain_does_not_warn(self, sample_rules, email):

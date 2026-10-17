@@ -626,6 +626,23 @@ def _payment_values(p: Payment) -> dict:
     return values
 
 
+def _load_raw_source(pid: str, raw_json: Optional[str]) -> Optional[dict]:
+    """Parse a stored ``raw_source_json`` back into the ``raw_source`` dict.
+
+    The classifier reads the charge's billing / customer address from it, so
+    a reclassify of a loaded row must see it (#187). Unparseable JSON is logged
+    and treated as absent rather than failing the whole load.
+    """
+    if not raw_json:
+        return None
+    try:
+        raw = json.loads(raw_json)
+    except ValueError:
+        log.warning("⚠️ Unparseable raw_source_json on transaction %s; ignoring it", pid)
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 def upsert_payments(payments: list[Payment], source: str = "api",
                     db_path: Optional[str | Path] = None) -> tuple[int, int]:
     """Insert or update payments. Returns (inserted, updated) counts."""
@@ -728,6 +745,8 @@ def load_classified_payments(
                 billing_country=row["billing_country"],
                 amount_original=row["amount_original"],
                 fx_rate=row["fx_rate"],
+                raw_source=_load_raw_source(row["id"], row["raw_source_json"]),
+                raw_source_type=row["raw_source_type"],
                 activity_type=row["activity_type"] or "UNKNOWN",
                 geo_region=row["geo_region"] or "UNKNOWN",
                 classification_rule=row["classification_rule"] or "",

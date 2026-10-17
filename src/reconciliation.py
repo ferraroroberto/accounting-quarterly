@@ -25,8 +25,8 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 ``any``), plus a ``category`` (``gestor_error``, ``convention``,
 ``app_choice``) and an ``explanation``.
 
-**App side** — ``app_boxes(model, year, quarter, conn, config)`` calls the
-engine result's ``aeat_boxes()``: the 303 (#97), 130 (#98) and 349 (#99)
+**App side** — ``reconcile`` computes the period's engine result and reads its
+``aeat_boxes()``: the 303 (#97), 130 (#98) and 349 (#99)
 quarterly engines and the Modelo 390 engine (``src/modelo_390.py``, #103),
 which is built from the year's four 303 results.
 
@@ -58,7 +58,6 @@ log = get_logger(__name__)
 CATALOGUE_PATH = Path(__file__).parent.parent / "divergences.json"
 
 MODELS = ("303", "130", "349", "390")
-QUARTERLY_MODELS = ("303", "130", "349")
 
 EXACT_TOLERANCE = 0.01
 DEFAULT_TOLERANCE = 0.01
@@ -461,7 +460,10 @@ def save_catalogue(entries: Iterable[dict[str, Any]], path: Optional[str | Path]
 # App side (engine adapter)
 # ---------------------------------------------------------------------------
 
-def _compute(model: str, year: int, quarter: int, conn: sqlite3.Connection, config: Optional[dict]) -> Any:
+def _compute(model: str, year: int, quarter: Optional[int], conn: sqlite3.Connection, config: dict) -> Any:
+    """The engine result of one (model, period): the 390 is annual, the rest quarterly."""
+    if model == "390":
+        return compute_modelo_390(year, conn, config)
     engines = {"303": compute_modelo_303, "130": compute_modelo_130, "349": compute_modelo_349}
     return engines[model](year, quarter, conn, config)
 
@@ -474,23 +476,6 @@ def result_boxes(model: str, result: Any) -> dict[str, float]:
 def result_operators(result: Any) -> list[dict]:
     """The 349 operator rows of one engine result (``operators()``; empty when absent)."""
     return list(result.operators()) if callable(getattr(result, "operators", None)) else []
-
-
-def app_boxes(
-    model: str, year: int, quarter: Optional[int], conn: sqlite3.Connection, config: Optional[dict] = None
-) -> dict[str, float]:
-    """The app's value for every AEAT box it computes, keyed as printed on the form.
-
-    Uses the engine result's ``aeat_boxes()`` (#97/#98/#99); the Modelo 390
-    engine (#103) builds its boxes from the year's four 303 results.
-    """
-    if config is None:
-        config = load_app_config()
-    if model == "390":
-        return result_boxes(model, compute_modelo_390(year, conn, config))
-    if model not in QUARTERLY_MODELS or quarter is None:
-        raise ValueError(f"unsupported model/period: {model} {year} Q{quarter}")
-    return result_boxes(model, _compute(model, year, quarter, conn, config))
 
 
 # ---------------------------------------------------------------------------
@@ -555,10 +540,7 @@ def reconcile(
         filed_boxes, filed_complete, filed_ops = _filed_side(filing, model)
 
     app_ops: list[dict] = []
-    if model == "390":
-        result = compute_modelo_390(year, conn, config)
-    else:
-        result = _compute(model, year, quarter, conn, config)
+    result = _compute(model, year, quarter, conn, config)
     app = result_boxes(model, result)
     if model == "349":
         app_ops = result_operators(result)

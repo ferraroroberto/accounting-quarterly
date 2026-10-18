@@ -317,3 +317,65 @@ class TestPlatformFees:
         r2 = compute_modelo_130(2025, 2, conn)
         assert r2.gastos_reales == 1.5
         assert [x["refunded_eur"] for x in _cell(r2, "c02_platform_fees")[1]["records"]] == [0.0, 60.5]
+
+
+# ---------------------------------------------------------------------------
+# Input VAT not deducted in the 303 is an IRPF expense (#205)
+# ---------------------------------------------------------------------------
+
+def _expense(conn, id, base, vat, treatment, pct_vat=100.0, pct_irpf=100.0, excluded=0, capital=0,
+             date="2025-02-11"):
+    conn.execute(
+        """INSERT INTO invoices (id, filename, direction, invoice_date, subtotal_eur, iva_amount,
+               tax_treatment, deductible_pct_vat, deductible_pct_irpf, geo_region, excluded,
+               is_capital_asset)
+           VALUES (?, ?, 'in', ?, ?, ?, ?, ?, ?, 'SPAIN', ?, ?)""",
+        (id, f"{id}.pdf", date, base, vat, treatment, pct_vat, pct_irpf, excluded, capital),
+    )
+    conn.commit()
+
+
+class TestNonDeductedVatExpensed:
+    def test_not_deductible_adds_the_vat_times_the_irpf_share(self, conn):
+        # The 303 deducts nothing for NOT_DEDUCTIBLE, whatever deductible_pct_vat says.
+        _expense(conn, "nd", 1000.0, 210.0, "NOT_DEDUCTIBLE", pct_vat=100.0, pct_irpf=50.0)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 605.0      # 500 + 210 × 50%
+
+    def test_domestic_fully_deducted_adds_nothing_extra(self, conn):
+        _expense(conn, "d1", 1000.0, 210.0, "DOMESTIC", pct_vat=100.0, pct_irpf=100.0)
+        _expense(conn, "d2", 200.0, 42.0, "DOMESTIC", pct_vat=40.0, pct_irpf=40.0)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 1080.0     # bases only
+
+    def test_domestic_vat_share_below_irpf_share_adds_the_gap(self, conn):
+        # A home-office utility: 0% VAT deducted, 30% business use for IRPF.
+        _expense(conn, "u1", 100.0, 21.0, "DOMESTIC", pct_vat=0.0, pct_irpf=30.0)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 36.3       # 30 + 21 × 30%
+
+    def test_partial_gap_and_vat_share_above_irpf_share(self, conn):
+        _expense(conn, "g1", 100.0, 21.0, "DOMESTIC_CAPITAL", pct_vat=50.0, pct_irpf=80.0)
+        _expense(conn, "g2", 100.0, 21.0, "DOMESTIC", pct_vat=80.0, pct_irpf=50.0)
+        # 80 + 21 × 30%  +  50 (the deducted VAT share is never expensed too)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 136.3
+
+    def test_reverse_charge_adds_nothing(self, conn):
+        _expense(conn, "rc1", 500.0, 105.0, "INTRA_EU_RC", pct_vat=0.0)
+        _expense(conn, "rc2", 300.0, 63.0, "NON_EU_RC", pct_vat=0.0)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 800.0
+
+    def test_excluded_and_capital_asset_rows_stay_out(self, conn):
+        _expense(conn, "x1", 1000.0, 210.0, "NOT_DEDUCTIBLE", excluded=1)
+        _expense(conn, "x2", 1000.0, 210.0, "NOT_DEDUCTIBLE", capital=1)
+        assert compute_modelo_130(2025, 1, conn).gastos_reales == 0.0
+
+    def test_audit_splits_base_and_non_deducted_vat(self, conn):
+        _expense(conn, "nd", 1000.0, 210.0, "NOT_DEDUCTIBLE", pct_irpf=50.0)
+        _expense(conn, "d1", 100.0, 21.0, "DOMESTIC")
+        value, inputs = _cell(compute_modelo_130(2025, 1, conn), "c02_gastos_reales")
+        assert value == 705.0
+        assert (inputs["inv_gastos"], inputs["inv_gastos_base"], inputs["inv_gastos_iva_no_deducido"]) == (
+            705.0, 600.0, 105.0)
+        nd = next(x for x in inputs["records"] if x["vat_expensed"])
+        assert (nd["iva_amount"], nd["vat_deducted_pct"], nd["vat_expensed"], nd["deductible_amount"]) == (
+            210.0, 0.0, 105.0, 605.0)
+        entry = next(e for e in compute_modelo_130(2025, 1, conn).audit if e.cell == "c02_gastos_reales")
+        assert "max(0, deductible_pct_irpf" in entry.formula

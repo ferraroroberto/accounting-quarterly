@@ -404,6 +404,16 @@ class TestPLByActivity:
         assert pl.total_expenses == compute_modelo_130(YEAR, 4, conn, CFG).gastos_reales
         assert pl.ties_to_130
 
+    def test_non_deducted_vat_is_an_expense_and_ties(self, conn, year):
+        # #205: VAT the 303 does not deduct is part of the IRPF expense, in the P&L as in the 130.
+        before = {a.iae: a.expenses_invoices for a in compute_pl_by_activity(YEAR, conn, CFG, year).activities}
+        _inv(conn, "nd", "in", "2025-06-01", 100.0, "NOT_DEDUCTIBLE", iva=21.0, rate=21, activity="ILLUSTRATIONS")
+        pl = compute_pl_by_activity(YEAR, conn, CFG, year)
+        by = {a.iae: a for a in pl.activities}
+        assert round(by["861"].expenses_invoices - before["861"], 2) == 121.0
+        assert pl.total_expenses == compute_modelo_130(YEAR, 4, conn, CFG).gastos_reales
+        assert pl.ties_to_130
+
 
 # ---------------------------------------------------------------------------
 # Pack assembly, exports, CLI

@@ -18,6 +18,7 @@ from src.tax_data import (
     get_vat_base,
     get_vat_treatment,
     income_invoice_eur,
+    irpf_expense,
     load_classified_ytd,
     load_expense_invoices_ytd,
     load_income_invoices_ytd,
@@ -73,7 +74,8 @@ class _Collected130:
     stripe_income: float = 0.0
     inv_income: float = 0.0
     exch_diff_total: float = 0.0
-    inv_gastos: float = 0.0
+    inv_gastos_base: float = 0.0
+    inv_gastos_vat: float = 0.0     # input VAT not deducted in the 303, IRPF business share (#205)
     ss_gastos: float = 0.0
     platform_fees: float = 0.0
     fee_split_unknown: int = 0
@@ -89,6 +91,10 @@ class _Collected130:
     @property
     def c01(self) -> float:
         return round(self.stripe_income + self.inv_income + self.exch_diff_total, 2)
+
+    @property
+    def inv_gastos(self) -> float:
+        return self.inv_gastos_base + self.inv_gastos_vat
 
     @property
     def gastos_reales(self) -> float:
@@ -125,8 +131,10 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     ).fetchall()
     col.exch_diff_total = round(sum(float(r["gain_loss_eur"]) for r in exch_rows), 2)
 
-    # 02 — expense invoices × deductible_pct_irpf; excluded rows are filtered by
-    # the loader, capital assets enter through depreciation instead (#96).
+    # 02 — expense invoices: base × deductible_pct_irpf + the input VAT the 303 does
+    # not deduct, in the same business share (#205, see tax_data.irpf_expense);
+    # excluded rows are filtered by the loader, capital assets enter through
+    # depreciation instead (#96).
     expense_invs = load_expense_invoices_ytd(year, quarter, conn, config)
     capital_ids = capital_asset_invoice_ids(conn)
     capital_invs = [inv for inv in expense_invs if inv["id"] in capital_ids]
@@ -139,11 +147,15 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
                     "their cost is neither expensed nor depreciated: %s",
                     year, quarter, len(col.unregistered_capital_ids), ", ".join(col.unregistered_capital_ids))
 
-    def _deductible(inv: dict) -> float:
-        return (inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0
-
-    col.inv_gastos = sum(_deductible(inv) for inv in expense_invs)
-    col.capital_excluded = round(sum(_deductible(inv) for inv in capital_invs), 2)
+    irpf = {inv["id"]: irpf_expense(inv) for inv in expense_invs}
+    col.inv_gastos_base = sum(e.base_eur for e in irpf.values())
+    col.inv_gastos_vat = sum(e.vat_eur for e in irpf.values())
+    if col.inv_gastos_vat:
+        log.info("ℹ️ 130 %dQ%d: %.2f of input VAT not deducted in the 303 expensed in box 02 (%d invoice(s))",
+                 year, quarter, col.inv_gastos_vat, sum(1 for e in irpf.values() if e.vat_eur))
+    # Informative only: depreciation stays on the base (non-deducted VAT in the
+    # depreciable base is a known limitation, #205).
+    col.capital_excluded = round(sum(irpf_expense(inv).base_eur for inv in capital_invs), 2)
     # 02 — RETA cuotas as paid, net of refunds (stored negative), art. 30 LIRPF.
     ss_rows = conn.execute(
         """SELECT id, payment_date, amount_eur, description
@@ -218,7 +230,12 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
             {"source": "invoice_in", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
              "description": str(inv.get("description") or "")[:50],
              "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-             "deductible_pct": inv["deductible_pct_irpf"], "deductible_amount": round(_deductible(inv), 2),
+             "iva_amount": round(inv.get("iva_amount") or 0.0, 2),
+             "deductible_pct": inv["deductible_pct_irpf"],
+             "vat_deducted_pct": irpf[inv["id"]].vat_deducted_pct,
+             "base_expensed": round(irpf[inv["id"]].base_eur, 2),
+             "vat_expensed": round(irpf[inv["id"]].vat_eur, 2),
+             "deductible_amount": round(irpf[inv["id"]].total_eur, 2),
              "geo_region": inv.get("geo_region") or ""}
             for inv in expense_invs
         ],
@@ -434,13 +451,17 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
            "gastos_reales + gastos_dificil_justificacion", r.c02_gastos,
            gastos_reales=r.gastos_reales, gastos_dificil_justificacion=r.gastos_dificil_justificacion),
         _a("c02_gastos_reales",
-           "02 · Gastos reales YTD — facturas recibidas + cuotas RETA + comisiones de plataforma + "
-           "amortizaciones + entradas manuales",
-           "SUM(subtotal_eur × deductible_pct_irpf/100) FROM invoices WHERE direction='in' AND excluded=0 "
-           "AND not a capital asset YTD + SUM(amount_eur) FROM social_security_payments YTD (refunds negative) "
+           "02 · Gastos reales YTD — facturas recibidas (base + IVA no deducido) + cuotas RETA + "
+           "comisiones de plataforma + amortizaciones + entradas manuales",
+           "SUM(subtotal_eur × deductible_pct_irpf/100 + iva_amount × max(0, deductible_pct_irpf − "
+           "VAT % deducted in the 303)/100) FROM invoices WHERE direction='in' AND excluded=0 "
+           "AND not a capital asset YTD [VAT % deducted = deductible_pct_vat for DOMESTIC/DOMESTIC_CAPITAL, "
+           "0 for NOT_DEDUCTIBLE/NO_VAT; reverse charge adds no VAT; art. 28.1 LIRPF, PGC NRV 12ª] "
+           "+ SUM(amount_eur) FROM social_security_payments YTD (refunds negative) "
            "+ SUM(fee_application) FROM transactions YTD "
            "+ amortizaciones YTD + SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='GASTOS_DEDUCIBLES'",
-           r.gastos_reales, inv_gastos=round(col.inv_gastos, 2), ss_gastos=col.ss_gastos,
+           r.gastos_reales, inv_gastos=round(col.inv_gastos, 2), inv_gastos_base=round(col.inv_gastos_base, 2),
+           inv_gastos_iva_no_deducido=round(col.inv_gastos_vat, 2), ss_gastos=col.ss_gastos,
            platform_fees=col.platform_fees, amortizaciones=dep.total_eur, manual_gastos=round(col.manual_gastos, 2),
            ss_records=rec["social_security"], records=rec["expenses"]),
         _a("c02_platform_fees",
@@ -461,7 +482,8 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
            dep.total_eur, posting_mode=dep.posting_mode, threshold_eur=dep.threshold_eur,
            period_start=dep.period_start, period_end=dep.period_end, records=dep.records()),
         _a("c02_capital_assets_excluded", "02 · Facturas de inmovilizado excluidas de gastos (entran vía amortización)",
-           "SUM(subtotal_eur × deductible_pct_irpf/100) of capital-asset invoices YTD — informative, not in 02",
+           "SUM(subtotal_eur × deductible_pct_irpf/100) of capital-asset invoices YTD — informative, not in 02 "
+           "(depreciation is on the base; non-deducted VAT is not added to it)",
            col.capital_excluded, unregistered_invoice_ids=col.unregistered_capital_ids, records=rec["capital"]),
         _a("c03_rendimiento_neto", "03 Rendimiento neto (01 − 02)", "01 − 02 (negative allowed)",
            r.c03_rendimiento_neto, c01=r.c01_ingresos, c02=r.c02_gastos),

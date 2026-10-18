@@ -87,7 +87,9 @@ Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA
 
 **Rule.** `DOMESTIC`: base × `deductible_pct_vat` into 28 and VAT × `deductible_pct_vat` into 29 (the capital-good share of an invoice goes to 30/31 instead, section 5). A foreign vendor that charges Spanish VAT on its invoice is `DOMESTIC` too. `NO_VAT` (bank fees, exempt services) and `NOT_DEDUCTIBLE` contribute nothing. Manual `IVA_SOPORTADO` entries add their cuota to 29 and, when they carry a VAT rate, the derived base to 28.
 
-**Legal basis.** Arts. 92–99 LIVA; the deduction needs the invoice (art. 97 LIVA) and use in the activity (art. 95, section 3.4).
+**IRPF side: VAT not deducted is an expense.** Input VAT the 303 does not deduct is part of the cost, so the Modelo 130 expenses (box 02, section 8) count each non-capital expense invoice as base × `deductible_pct_irpf` + VAT × max(0, `deductible_pct_irpf` − the VAT % deducted). The VAT % deducted is `deductible_pct_vat` for `DOMESTIC` / `DOMESTIC_CAPITAL` and 0 for `NOT_DEDUCTIBLE` / `NO_VAT`; the reverse charges (3.2, 3.3) are VAT-neutral and add nothing. A `NOT_DEDUCTIBLE` invoice therefore expenses its VAT in its IRPF business share, and a home-office utility deducted at 0% for VAT expenses the VAT of its IRPF share (section 3.4). The share the 303 does deduct is never expensed too. The audit cell `c02_gastos_reales` shows the base and the non-deducted VAT apart (`inv_gastos_base`, `inv_gastos_iva_no_deducido`), and the P&L per activity uses the same figure. Known limitations: the VAT lost to the pro-rata (section 4) is not added to the quarterly 130, since the definitive % is only known in Q4; and for a registered fixed asset the depreciation (5.2) is still on the base, without the non-deducted VAT.
+
+**Legal basis.** Arts. 92–99 LIVA; the deduction needs the invoice (art. 97 LIVA) and use in the activity (art. 95, section 3.4). IRPF side: the net yield in *estimación directa* follows the corporate-tax rules (art. 28.1 LIRPF), i.e. the accounting result, and under the *Plan General de Contabilidad* input VAT that is not deductible forms part of the acquisition cost of the goods or services (RD 1514/2007, *Norma de registro y valoración* 12ª).
 
 ### 3.2 Services bought from EU businesses: reverse charge (boxes 10/11 + 36/37, Modelo 349 key I)
 
@@ -126,6 +128,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 - In Q4 the engine computes the year's **definitive %**: operations with the right to deduct (boxes 01/04/07 bases + 59 + 60 + 120 + the OSS base) over those plus the exempt ones, **rounded up** to the next whole number. Box 44 = (definitive − provisional) × the whole year's deductible VAT at 100%.
 - Record the definitive % under `tax.prorrata.definitive_pct_by_year` once the Q4 303 is filed: it becomes the next year's provisional %.
 - `c46_sin_prorrata` (audit and reconciliation) shows box 46 at 100% deduction, for comparing with a filing that ignores the pro-rata.
+- The VAT lost to the pro-rata is also an IRPF cost, but the app does not add it to the 130 expenses (known limitation, #205): only the business-use gap of section 3.1 is expensed.
 
 **Legal basis.** Arts. 102–106 LIVA. General pro-rata when both kinds of operation exist (art. 102–103). Numerator and denominator per calendar year, including operations located abroad that would give the right to deduct if made in Spain (arts. 94.Uno.2º and 104.Dos); the result "se redondeará en la unidad superior" (art. 104.Dos). The provisional % of a year is the previous year's definitive one (art. 105.Uno); a different provisional % can be requested when circumstances change significantly (art. 105.Dos); the definitive % is computed and the year regularised in the last return of the year (art. 105.Cuatro). The special pro-rata (art. 103.Dos, 106) is **not** modelled.
 
@@ -145,7 +148,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 
 ### 5.2 IRPF: depreciation and the €300 threshold (inside box 02)
 
-**Rule.** Assets are registered per unit in the Fixed Assets tab (from a ledger invoice: **Register as fixed asset**, which flags the invoice `is_capital_asset` so it is no longer expensed). Units at or below `assets.threshold_eur` (default €300) are expensed in full in their quarter. Above it, straight-line depreciation with the *tabla de amortizaciones simplificada*: base × IRPF business-use % × coefficient × days in use ÷ days in the year, capped at base × business-use %. The coefficient defaults to the class maximum and may be lowered, never raised. `assets.posting_mode`: `annual_q4` (default, the whole year's charge in the Q4 130) or `quarterly`. Only registered assets are depreciated: an invoice that is not registered is expensed in full in its quarter, whatever its amount. Registering is required for VAT capital goods (section 5.1) and optional below that; expensing a device above €300 instead of depreciating it is a choice some owners and accountants make for simplicity, at the cost of a timing difference against the strict rule.
+**Rule.** Assets are registered per unit in the Fixed Assets tab (from a ledger invoice: **Register as fixed asset**, which flags the invoice `is_capital_asset` so it is no longer expensed). Units at or below `assets.threshold_eur` (default €300) are expensed in full in their quarter. Above it, straight-line depreciation with the *tabla de amortizaciones simplificada*: base × IRPF business-use % × coefficient × days in use ÷ days in the year, capped at base × business-use %. The depreciable base is the invoice base: VAT the 303 does not deduct is not added to it (known limitation, #205; current expenses do include it, section 3.1). The coefficient defaults to the class maximum and may be lowered, never raised. `assets.posting_mode`: `annual_q4` (default, the whole year's charge in the Q4 130) or `quarterly`. Only registered assets are depreciated: an invoice that is not registered is expensed in full in its quarter, whatever its amount. Registering is required for VAT capital goods (section 5.1) and optional below that; expensing a device above €300 instead of depreciating it is a choice some owners and accountants make for simplicity, at the cost of a timing difference against the strict rule.
 
 | Class | Group | Max coefficient | Max period |
 |---|---|---|---|
@@ -197,7 +200,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 | Box | What the app puts there |
 |---|---|
 | 01 | Stripe VAT bases (ex-VAT) + issued invoices **gross** of the IRPF withheld (`eur_received` when set) + exchange differences of the period |
-| 02 | Real expenses + the 5% allowance. Real expenses = expense invoices × `deductible_pct_irpf` (excluded rows and capital assets out) + RETA contributions as paid, **net of refunds** + Stripe platform (application) fees + depreciation + manual `GASTOS_DEDUCIBLES` |
+| 02 | Real expenses + the 5% allowance. Real expenses = expense invoices: base × `deductible_pct_irpf` + the input VAT not deducted in the 303, VAT × max(0, `deductible_pct_irpf` − VAT % deducted) (section 3.1; excluded rows and capital assets out) + RETA contributions as paid, **net of refunds** + Stripe platform (application) fees + depreciation + manual `GASTOS_DEDUCIBLES` |
 | 03 · 04 | 03 = 01 − 02 (may be negative); 04 = 20% of a positive 03 |
 | 05 | Σ positive 07 − Σ 16 of the year's earlier quarters |
 | 06 | IRPF withheld on issued invoices (`irpf_amount`, exact cents) + manual `RETENCIONES_SOPORTADAS` |
@@ -219,6 +222,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 - Box 13: art. 110.3.c RIRPF.
 - Allowance: the 5% is set by art. 30.2ª RIRPF and the €2,000 annual cap by art. 30.2.4ª LIRPF. The cap applies across all the taxpayer's activities.
 - Withholdings on professional income: 15%, or 7% in the year the activity starts and the two following (art. 101.5.a LIRPF, art. 95.1 RIRPF). They are payments on account by the client, so the income is the gross amount and the withholding is deducted in box 06.
+- Non-deducted input VAT: part of the cost of the expense (art. 28.1 LIRPF; PGC *Norma de registro y valoración* 12ª), section 3.1.
 - Platform fees: an expense necessary to obtain the activity's income (art. 28.1 LIRPF, which applies the corporate-tax rules to the net yield). The supporting document is the Stripe balance transaction and the platform's own statement of fees.
 - RETA contributions paid by the business owner are a deductible expense of the activity (AEAT *Manual práctico de Renta*, rendimientos de actividades económicas en estimación directa, gastos fiscalmente deducibles).
 - Exemption: a professional does not have to file the 130 if at least 70% of the previous year's activity income was subject to withholding (art. 109 RIRPF).
@@ -228,6 +232,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 - Shows the 5% inside box 02, as the app does since #98.
 - May expense only what arrives as an invoice, which leaves the platform fees out of box 02 and overstates the net yield: `gestor_error`. Returns filed before #135 from the app's own figures have the same gap.
 - May book a refund of RETA contributions in the year of the contributions instead of the year received; there are views both ways, so catalogue as `convention`.
+- May expense only the base of an invoice whose VAT is not (fully) deducted, which understates box 02: `gestor_error`. Returns filed before #205 from the app's own figures have the same gap.
 
 ---
 
@@ -297,6 +302,7 @@ Consolidated legal texts (BOE):
 - LIS, Ley 27/2014: <https://www.boe.es/buscar/act.php?id=BOE-A-2014-12328>
 - LGT, Ley 58/2003: <https://www.boe.es/buscar/act.php?id=BOE-A-2003-23186>
 - Invoicing regulation, RD 1619/2012: <https://www.boe.es/buscar/act.php?id=BOE-A-2012-14696>
+- Plan General de Contabilidad, RD 1514/2007: <https://www.boe.es/buscar/act.php?id=BOE-A-2007-19884>
 - Orden de 27 de marzo de 1998 (simplified depreciation table): BOE-A-1998-7200
 - Orden EHA/769/2010 (Modelo 349): <https://www.boe.es/buscar/act.php?id=BOE-A-2010-5098>
 - Orden HAC/241/2025 (direct-debit period): BOE-A-2025-5048
@@ -304,4 +310,4 @@ Consolidated legal texts (BOE):
 
 AEAT (sede.agenciatributaria.gob.es): *Manual práctico IVA 2025* (cap. 4 base imponible, cap. 9 Modelo 303 and 349); *Manual práctico de Renta* (rendimientos de actividades económicas en estimación directa); Modelo 130 *Instrucciones*; *calendario del contribuyente*.
 
-**Checked on 2026-09-28** against the article text: LIVA arts. 20.Uno.9º–10º, 69, 73, 79.Once, 84.Uno.2º, 95, 99, 104, 105, 107, 108; RIVA arts. 71.4 and 81; LIRPF art. 30.2 (reglas 4ª and 5ª); RIRPF arts. 22, 30, 109, 110, 111; LIS art. 12.3.e (through the AEAT IRPF manual). Cited from the existing code or from secondary sources without a fresh check of the article text: art. 18 Regulation 282/2011; arts. 25, 75, 90, 94, 97, 115 LIVA; arts. 14.1.b, 28.1, 29.2 and 101.5 LIRPF; arts. 7.2 and 95 RIRPF; arts. 78–80 RIVA; art. 11 RD 1619/2012; arts. 66, 120, 198/199 LGT; the RETA deductibility reference; the 303 box definitions of 59/60/120.
+**Checked on 2026-09-28** against the article text: LIVA arts. 20.Uno.9º–10º, 69, 73, 79.Once, 84.Uno.2º, 95, 99, 104, 105, 107, 108; RIVA arts. 71.4 and 81; LIRPF art. 30.2 (reglas 4ª and 5ª); RIRPF arts. 22, 30, 109, 110, 111; LIS art. 12.3.e (through the AEAT IRPF manual). Cited from the existing code or from secondary sources without a fresh check of the article text: art. 18 Regulation 282/2011; arts. 25, 75, 90, 94, 97, 115 LIVA; arts. 14.1.b, 28.1, 29.2 and 101.5 LIRPF; arts. 7.2 and 95 RIRPF; arts. 78–80 RIVA; art. 11 RD 1619/2012; arts. 66, 120, 198/199 LGT; PGC *Norma de registro y valoración* 12ª (non-deductible VAT as cost); the RETA deductibility reference; the 303 box definitions of 59/60/120.

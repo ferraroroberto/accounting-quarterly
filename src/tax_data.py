@@ -3,12 +3,13 @@
 Everything the Modelo 303 / 130 / 349 / 347 / OSS computations (``src.modelo_303`` and siblings) and the P&L by
 activity (``src.pl_by_activity``) read their records through: the ``config.tax`` accessors, the
 ``tax.activity_start_date`` floor and its audit note, the quarter / year-to-date loaders for Stripe
-transactions and invoices, and the VAT base / treatment of a row. No model logic lives here.
+transactions and invoices, the VAT base / treatment of a row and the IRPF expense of an expense invoice
+(shared by the 130 and the P&L so they tie). No model logic lives here.
 """
 from __future__ import annotations
 
 import sqlite3
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from src.declared_reports import apply_frozen_amounts
 from src.periods import quarter_iso_bounds
@@ -341,6 +342,42 @@ def invoice_tax_treatment(direction: str, inv: dict) -> Optional[str]:
     return inv.get("tax_treatment") or derive_tax_treatment_for_invoice(
         direction, inv.get("vat_treatment"), inv.get("geo_region"), inv.get("iva_amount")
     )
+
+
+class IrpfExpense(NamedTuple):
+    """IRPF (Modelo 130 box 02) expense of one expense invoice, split for the audit."""
+    base_eur: float                     # subtotal_eur × deductible_pct_irpf
+    vat_eur: float                      # input VAT the 303 does not deduct, in the IRPF business share
+    vat_deducted_pct: Optional[float]   # % of the VAT the 303 deducts; None when VAT-neutral (reverse charge)
+
+    @property
+    def total_eur(self) -> float:
+        return self.base_eur + self.vat_eur
+
+
+def irpf_expense(inv: dict) -> IrpfExpense:
+    """IRPF expense of an expense invoice: base × p_irpf + VAT × max(0, p_irpf − p_vat_deducted).
+
+    Input VAT the 303 does not deduct is part of the cost of the good or service
+    (art. 28.1 LIRPF → corporate-tax rules → PGC, Norma de registro y valoración
+    12ª), so its business-use share is an expense; the share the 303 does
+    deduct is never expensed too. ``p_vat_deducted`` is ``deductible_pct_vat``
+    for ``DOMESTIC`` / ``DOMESTIC_CAPITAL`` (boxes 28/29, 30/31) and 0 for
+    ``NOT_DEDUCTIBLE`` / ``NO_VAT``. The reverse charges are VAT-neutral and add
+    nothing; so does an unrecognised treatment, rather than guessing. The 303's
+    pro-rata share is not added here (a year-end matter, #205).
+    """
+    pct_irpf = inv["deductible_pct_irpf"]
+    base = (inv.get("subtotal_eur") or 0.0) * pct_irpf / 100.0
+    tt = invoice_tax_treatment("in", inv)
+    if tt in ("DOMESTIC", "DOMESTIC_CAPITAL"):
+        vat_deducted_pct: Optional[float] = float(inv["deductible_pct_vat"])
+    elif tt in ("NOT_DEDUCTIBLE", "NO_VAT"):
+        vat_deducted_pct = 0.0
+    else:
+        return IrpfExpense(base, 0.0, None)
+    gap = max(0.0, pct_irpf - vat_deducted_pct)
+    return IrpfExpense(base, (inv.get("iva_amount") or 0.0) * gap / 100.0, vat_deducted_pct)
 
 
 def oss_country_code(row: dict) -> str:

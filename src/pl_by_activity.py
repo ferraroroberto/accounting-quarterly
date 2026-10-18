@@ -42,6 +42,7 @@ from src.tax_data import (
     get_tax_entries_total,
     get_vat_base,
     income_invoice_eur,
+    irpf_expense,
     load_app_config,
     load_classified_ytd,
     load_expense_invoices_ytd,
@@ -188,7 +189,7 @@ def compute_pl_by_activity(
         if act is None and registry is not None:
             match = registry.match_invoice(m or inv)
             act = _norm_activity(match.vendor.activity) if match else None
-        amount = (inv.get("subtotal_eur") or 0.0) * inv["deductible_pct_irpf"] / 100.0
+        amount = irpf_expense(inv).total_eur    # base + non-deducted VAT, as in the 130 (#205)
         _line("expense", "invoice_in", amount, act, "unallocated", id=inv["id"],
               date=str(inv.get("tx_date", ""))[:10],
               description=str(inv.get("vendor_name") or inv.get("description") or "")[:50])

@@ -321,7 +321,7 @@ Keep them at least as long as the returns can be reviewed: four years from the e
 | `freeze-sent --file <xlsx> [--supersede]` | Freeze a Stripe report file sent before freezing existed (its EUR amounts become the declared basis) |
 | `fx-backfill` | ECB rates up to today |
 | `fx-recompute [--dry-run] [--since YYYY-MM-DD]` | Re-resolve every stored non-EUR invoice at the ECB rate |
-| `relink [--manifest <csv>] [--old-in-dir D] [--old-out-dir D] [--apply]` | Re-point invoice records after the PDFs were moved or renamed (see README, "Moving or renaming the invoice archive") |
+| `relink [--manifest <csv>] [--old-in-dir D] [--old-out-dir D] [--apply]` | Re-point invoice records after the PDFs were moved or renamed (see [Moving or renaming the invoice archive](close-quarter-cli.md#moving-or-renaming-the-invoice-archive)) |
 
 ---
 

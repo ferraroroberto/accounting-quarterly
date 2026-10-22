@@ -1,6 +1,6 @@
 # Tax engine reference
 
-Field-by-field box models and the data mechanics that produce them — field names, audit cell names, and the ledger columns the tax engine reads. For *why* each rule is what it is (legal basis, where an external accountant may differ), see [tax-conventions.md](tax-conventions.md). For the quarter-close CLI, see [quarter-close-runbook.md](quarter-close-runbook.md). For the tab-by-tab overview of each model, see the README's [Tax Obligations](../README.md#tax-obligations-spanish-autónomo) section.
+Field-by-field box models and the data mechanics that produce them — field names, audit cell names, and the ledger columns the tax engine reads. For *why* each rule is what it is (legal basis, where an external accountant may differ), see [tax-conventions.md](tax-conventions.md). For the quarter-close CLI, see [quarter-close-runbook.md](quarter-close-runbook.md). For the tab-by-tab overview of each model, see [tax-obligations.md](tax-obligations.md).
 
 ## Modelo 303 box model
 
@@ -15,7 +15,7 @@ Field-by-field box models and the data mechanics that produce them — field nam
 | 30/31 | Capital goods (unit base > €3,005.06) from the fixed-asset register at their VAT business-use %; `DOMESTIC_CAPITAL` invoices not in the register use the invoice |
 | 43 · 44 | Q4 only: capital-goods regularisation (arts. 107–109 LIVA) and the pro-rata regularisation |
 | 59 · 60 · 120 | EU B2B sales · exports of goods (none today) · non-EU sales not subject by location rules (Stripe non-EU customers + `NON_EU_NOT_SUBJECT` invoices). Earlier filings by the external accountant put non-EU service invoices in 60 instead of 120 — informational only, no money effect |
-| 110 | The previous quarter's **filed** 87 + 72 (imported receipt, see [Importing filed AEAT receipts](../README.md#importing-filed-aeat-receipts)); when not imported, the app's own previous-quarter result, chained back to the first period with data |
+| 110 | The previous quarter's **filed** 87 + 72 (imported receipt, see [Importing filed AEAT receipts](reconciliation.md#importing-filed-aeat-receipts)); when not imported, the app's own previous-quarter result, chained back to the first period with data |
 | 78 / 87 | 78 = min(110, max(0, 66)); 87 = 110 − 78. Q4 with `refund`: 78 = 110 |
 | 72 / 73 | A negative 71 is carried forward in 72; in Q4 it can be refunded (73) instead |
 
@@ -56,7 +56,7 @@ Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the 
 | 16 · 18 | Housing-loan deduction · complementary return — 0 |
 | 17 · 19 | 17 = 14 − 15 − 16; 19 = 17 − 18. A negative 19 is carried into 15 of later quarters (`negativos_pendientes_posteriores`) |
 
-Boxes 05 and 15 chain through the earlier quarters of the year: each quarter's **filed** 130 is used when its receipt is imported (see [Importing filed AEAT receipts](../README.md#importing-filed-aeat-receipts)); otherwise the app computes that quarter itself. `c05_source` says which (`filed`, `app_chain`, `mixed`, `none`).  The old `tax_filing_status` "previous payments" are no longer read.
+Boxes 05 and 15 chain through the earlier quarters of the year: each quarter's **filed** 130 is used when its receipt is imported (see [Importing filed AEAT receipts](reconciliation.md#importing-filed-aeat-receipts)); otherwise the app computes that quarter itself. `c05_source` says which (`filed`, `app_chain`, `mixed`, `none`).  The old `tax_filing_status` "previous payments" are no longer read.
 
 Old snapshots with the pre-#98 field names (`box_01_ingresos`, `box_05_base`, `box_16_resultado`, …) still decode: `box_02_gastos` becomes the real expenses, 02 gets the allowance added back, and 07/12/14/17 are derived (legacy results had no 13/15).
 
@@ -82,13 +82,13 @@ Added by an idempotent migration on startup:
 |--------|---------|
 | `tax_treatment` | Expenses: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT`, `NOT_DEDUCTIBLE`. Income: `ES_21`, `EU_B2C_ES21`, `EU_B2B`, `NON_EU_NOT_SUBJECT`, `EXEMPT_TEACHING`. |
 | `deductible_pct_vat` / `deductible_pct_irpf` | Business-use share for the VAT deduction (303) and the IRPF expense (130), independently. Backfilled from the legacy `deductible_pct`. |
-| `is_capital_asset`, `asset_class` | Capital-asset flag and class. A flagged invoice is not expensed in the Modelo 130; register it as a fixed asset so its cost enters through depreciation (see [Fixed Assets](../README.md#fixed-assets)). |
+| `is_capital_asset`, `asset_class` | Capital-asset flag and class. A flagged invoice is not expensed in the Modelo 130; register it as a fixed asset so its cost enters through depreciation (see [Fixed Assets](fixed-assets.md)). |
 | `excluded`, `excluded_reason` | `1` removes the row from every tax computation; reason ∈ `duplicate`, `receipt`, `personal`, `other_period`, `superseded`. |
 | `eur_received`, `payment_date` | EUR actually received for foreign-currency income, and when. |
 | `vendor_vat_id_norm` | `vendor_nif` normalised for matching: upper-case, separators stripped, Spanish ids `ES`-prefixed. |
 | `locked_fields`, `reviewed_at` | User-edited fields (never overwritten by re-OCR) and last review time. |
 | `charged_eur` | EUR actually charged to the card, when the document states it (expenses) — wins over the ECB rate. The one FX field you may correct by hand. |
-| `fx_rate_used`, `fx_rate_date`, `fx_source`, `fx_stale`, `fx_cross_check_diff_pct` | FX resolution metadata (#93) — see [Foreign-currency invoices: EUR resolution](../README.md#foreign-currency-invoices-eur-resolution). Derived; re-resolved on the next OCR extraction, not directly editable. |
+| `fx_rate_used`, `fx_rate_date`, `fx_source`, `fx_stale`, `fx_cross_check_diff_pct` | FX resolution metadata — see [Foreign-currency invoices: EUR resolution](invoice-ocr.md#foreign-currency-invoices-eur-resolution). Derived; re-resolved on the next OCR extraction, not directly editable. |
 
 ## Backfill of `tax_treatment`
 

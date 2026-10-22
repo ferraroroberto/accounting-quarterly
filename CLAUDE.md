@@ -16,7 +16,7 @@ Canonical instructions for AI coding agents working in this repository. Claude C
 
 ## This repository
 Streamlit dashboard and automation for classifying Stripe payments and producing quarterly Spanish tax reports.
-See `README.md` for setup, layout, and usage.
+See `README.md` for setup and usage; it indexes the feature docs under `docs/` (module layout: `docs/project-structure.md`).
 
 ## Internal architecture
 

@@ -81,7 +81,7 @@ The treatment of a Stripe charge is derived from activity × geography × custom
 
 ## 3. Input VAT (purchases)
 
-Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT` or `NOT_DEDUCTIBLE`. The [vendor registry](../README.md#vendor-registry) (`vendors.json`) sets the default per vendor; a ledger edit wins and is locked.
+Expense invoices carry a `tax_treatment`: `DOMESTIC`, `DOMESTIC_CAPITAL`, `INTRA_EU_RC`, `NON_EU_RC`, `NO_VAT` or `NOT_DEDUCTIBLE`. The [vendor registry](vendor-registry.md) (`vendors.json`) sets the default per vendor; a ledger edit wins and is locked.
 
 ### 3.1 Domestic purchases (boxes 28/29)
 

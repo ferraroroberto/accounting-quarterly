@@ -6,3 +6,18 @@ layer       = "working-pipe"
 icon        = "💳"
 description = "Stripe payments → quarterly reports."
 tag         = ["→", "Stripe"]
+
+# Vendored byte-for-byte from project-scaffolding. sha = the source repo commit
+# the copy was taken from; /propagate-vendored hash-verifies + bumps.
+[vendored]
+docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "f9300a05540313bb26f442e1daa491c9308541d2", dest = "scripts/docs_ratchet.py" }
+
+# [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
+# runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when
+# README.md grows past 40 KiB or when README.md / docs/**/*.md gains a history marker
+# (issue reference, dated or changelog heading) beyond .docs-ratchet-baseline.json. A
+# check that cannot run (exit 3) is NOT CONFIRMED and fails, never a pass. Mechanism +
+# limits: project-scaffolding docs/docs-ratchet.md.
+[docs_ratchet]
+enabled  = true
+baseline = ".docs-ratchet-baseline.json"

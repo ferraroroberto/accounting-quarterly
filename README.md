@@ -52,12 +52,17 @@ A `launch_app.bat` shortcut is provided for Windows.
 
 ### Verification gate
 
+```powershell
+# Windows: byte-compile, docs ratchet, then the full pytest suite
+.\scripts\verify-before-ship.ps1
+```
+
 ```bash
-# Windows
-.\.venv\Scripts\python.exe -m pytest -v
-# macOS / Linux
+# macOS / Linux (tests only)
 .venv/bin/pytest -v
 ```
+
+The docs ratchet keeps `README.md` under 40 KiB and fails on a new history marker (an issue reference, a dated heading or a changelog heading) in `README.md` or `docs/**/*.md`; existing ones are baselined in `.docs-ratchet-baseline.json`. State the present-tense why in words instead. A check that could not run (exit 3) fails as not confirmed.
 
 ---
 

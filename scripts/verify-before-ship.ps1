@@ -11,7 +11,12 @@
                          docs/**/*.md beyond .docs-ratchet-baseline.json. Whole
                          tree, never routed; exit 3 (count not established) is
                          NOT CONFIRMED and fails, never a pass or a skip.
-      3. pytest        - the unit suite
+      3. structure ratchet - a file past 1,000 lines, a function past 100, a
+                         directory past 40 modules or a src/ module importing app/
+                         beyond .structure-ratchet-baseline.json, or a root folder
+                         outside the declared shape, fails. Whole tree, never
+                         routed; exit 3 (not confirmed) fails, never a pass.
+      4. pytest        - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -50,6 +55,9 @@ Invoke-Stage "byte-compile"  { & $py -m compileall -q app src scripts tests }
 # The wrapper maps the script's exit 3 to NOT CONFIRMED (tests/test_docs_ratchet_gate.py
 # pins it); call it, never scripts/docs_ratchet.py directly.
 Invoke-Stage "docs ratchet"  { & $py -m scripts.docs_ratchet_gate }
+# Invoke-Stage fails on any non-zero exit, so the script's exit 3 (git unusable, an
+# unparseable file, an unknown shape: nothing was checked) is a failure, not a pass.
+Invoke-Stage "structure ratchet" { & $py "scripts/structure_ratchet.py" }
 Invoke-Stage "pytest"        { & $py -m pytest }
 
 Write-Host ""

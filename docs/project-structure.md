@@ -15,9 +15,10 @@
 ├── scripts/
 │   ├── close_quarter.py           # Quarter-close CLI over src/close_pipeline.py (see [close-quarter-cli.md](close-quarter-cli.md))
 │   ├── clean_invoice_activity_type.py  # One-off: NULL the non-activity values old rows hold in invoices.activity_type (dry run by default, --apply writes)
-│   ├── verify-before-ship.ps1     # Pre-ship gate: byte-compile, docs ratchet, pytest
+│   ├── verify-before-ship.ps1     # Pre-ship gate: byte-compile, docs ratchet, structure ratchet, pytest
 │   ├── docs_ratchet.py            # Vendored from project-scaffolding (never edited here): README size + history-marker ratchet
 │   └── docs_ratchet_gate.py       # Gate wrapper: maps the ratchet's exit codes, so exit 3 (not confirmed) fails
+│   ├── structure_ratchet.py       # Vendored from project-scaffolding (never edited here): file-size, function-length, flat-directory, src→app and root-layout ratchet
 ├── src/                           # Core business logic
 │   ├── models.py                  # Pydantic data models (Payment, ClassifiedPayment, ...)
 │   ├── _json_store.py             # Shared cached-JSON store backing config.py and rules_engine.py

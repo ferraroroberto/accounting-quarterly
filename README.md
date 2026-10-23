@@ -53,7 +53,7 @@ A `launch_app.bat` shortcut is provided for Windows.
 ### Verification gate
 
 ```powershell
-# Windows: byte-compile, docs ratchet, then the full pytest suite
+# Windows: byte-compile, docs ratchet, structure ratchet, then the full pytest suite
 .\scripts\verify-before-ship.ps1
 ```
 
@@ -63,6 +63,8 @@ A `launch_app.bat` shortcut is provided for Windows.
 ```
 
 The docs ratchet keeps `README.md` under 40 KiB and fails on a new history marker (an issue reference, a dated heading or a changelog heading) in `README.md` or `docs/**/*.md`; existing ones are baselined in `.docs-ratchet-baseline.json`. State the present-tense why in words instead. A check that could not run (exit 3) fails as not confirmed.
+
+The structure ratchet fails when a new file passes 1,000 lines, a new function 100 lines or a directory 40 modules, when `src/` imports `app/`, when a baselined offender grows past its size in `.structure-ratchet-baseline.json`, or when a root folder falls outside the declared shape. Split the offender rather than raising its baseline; exit 3 also fails as not confirmed.
 
 ---
 
@@ -93,7 +95,7 @@ Stripe API (live charges)
 
 Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API, or when you run `scripts/close_quarter.py reclassify` after a rule change. Non-EUR amounts are converted to EUR using ECB exchange rates, fetched from the Frankfurter API when a date's rate is missing.
 
-Layout: `src/` holds the business logic (no Streamlit), `app/` the Streamlit tabs, `scripts/close_quarter.py` the quarter-close CLI, `tests/` the pytest suite, and `data/`, `tmp/` and `logs/` the git-ignored runtime output. The module-by-module tree is [`docs/project-structure.md`](docs/project-structure.md); the structure diagram is [`docs/architecture.mmd`](docs/architecture.mmd).
+Layout: `src/` holds the business logic (no Streamlit), `app/` the Streamlit tabs, `scripts/close_quarter.py` the quarter-close CLI, `tests/` the pytest suite, and `data/`, `tmp/` and `logs/` the git-ignored runtime output. The module-by-module tree is [`docs/project-structure.md`](docs/project-structure.md); the structure diagram is [`docs/architecture.mmd`](docs/architecture.mmd). Where new code goes is in [`docs/layout.md`](docs/layout.md).
 
 ---
 

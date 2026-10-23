@@ -6,11 +6,16 @@ layer       = "working-pipe"
 icon        = "💳"
 description = "Stripe payments → quarterly reports."
 tag         = ["→", "Stripe"]
+shape       = "streamlit"
+# logs/ keeps a tracked .gitkeep so the runtime log folder exists in a fresh clone
+# (src/logger.py also creates it on first use); its contents are git-ignored.
+extra_roots = ["logs"]
 
 # Vendored byte-for-byte from project-scaffolding. sha = the source repo commit
 # the copy was taken from; /propagate-vendored hash-verifies + bumps.
 [vendored]
 docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "f9300a05540313bb26f442e1daa491c9308541d2", dest = "scripts/docs_ratchet.py" }
+structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "84d2b12ab416551762e4a615e4a706df91cea69f", dest = "scripts/structure_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
 # runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when
@@ -21,3 +26,16 @@ docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "f9300a05540313bb26f442e
 [docs_ratchet]
 enabled  = true
 baseline = ".docs-ratchet-baseline.json"
+
+# [structure_ratchet] -- the scaffold's baseline-and-ratchet layout stage. The gate
+# (scripts/verify-before-ship.ps1) runs scripts/structure_ratchet.py, which fails when
+# a new file passes 1,000 lines, a new function 100 lines or a flat directory 40
+# modules, when a baselined offender grows past its size in
+# .structure-ratchet-baseline.json, when src/ imports app/, and when the root folders
+# do not match `shape` plus `extra_roots`. Existing offenders are baselined at today's
+# size, never excluded. Exit 3 (git unusable, an unparseable file, an unknown shape)
+# is NOT CONFIRMED; the gate stage fails on any non-zero exit. Procedure:
+# project-scaffolding docs/structure-ratchet.md.
+[structure_ratchet]
+enabled  = true
+baseline = ".structure-ratchet-baseline.json"

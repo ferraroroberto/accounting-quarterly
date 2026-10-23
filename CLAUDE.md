@@ -18,6 +18,10 @@ Canonical instructions for AI coding agents working in this repository. Claude C
 Streamlit dashboard and automation for classifying Stripe payments and producing quarterly Spanish tax reports.
 See `README.md` for setup and usage; it indexes the feature docs under `docs/` (module layout: `docs/project-structure.md`).
 
+## Structure ratchet
+
+- **A vendored structure ratchet gates the pre-ship run.** `scripts/verify-before-ship.ps1` runs `scripts/structure_ratchet.py` (byte-for-byte from project-scaffolding; re-vendor with `/propagate-vendored structure_ratchet`, never edit it here), which fails on a new file over 1,000 lines, a new function over 100, a directory past 40 modules, a `src/` import of `app/`, or a root folder outside `shape` plus `extra_roots` in `.fleet.toml`. Existing offenders sit in `.structure-ratchet-baseline.json` at today's size and may not grow; `--allow-additions` is for reviewed growth only. Exit 3 is not confirmed and fails. New logic goes in a `src/<domain>/` subpackage; [`docs/layout.md`](docs/layout.md) says where everything else goes.
+
 ## Internal architecture
 
 [`docs/architecture.mmd`](docs/architecture.mmd) is a hand-authored Mermaid diagram of this repo's own internal structure — `src/` ingestion + the Spanish tax engine, `app/`'s Streamlit tabs, the SQLite store, and external dependencies (Stripe, Frankfurter, local-llm-hub, IntegraLOOP/BILOOP). Update it in the same PR as any material structural change (a module added/moved/renamed, a new external dependency, a new tab) — same anti-staleness contract as this repo's own `.fleet.toml` `description` field. It is not auto-generated and not covered by the pytest suite.

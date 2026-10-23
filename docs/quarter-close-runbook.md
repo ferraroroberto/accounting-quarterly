@@ -85,7 +85,7 @@ Applies `vendors.json` to the expense invoices dated in the quarter and lists th
 .venv/Scripts/python.exe scripts/close_quarter.py dedupe
 ```
 
-Lists duplicate groups (same file, same invoice number, invoice + receipt, email-folder copy) and swept files dated outside the quarter, numbered `#1`, `#2`… Nothing is written without `--apply`. A shared invoice number with a different total or date (typically two issued invoices numbered the same by mistake) is a numbering ⚠: fix the numbering, nothing is excluded.
+Lists duplicate groups (same file, same invoice number, invoice + receipt, email-folder copy) and swept files dated outside the quarter, numbered sequentially starting at 1. Nothing is written without `--apply`. A shared invoice number with a different total or date (typically two issued invoices numbered the same by mistake) is a numbering ⚠: fix the numbering, nothing is excluded.
 
 ### Review 1: invoices
 
@@ -226,7 +226,7 @@ General rules for the three forms:
 ### Step 12: Modelo 303
 
 1. Open the Modelo 303 procedure (Impuestos y tasas → IVA → Modelo 303) and choose **Presentar**, then the web form (**formulario**).
-2. **Identification:** fiscal year and period (1T–4T). Answer the questionnaire: régimen general, no cash-basis regime, no special pro-rata, not in SII, not REDEME, not foral. In 4T it also asks whether you are exempt from the annual 390 (the annual pack #103 covers the 390).
+2. **Identification:** fiscal year and period (1T–4T). Answer the questionnaire: régimen general, no cash-basis regime, no special pro-rata, not in SII, not REDEME, not foral. In 4T it also asks whether you are exempt from the annual 390 (the annual pack covers the 390).
 3. **Liquidación (page 1):** type the *IVA devengado* boxes (01–13) and the *IVA deducible* boxes (28–44) in the sheet's order.
 4. **Información adicional (page 3):** 59, 60, 120, 123.
 5. **Resultado:** check 65 = 100; box 110 (credits from earlier periods) against the sheet's credit chain; type 78 (credit applied) if the form asks for it; check 87 (credit left for later) and 71.
@@ -331,9 +331,9 @@ Keep them at least as long as the returns can be reviewed: four years from the e
 |---|---|---|
 | 1–20 April, July, October | 303, 130, 349 of Q1–Q3 | This runbook |
 | 1–30 January | 303, 130, 349 of Q4 (the Q4 303 carries the pro-rata regularisation, box 44, and the capital-goods regularisation, box 43) | This runbook |
-| 1–30 January | Modelo 390, VAT annual summary | Annual pack (#103) |
-| February | Modelo 347, operations with third parties above €3,005.06 (VAT included) | Annual pack (#103); the app computes the income side today |
-| April – 30 June | Income-tax return (Renta) for the previous year: activity yield per activity, depreciation, RETA | Annual pack (#103) for the P&L per activity |
+| 1–30 January | Modelo 390, VAT annual summary | Annual pack |
+| February | Modelo 347, operations with third parties above €3,005.06 (VAT included) | Annual pack; the app computes the income side today |
+| April – 30 June | Income-tax return (Renta) for the previous year: activity yield per activity, depreciation, RETA | Annual pack, for the P&L per activity |
 
 Direct-debit deadlines come a few days before each filing deadline; the filing sheet prints them per quarter. Check the AEAT *calendario del contribuyente* each year for regional holidays and changes.
 

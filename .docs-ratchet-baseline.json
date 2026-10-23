@@ -1,9 +1,4 @@
 {
   "version": 1,
-  "entries": [
-    {"key": "docs/close-quarter-cli.md", "markers": 2},
-    {"key": "docs/quarter-close-runbook.md", "markers": 6},
-    {"key": "docs/tax-conventions.md", "markers": 8},
-    {"key": "docs/tax-engine-reference.md", "markers": 3}
-  ]
+  "entries": []
 }

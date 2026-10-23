@@ -23,7 +23,7 @@ Field-by-field box models and the data mechanics that produce them — field nam
 
 Manual `IVA_SOPORTADO` entries (Tax Obligations → Manual Entries) now carry their VAT rate, from which the box 28 base is derived; the old fixed 21% assumption is gone.
 
-Old snapshots with the pre-#97 field names (`box_01_base`, `box_29_cuota_soportado`, `export_base`, …) still decode: the codec maps them to the new fields and fills in the totals.
+Old snapshots with earlier field names (`box_01_base`, `box_29_cuota_soportado`, `export_base`, …) still decode: the codec maps them to the new fields and fills in the totals.
 
 ## Modelo 349 operators
 
@@ -34,7 +34,7 @@ Old snapshots with the pre-#97 field names (`box_01_base`, `box_29_cuota_soporta
 | `I` | Expense invoices with `tax_treatment` `INTRA_EU_RC` | Vendor VAT id: the invoice's `vendor_vat_id_norm` / `vendor_nif`, else the matched vendor-registry `vat_id` | Registry `legal_entity`, else the invoice vendor name |
 | `S` | Stripe charges treated `IVA_EU_B2B` (customer `buyer_vat_id`) + income invoices with `tax_treatment` `EU_B2B` (`client_nif`) | Normalised VAT id (`normalize_vat_id`) | Stripe customer e-mail / invoice client name |
 
-Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the stored EUR values (ECB rate resolved at OCR time; `eur_received` for income invoices), so — lines not declared aside — key `I` adds up to 303 box 10 and key `S` to box 59. Lines that cannot be declared are listed apart with a warning: an operator whose quarter total is **zero or negative** (`result.excluded` — rectify the original period instead) and records **without a VAT id** (`result.unidentified` — add the id to the invoice or the vendor registry). A VAT id without an EU country prefix is declared but flagged. The **Modelo 349** tab of Tax Obligations shows the boxes and the operator table; the Tax Audit trail has one cell per line (`op_<KEY>_<VATID>`, with the records summed) plus `c01_operadores` / `c02_importe`. Snapshots stored before #99 (EU B2B sales only) decode as key `S` lines.
+Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the stored EUR values (ECB rate resolved at OCR time; `eur_received` for income invoices), so — lines not declared aside — key `I` adds up to 303 box 10 and key `S` to box 59. Lines that cannot be declared are listed apart with a warning: an operator whose quarter total is **zero or negative** (`result.excluded` — rectify the original period instead) and records **without a VAT id** (`result.unidentified` — add the id to the invoice or the vendor registry). A VAT id without an EU country prefix is declared but flagged. The **Modelo 349** tab of Tax Obligations shows the boxes and the operator table; the Tax Audit trail has one cell per line (`op_<KEY>_<VATID>`, with the records summed) plus `c01_operadores` / `c02_importe`. Snapshots from when only EU B2B sales were tracked decode as key `S` lines.
 
 ## Modelo 130 box model
 
@@ -58,7 +58,7 @@ Invoices count by `invoice_date` and `excluded` rows are skipped; bases are the 
 
 Boxes 05 and 15 chain through the earlier quarters of the year: each quarter's **filed** 130 is used when its receipt is imported (see [Importing filed AEAT receipts](reconciliation.md#importing-filed-aeat-receipts)); otherwise the app computes that quarter itself. `c05_source` says which (`filed`, `app_chain`, `mixed`, `none`).  The old `tax_filing_status` "previous payments" are no longer read.
 
-Old snapshots with the pre-#98 field names (`box_01_ingresos`, `box_05_base`, `box_16_resultado`, …) still decode: `box_02_gastos` becomes the real expenses, 02 gets the allowance added back, and 07/12/14/17 are derived (legacy results had no 13/15).
+Old snapshots with earlier field names (`box_01_ingresos`, `box_05_base`, `box_16_resultado`, …) still decode: `box_02_gastos` becomes the real expenses, 02 gets the allowance added back, and 07/12/14/17 are derived (legacy results had no 13/15).
 
 ## Modelo 390 box model
 

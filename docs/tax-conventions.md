@@ -6,7 +6,7 @@ The durable reference for **every tax rule the app applies** when it computes th
 - **Legal basis**: the article, order or AEAT manual it rests on;
 - **External accountant**: where a *gestor* or *asesor* commonly does it differently. Each such difference, once confirmed in the Reconciliation tab, belongs in `divergences.json` with the category `convention` (a legitimate alternative), `gestor_error` (the filed figure is wrong) or `app_choice` (a deliberate app position).
 
-How to *run* a quarter, including filing on the AEAT Sede, is in [quarter-close-runbook.md](quarter-close-runbook.md). Box-by-box mechanics (field names, audit cells) are in [tax-engine-reference.md](tax-engine-reference.md): [Modelo 303 box model](tax-engine-reference.md#modelo-303-box-model), [Modelo 130 box model](tax-engine-reference.md#modelo-130-box-model) and [Modelo 349 operators](tax-engine-reference.md#modelo-349-operators). The annual returns (390, 347 purchases, P&L per activity) belong to the annual pack (#103) and are not covered here.
+How to *run* a quarter, including filing on the AEAT Sede, is in [quarter-close-runbook.md](quarter-close-runbook.md). Box-by-box mechanics (field names, audit cells) are in [tax-engine-reference.md](tax-engine-reference.md): [Modelo 303 box model](tax-engine-reference.md#modelo-303-box-model), [Modelo 130 box model](tax-engine-reference.md#modelo-130-box-model) and [Modelo 349 operators](tax-engine-reference.md#modelo-349-operators). The annual returns (390, 347 purchases, P&L per activity) belong to the annual pack and are not covered here.
 
 > This is a working record of the positions the app takes, not tax advice. The law changes: re-check a rule against its source when a figure looks surprising, and before relying on it for a new situation.
 
@@ -27,7 +27,7 @@ Abbreviations: **LIVA** Ley 37/1992 del IVA · **RIVA** RD 1624/1992 · **LIRPF*
 
 ### 1.1 Activity start date (a floor on every range above)
 
-**Rule.** `tax.activity_start_date` (ISO date, absent by default) is a lower bound on the date ranges above: a Stripe charge or invoice dated **before** it is excluded from every model (303, 130, 349, 390, 347), and the 303 box 110 credit chain and the 130 boxes 05/15 chain never reach back before it — a period that ends before the start date gets `c110_source = "none"` / `c05_source = "none"` instead of chaining into pre-activity data. A record dated on the start date itself is counted. An audit note on the 303 and 130 gives the count and total of what was excluded. Absent the key, every range keeps its natural bound (unchanged behaviour, issue #133).
+**Rule.** `tax.activity_start_date` (ISO date, absent by default) is a lower bound on the date ranges above: a Stripe charge or invoice dated **before** it is excluded from every model (303, 130, 349, 390, 347), and the 303 box 110 credit chain and the 130 boxes 05/15 chain never reach back before it — a period that ends before the start date gets `c110_source = "none"` / `c05_source = "none"` instead of chaining into pre-activity data. A record dated on the start date itself is counted. An audit note on the 303 and 130 gives the count and total of what was excluded. Absent the key, every range keeps its natural bound.
 
 **Legal basis.** A return only covers the period in which the taxable person carried on the activity; nothing accrues before *alta* in the Censo de Empresarios (Modelo 036/037) and the corresponding IAE registration (art. 5 LIVA, art. 27.1 LIRPF activities begin on the date declared to the AEAT).
 
@@ -128,7 +128,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 - In Q4 the engine computes the year's **definitive %**: operations with the right to deduct (boxes 01/04/07 bases + 59 + 60 + 120 + the OSS base) over those plus the exempt ones, **rounded up** to the next whole number. Box 44 = (definitive − provisional) × the whole year's deductible VAT at 100%.
 - Record the definitive % under `tax.prorrata.definitive_pct_by_year` once the Q4 303 is filed: it becomes the next year's provisional %.
 - `c46_sin_prorrata` (audit and reconciliation) shows box 46 at 100% deduction, for comparing with a filing that ignores the pro-rata.
-- The VAT lost to the pro-rata is also an IRPF cost, but the app does not add it to the 130 expenses (known limitation, #205): only the business-use gap of section 3.1 is expensed.
+- The VAT lost to the pro-rata is also an IRPF cost, but the app does not add it to the 130 expenses: only the business-use gap of section 3.1 is expensed.
 
 **Legal basis.** Arts. 102–106 LIVA. General pro-rata when both kinds of operation exist (art. 102–103). Numerator and denominator per calendar year, including operations located abroad that would give the right to deduct if made in Spain (arts. 94.Uno.2º and 104.Dos); the result "se redondeará en la unidad superior" (art. 104.Dos). The provisional % of a year is the previous year's definitive one (art. 105.Uno); a different provisional % can be requested when circumstances change significantly (art. 105.Dos); the definitive % is computed and the year regularised in the last return of the year (art. 105.Cuatro). The special pro-rata (art. 103.Dos, 106) is **not** modelled.
 
@@ -148,7 +148,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 
 ### 5.2 IRPF: depreciation and the €300 threshold (inside box 02)
 
-**Rule.** Assets are registered per unit in the Fixed Assets tab (from a ledger invoice: **Register as fixed asset**, which flags the invoice `is_capital_asset` so it is no longer expensed). Units at or below `assets.threshold_eur` (default €300) are expensed in full in their quarter. Above it, straight-line depreciation with the *tabla de amortizaciones simplificada*: base × IRPF business-use % × coefficient × days in use ÷ days in the year, capped at base × business-use %. The depreciable base is the invoice base: VAT the 303 does not deduct is not added to it (known limitation, #205; current expenses do include it, section 3.1). The coefficient defaults to the class maximum and may be lowered, never raised. `assets.posting_mode`: `annual_q4` (default, the whole year's charge in the Q4 130) or `quarterly`. Only registered assets are depreciated: an invoice that is not registered is expensed in full in its quarter, whatever its amount. Registering is required for VAT capital goods (section 5.1) and optional below that; expensing a device above €300 instead of depreciating it is a choice some owners and accountants make for simplicity, at the cost of a timing difference against the strict rule.
+**Rule.** Assets are registered per unit in the Fixed Assets tab (from a ledger invoice: **Register as fixed asset**, which flags the invoice `is_capital_asset` so it is no longer expensed). Units at or below `assets.threshold_eur` (default €300) are expensed in full in their quarter. Above it, straight-line depreciation with the *tabla de amortizaciones simplificada*: base × IRPF business-use % × coefficient × days in use ÷ days in the year, capped at base × business-use %. The depreciable base is the invoice base: VAT the 303 does not deduct is not added to it (current expenses do include it, section 3.1). The coefficient defaults to the class maximum and may be lowered, never raised. `assets.posting_mode`: `annual_q4` (default, the whole year's charge in the Q4 130) or `quarterly`. Only registered assets are depreciated: an invoice that is not registered is expensed in full in its quarter, whatever its amount. Registering is required for VAT capital goods (section 5.1) and optional below that; expensing a device above €300 instead of depreciating it is a choice some owners and accountants make for simplicity, at the cost of a timing difference against the strict rule.
 
 | Class | Group | Max coefficient | Max period |
 |---|---|---|---|
@@ -229,10 +229,10 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 
 **External accountant.**
 - May book an issued invoice net of the withholding (income too low, withholding lost from 06). That is a `gestor_error`; the invoice's own rounding should also show the exact cents.
-- Shows the 5% inside box 02, as the app does since #98.
-- May expense only what arrives as an invoice, which leaves the platform fees out of box 02 and overstates the net yield: `gestor_error`. Returns filed before #135 from the app's own figures have the same gap.
+- Shows the 5% inside box 02, as the app does.
+- May expense only what arrives as an invoice, which leaves the platform fees out of box 02 and overstates the net yield: `gestor_error`. Returns filed before the app started adding platform fees to expenses have the same gap.
 - May book a refund of RETA contributions in the year of the contributions instead of the year received; there are views both ways, so catalogue as `convention`.
-- May expense only the base of an invoice whose VAT is not (fully) deducted, which understates box 02: `gestor_error`. Returns filed before #205 from the app's own figures have the same gap.
+- May expense only the base of an invoice whose VAT is not (fully) deducted, which understates box 02: `gestor_error`. Returns filed before the app started adding non-deducted VAT to expenses have the same gap.
 
 ---
 
@@ -269,7 +269,7 @@ None of them changes the result; all of them count in the pro-rata numerator.
 
 **Legal basis.** 303: art. 71.4 RIVA. 130: art. 111.1 RIRPF. 349: art. 81 RIVA. Direct debit: art. 3 of Orden EHA/1658/2009 as amended by Orden HAC/241/2025 (BOE-A-2025-5048); AEAT "Plazos de presentación de autoliquidaciones con domiciliación bancaria".
 
-The annual calendar (390 by 30 January, 347 in February, the income-tax return from April to 30 June) is part of the annual pack (#103) and of the [runbook](quarter-close-runbook.md#annual-calendar).
+The annual calendar (390 by 30 January, 347 in February, the income-tax return from April to 30 June) is part of the annual pack and of the [runbook](quarter-close-runbook.md#annual-calendar).
 
 ---
 

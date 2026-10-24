@@ -20,7 +20,12 @@
                          a SKILL.md (or a file passing its size cap) beyond
                          .instruction-ratchet-baseline.json fails. Whole tree,
                          never routed; exit 3 (not confirmed) fails, never a pass.
-      5. pytest        - the unit suite
+      5. doc-refs ratchet - a repo path, python -m module, relative link or loopback
+                         port named in README.md, CLAUDE.md or docs/**/*.md that
+                         does not exist, beyond .doc-refs-ratchet-baseline.json,
+                         fails. Whole tree, never routed; exit 3 (not confirmed)
+                         fails, never a pass.
+      6. pytest        - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -65,6 +70,8 @@ Invoke-Stage "structure ratchet" { & $py "scripts/structure_ratchet.py" }
 # Not path-routed: the reader of one file depends on another (AGENTS.md), and a skill's
 # reference docs live outside its folder. Exit 3 fails here the same way.
 Invoke-Stage "instruction ratchet" { & $py "scripts/instruction_ratchet.py" }
+# Not path-routed: a code change can strand a doc reference without touching the doc.
+Invoke-Stage "doc-refs ratchet" { & $py "scripts/doc_refs_ratchet.py" }
 Invoke-Stage "pytest"        { & $py -m pytest }
 
 Write-Host ""

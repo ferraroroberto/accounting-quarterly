@@ -564,7 +564,8 @@ def dead_tree(root: Path, cfg: Config, vendored: tuple[str, ...],
             except OSError as exc:
                 raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
             scans[path] = scan_source(source, path)
-        elif PurePosixPath(path).suffix.lower() in MENTION_SUFFIXES:
+        elif path != cfg.baseline and PurePosixPath(path).suffix.lower() in MENTION_SUFFIXES:
+            # The baseline lists the dead names; reading it would make each one look referenced.
             mentions |= _mention_words(root, path)
     names: set[str] = set()
     classes: dict[str, tuple[str, ...]] = {}

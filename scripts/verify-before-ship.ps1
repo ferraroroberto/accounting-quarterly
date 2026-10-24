@@ -25,7 +25,11 @@
                          does not exist, beyond .doc-refs-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      6. pytest        - the unit suite
+      6. dead-code ratchet - a new Python function, class or method that nothing in
+                         the repo refers to, beyond .dead-code-ratchet-baseline.json,
+                         fails. Whole tree, never routed; exit 3 (not confirmed)
+                         fails, never a pass.
+      7. pytest        - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -72,6 +76,8 @@ Invoke-Stage "structure ratchet" { & $py "scripts/structure_ratchet.py" }
 Invoke-Stage "instruction ratchet" { & $py "scripts/instruction_ratchet.py" }
 # Not path-routed: a code change can strand a doc reference without touching the doc.
 Invoke-Stage "doc-refs ratchet" { & $py "scripts/doc_refs_ratchet.py" }
+# Not path-routed: deleting the last caller in one file strands a definition in another.
+Invoke-Stage "dead-code ratchet" { & $py "scripts/dead_code_ratchet.py" }
 Invoke-Stage "pytest"        { & $py -m pytest }
 
 Write-Host ""

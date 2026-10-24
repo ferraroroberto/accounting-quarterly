@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "entries": [
+    {"key": "src/accounting_api_client.py", "names": ["AccountingAPIClient.get_companies"]},
+    {"key": "src/fx_rates.py", "names": ["delete_exchange_difference"]}
+  ]
+}

@@ -70,6 +70,8 @@ The instruction ratchet lints the instruction files (`CLAUDE.md`, `AGENTS.md`, a
 
 The doc-refs ratchet fails when `README.md`, `CLAUDE.md` or a file under `docs/` names a repo path, `python -m` module, relative link or loopback port that does not exist, beyond `.doc-refs-ratchet-baseline.json`. Fix the reference rather than baselining it; a path named on purpose, such as a folder created at run time, stays in the baseline, and exit 3 fails as not confirmed.
 
+The dead-code ratchet fails when a new Python function, class or method appears that nothing in the repo refers to, beyond `.dead-code-ratchet-baseline.json`. Delete it or call it rather than baselining it; exit 3 also fails as not confirmed.
+
 ---
 
 ## Data Flow

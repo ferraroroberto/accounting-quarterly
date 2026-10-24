@@ -15,6 +15,7 @@ extra_roots = ["logs"]
 # the copy was taken from; /propagate-vendored hash-verifies + bumps.
 [vendored]
 docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "f9300a05540313bb26f442e1daa491c9308541d2", dest = "scripts/docs_ratchet.py" }
+instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "60fdd0350f18d28838428b2e773f7868f6381fbf", dest = "scripts/instruction_ratchet.py" }
 structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "84d2b12ab416551762e4a615e4a706df91cea69f", dest = "scripts/structure_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
@@ -39,3 +40,15 @@ baseline = ".docs-ratchet-baseline.json"
 [structure_ratchet]
 enabled  = true
 baseline = ".structure-ratchet-baseline.json"
+
+# [instruction_ratchet] -- the scaffold's prompt-audit lint over the instruction files
+# (CLAUDE.md, AGENTS.md, .claude/rules, every SKILL.md and the docs a skill links to).
+# The gate (scripts/verify-before-ship.ps1) runs scripts/instruction_ratchet.py, which
+# fails when a rule's hit count rises above .instruction-ratchet-baseline.json or a file
+# passes its size cap. Existing hits are baselined, never excluded. Exit 3 (git unusable,
+# an unreadable file, an unclosed fence, an unreadable skill description) is NOT
+# CONFIRMED; the gate stage fails on any non-zero exit. Procedure: project-scaffolding
+# docs/instruction-ratchet.md.
+[instruction_ratchet]
+enabled  = true
+baseline = ".instruction-ratchet-baseline.json"

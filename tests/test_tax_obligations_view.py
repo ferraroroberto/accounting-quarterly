@@ -67,13 +67,13 @@ def test_computed_and_filed_upserts_still_write(db_path):
 
 
 def _save_computed_button() -> None:
-    from app.tax_obligations import _save_filing_button
+    from app.views.tax_obligations import _save_filing_button
 
     _save_filing_button("303", 2025, 1, 99.0)
 
 
 def test_save_computed_button_keeps_a_filed_period_filed(db_path, monkeypatch):
-    import app.tax_obligations as tab
+    import app.views.tax_obligations as tab
 
     _mark_filed(db_path)
     monkeypatch.setattr(tab, "upsert_filing_status",

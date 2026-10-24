@@ -1,7 +1,7 @@
 """The Welcome tab's guide is the single source of the dashboard's tab names."""
 from __future__ import annotations
 
-from app.welcome import TAB_GUIDE, TAB_NAMES
+from app.views.welcome import TAB_GUIDE, TAB_NAMES
 
 
 def test_tab_names_are_welcome_plus_the_guide_in_order():

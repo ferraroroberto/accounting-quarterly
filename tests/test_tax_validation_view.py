@@ -1,4 +1,4 @@
-"""AppTest coverage for the Reconciliation tab (app/tax_validation.py).
+"""AppTest coverage for the Reconciliation tab (app/views/tax_validation.py).
 
 Regression intent from accounting-quarterly#78 is kept: a fresh clone has no
 filed returns, and the tab must render guidance instead of crashing (the old
@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 def _render_without_filed_return() -> None:
     """No filed return for the period; the app still computes two boxes."""
-    from app import tax_validation
+    from app.views import tax_validation
     from src.reconciliation import Reconciliation, ReconLine
 
     tax_validation._cached_filed_periods = lambda: []
@@ -37,7 +37,7 @@ def _render_without_filed_return() -> None:
 
 def _render_with_nothing_at_all() -> None:
     """No filed return and no app box: the emptiest possible state."""
-    from app import tax_validation
+    from app.views import tax_validation
     from src.reconciliation import Reconciliation
 
     tax_validation._cached_filed_periods = lambda: []
@@ -49,7 +49,7 @@ def _render_with_nothing_at_all() -> None:
 
 
 def _render_with_filed_return() -> None:
-    from app import tax_validation
+    from app.views import tax_validation
     from src.reconciliation import Reconciliation, ReconLine
 
     tax_validation._cached_filed_periods = lambda: [("303", 2025, 2)]

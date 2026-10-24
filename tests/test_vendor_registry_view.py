@@ -13,18 +13,18 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import src.database as database  # noqa: E402
+import src.database.connection as db_connection  # noqa: E402
 from src.database import get_invoice_by_filename, init_db, upsert_invoice  # noqa: E402
 
 
 def _render_vendors() -> None:
-    from app import vendor_registry_tab
+    from app.views import vendor_registry
 
-    vendor_registry_tab.render()
+    vendor_registry.render()
 
 
 def _render_ledger() -> None:
-    from app import invoice_ledger
+    from app.views import invoice_ledger
 
     invoice_ledger.render()
 
@@ -42,7 +42,7 @@ def vendors_db(tmp_path, monkeypatch, isolated_vendor_registry):
     upsert_invoice({"filename": "mystery/2025-01.pdf", "direction": "in",
                     "invoice_date": "2025-01-11", "vendor_name": "Mystery Vendor Ltd",
                     "total_eur": 20.0}, db_path=path)
-    monkeypatch.setattr(database, "_DB_PATH", path)
+    monkeypatch.setattr(db_connection, "_DB_PATH", path)
     return path
 
 
@@ -72,7 +72,7 @@ def test_ledger_shows_unknown_vendor_metric(vendors_db):
 
 
 def test_editor_frame_roundtrip():
-    from app.vendor_registry_tab import _from_frame, _to_frame
+    from app.views.vendor_registry import _from_frame, _to_frame
     from src.vendor_registry import VendorRegistry
 
     reg = VendorRegistry.from_dict({"vendors": [

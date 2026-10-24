@@ -31,7 +31,12 @@
 │   ├── excel_exporter.py          # Multi-sheet Excel report generation
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
-│   ├── database.py                # SQLite operations (transactions, FX rates, upload log, invoices, SS, tax, audit)
+│   ├── database/                  # SQLite operations; __init__ re-exports every name, so `from src.database import ...` works
+│   │   ├── connection.py          # get_connection and the default database path
+│   │   ├── schema.py              # Table definitions, migrations, backfills, init_db
+│   │   ├── transactions.py        # Stripe transactions: upsert, load, search
+│   │   ├── invoices.py            # Upload log and invoices: upsert, edit, lock, delete, stats
+│   │   └── tax.py                 # Tax entries, filing status, versioned snapshots, audit log
 │   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── invoice_dedupe.py          # Duplicate/receipt/out-of-period detection + exclusion
 │   ├── periods.py                 # Quarter start/end bounds (date, ISO string, datetime) shared by the engine, dedupe, close and UI
@@ -66,24 +71,29 @@
 ├── app/                           # Streamlit dashboard
 │   ├── streamlit_app.py           # Entry point: welcome page and horizontal tabs
 │   ├── data_loader.py             # Data loading, FX conversion, classification pipeline
-│   ├── quarter_report.py          # Quarterly summary + Excel export
-│   ├── transaction_browser.py     # Browse/filter transactions + geographic overrides
-│   ├── history.py                 # Timeline charts across all quarters
-│   ├── currency.py                # FX rate management, charts, and conversion tool
-│   ├── configuration.py           # Rules editor, Stripe API key, tax settings, cache
-│   ├── invoice_upload.py          # Accounting partner (IntegraLOOP/BILOOP) integration
-│   ├── invoice_ocr_tab.py         # AI invoice extraction tab (OCR via local-llm-hub)
-│   ├── invoice_ledger.py          # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
-│   ├── invoice_dedupe_tab.py      # Duplicate Review tab: scan/confirm/apply invoice_dedupe.py groups
-│   ├── vendor_registry_tab.py     # Vendors tab: registry editor, apply, unknown vendors, spreadsheet import
-│   ├── fixed_assets_tab.py        # Fixed Assets tab: assets grid, manual add, schedule, VAT register (+ ledger hook)
-│   ├── invoice_explorer.py        # Filterable table of all extracted invoices
-│   ├── social_security_tab.py     # Seguridad Social tab: import bank export + view cuotas
-│   ├── tax_obligations.py         # Tax obligations tab (Modelo 303/130/349/347, OSS, Annual Pack)
-│   ├── annual_pack_tab.py         # Annual Pack sub-tab: 390, 347 sales + purchases, P&L per activity
-│   ├── filing_sheet_tab.py        # Filing Sheet tab (copyable box values, deadlines, Mark filed)
-│   ├── tax_validation.py          # Reconciliation tab (filed vs app per box, drill-down, catalogue editor)
-│   └── tax_audit.py               # Tax audit trail tab (per-cell formula + inputs drill-down)
+│   ├── flash.py                   # Messages that survive st.rerun
+│   ├── excel_download.py          # Shared Excel export button
+│   ├── year_picker.py             # One year range for every picker
+│   └── views/                     # One module per view, each exposing render()
+│       ├── welcome.py             # Welcome page and the tab guide
+│       ├── quarter_report.py      # Quarterly summary + Excel export
+│       ├── transaction_browser.py # Browse/filter transactions + geographic overrides
+│       ├── history.py             # Timeline charts across all quarters
+│       ├── currency.py            # FX rate management, charts, and conversion tool
+│       ├── configuration.py       # Rules editor, Stripe API key, tax settings, cache (one renderer per section)
+│       ├── invoice_upload.py      # Accounting partner (IntegraLOOP/BILOOP) integration
+│       ├── invoice_ocr.py         # AI invoice extraction tab (OCR via local-llm-hub)
+│       ├── invoice_ledger.py      # Invoice Ledger tab: tax treatment, exclusions, corrections (locked vs re-OCR)
+│       ├── invoice_dedupe.py      # Duplicate Review tab: scan/confirm/apply invoice_dedupe.py groups
+│       ├── vendor_registry.py     # Vendors tab: registry editor, apply, unknown vendors, spreadsheet import
+│       ├── fixed_assets.py        # Fixed Assets tab: assets grid, manual add, schedule, VAT register (+ ledger hook)
+│       ├── invoice_explorer.py    # Filterable table of all extracted invoices
+│       ├── social_security.py     # Seguridad Social tab: import bank export + view cuotas
+│       ├── tax_obligations.py     # Tax obligations tab (Modelo 303/130/349/347, OSS, Annual Pack)
+│       ├── annual_pack.py         # Annual Pack sub-tab: 390, 347 sales + purchases, P&L per activity
+│       ├── filing_sheet.py        # Filing Sheet tab (copyable box values, deadlines, Mark filed)
+│       ├── tax_validation.py      # Reconciliation tab (filed vs app per box, drill-down, catalogue editor)
+│       └── tax_audit.py           # Tax audit trail tab (per-cell formula + inputs drill-down)
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── test_classifier.py
@@ -99,21 +109,21 @@
 │   ├── test_modelo_130.py         # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
 │   ├── test_annual_pack.py        # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
-│   ├── test_invoice_ledger_tab.py # Invoice Ledger tab (AppTest)
+│   ├── test_invoice_ledger_view.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold
 │   ├── test_reconciliation.py     # Reconciliation matching, catalogue, 349 operators, export, adapter
-│   ├── test_tax_validation_tab.py # Reconciliation tab (AppTest, empty state)
+│   ├── test_tax_validation_view.py # Reconciliation tab (AppTest, empty state)
 │   ├── test_filed_returns.py      # AEAT receipt parser/import (synthetic PDFs only)
 │   ├── test_invoice_dedupe.py     # Dedupe detectors, keeper rule, locked rows, engine picks up exclusions
-│   ├── test_invoice_dedupe_tab.py # Duplicate Review tab (AppTest)
+│   ├── test_invoice_dedupe_view.py # Duplicate Review tab (AppTest)
 │   ├── test_vendor_registry.py    # Vendor matching, defaults vs locks, unknown vendors, xlsx seed
-│   ├── test_vendor_registry_tab.py # Vendors tab + ledger unknown-vendor flag (AppTest)
+│   ├── test_vendor_registry_view.py # Vendors tab + ledger unknown-vendor flag (AppTest)
 │   ├── test_fixed_assets.py       # Depreciation, threshold, posting modes, capital-good VAT, 130 hook, tab
 │   ├── test_close_pipeline.py     # Every close step on a temp DB (OCR/ECB/Stripe mocked), idempotence, skill ↔ CLI
 │   ├── test_relink.py             # Relink matching (move record, hash, unmatched, ambiguous, swap) + archive step
 │   ├── test_filing_sheet.py       # Filing sheet boxes, filed-version freeze, triggers, migration
-│   ├── test_filing_sheet_tab.py   # Filing Sheet tab (AppTest)
-│   └── test_invoice_ocr_tab.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
+│   ├── test_filing_sheet_view.py   # Filing Sheet tab (AppTest)
+│   └── test_invoice_ocr_view.py    # Invoice OCR tab extract button (AppTest, OCR mocked)
 ├── data/
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports

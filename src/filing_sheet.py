@@ -9,7 +9,7 @@ recompute, so it shows what was computed (or filed) and nothing else.
 
 ``mark_filed`` freezes the latest computed snapshot as a new FILED version
 (``snapshot_version`` + 1) carrying the AEAT justificante and presentation
-date. FILED rows are immutable (SQLite triggers in ``src/database.py``); a
+date. FILED rows are immutable (SQLite triggers in ``src/database/``); a
 later recompute stores a new COMPUTED version, which the sheet diffs against
 the filed one.
 

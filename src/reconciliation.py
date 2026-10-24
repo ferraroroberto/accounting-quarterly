@@ -30,7 +30,7 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 quarterly engines and the Modelo 390 engine (``src/modelo_390.py``, #103),
 which is built from the year's four 303 results.
 
-No Streamlit here: the UI lives in ``app/tax_validation.py``.
+No Streamlit here: the UI lives in ``app/views/tax_validation.py``.
 """
 from __future__ import annotations
 

@@ -43,10 +43,10 @@ def isolated_default_db(tmp_path, monkeypatch):
     ``get_connection()`` without a ``db_path`` never opens (or creates) the shared
     ``data/accounting.db``, so its outcome can't depend on that file's state (#201).
     Returns the temp DB path."""
-    import src.database as database
+    import src.database.connection as db_connection
 
     path = tmp_path / "default.db"
-    monkeypatch.setattr(database, "_DB_PATH", path)
+    monkeypatch.setattr(db_connection, "_DB_PATH", path)
     return path
 
 

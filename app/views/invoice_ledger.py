@@ -12,7 +12,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from app.fixed_assets_tab import render_register_from_invoice
+from app.views.fixed_assets import render_register_from_invoice
 from app.flash import flash, show_flash
 from src.database import (
     get_invoices,

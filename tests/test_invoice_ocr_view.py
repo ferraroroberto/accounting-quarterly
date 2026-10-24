@@ -10,29 +10,29 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import src.database as database
+import src.database.connection as db_connection
 import src.invoice_ingest as invoice_ingest
 import src.invoice_scanner as invoice_scanner
 from src.database import get_invoices, init_db
 
 
 def _render_ocr_tab() -> None:
-    from app import invoice_ocr_tab
+    from app.views import invoice_ocr
 
-    invoice_ocr_tab.render()
+    invoice_ocr.render()
 
 
 @pytest.fixture
 def ocr_env(tmp_path, monkeypatch):
     db = tmp_path / "ocr_tab.db"
     init_db(db)
-    monkeypatch.setattr(database, "_DB_PATH", db)
+    monkeypatch.setattr(db_connection, "_DB_PATH", db)
     inv_in = tmp_path / "in"
     inv_in.mkdir()
     (inv_in / "inv-001.pdf").write_bytes(b"%PDF-1.4 synthetic")
     cfg = {"app": {"invoice_in_dir": str(inv_in), "invoice_out_dir": str(tmp_path / "out")}}
     monkeypatch.setattr(invoice_scanner, "load_config", lambda: cfg)
-    import app.invoice_ocr_tab as tab
+    import app.views.invoice_ocr as tab
     monkeypatch.setattr(tab, "load_config", lambda: cfg)
     monkeypatch.setenv("INVOICE_OCR_PROVIDER", "hub")
 

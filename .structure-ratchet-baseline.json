@@ -1,21 +1,20 @@
 {
   "version": 1,
   "entries": [
-    {"key": "dir:src", "modules": 46},
+    {"key": "dir:src", "modules": 45},
     {"key": "dir:tests", "modules": 42},
-    {"key": "fn:app/configuration.py:render", "lines": 414},
-    {"key": "fn:app/currency.py:render", "lines": 120},
-    {"key": "fn:app/history.py:render", "lines": 205},
-    {"key": "fn:app/invoice_explorer.py:render", "lines": 147},
-    {"key": "fn:app/invoice_ledger.py:_render_edit_form", "lines": 129},
-    {"key": "fn:app/invoice_ocr_tab.py:render", "lines": 137},
-    {"key": "fn:app/invoice_upload.py:render", "lines": 183},
-    {"key": "fn:app/quarter_report.py:render", "lines": 198},
-    {"key": "fn:app/social_security_tab.py:render", "lines": 273},
-    {"key": "fn:app/transaction_browser.py:render", "lines": 200},
+    {"key": "fn:app/views/currency.py:render", "lines": 120},
+    {"key": "fn:app/views/history.py:render", "lines": 205},
+    {"key": "fn:app/views/invoice_explorer.py:render", "lines": 147},
+    {"key": "fn:app/views/invoice_ledger.py:_render_edit_form", "lines": 129},
+    {"key": "fn:app/views/invoice_ocr.py:render", "lines": 137},
+    {"key": "fn:app/views/invoice_upload.py:render", "lines": 183},
+    {"key": "fn:app/views/quarter_report.py:render", "lines": 198},
+    {"key": "fn:app/views/social_security.py:render", "lines": 273},
+    {"key": "fn:app/views/transaction_browser.py:render", "lines": 200},
     {"key": "fn:scripts/close_quarter.py:build_parser", "lines": 123},
-    {"key": "fn:src/database.py:init_db", "lines": 151},
-    {"key": "fn:src/database.py:upsert_invoice", "lines": 140},
+    {"key": "fn:src/database/invoices.py:upsert_invoice", "lines": 140},
+    {"key": "fn:src/database/schema.py:init_db", "lines": 151},
     {"key": "fn:src/fx_rates.py:recompute_stored_invoice_fx", "lines": 128},
     {"key": "fn:src/fx_rates.py:resolve_invoice_amounts", "lines": 126},
     {"key": "fn:src/modelo_130.py:_collect_130_ytd", "lines": 161},
@@ -27,7 +26,6 @@
     {"key": "fn:src/modelo_390.py:compute_modelo_390", "lines": 143},
     {"key": "fn:src/pl_by_activity.py:compute_pl_by_activity", "lines": 138},
     {"key": "fn:src/stripe_client.py:fetch_charges", "lines": 149},
-    {"key": "size:src/close_pipeline.py", "lines": 1056},
-    {"key": "size:src/database.py", "lines": 1635}
+    {"key": "size:src/close_pipeline.py", "lines": 1056}
   ]
 }

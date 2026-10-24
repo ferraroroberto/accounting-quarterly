@@ -63,7 +63,7 @@ def test_extract_invoice_normalises_string_fields_in_both_locales(tmp_path, monk
 # --- failed uploads stay pending -------------------------------------------
 
 def test_failed_upload_row_is_not_uploaded_and_is_replaced_on_retry(tmp_path):
-    from app.invoice_upload import _get_new_invoices
+    from app.views.invoice_upload import _get_new_invoices
 
     db = tmp_path / "up.db"
     init_db(db)
@@ -158,13 +158,13 @@ def test_flash_rejects_unknown_kind():
 # --- tab regressions (loaders stubbed, no DB) -------------------------------
 
 def _quarter_report_page() -> None:
-    from app import quarter_report
+    from app.views import quarter_report
 
     quarter_report.render()
 
 
 def test_quarter_report_custom_range_then_since_inception_does_not_crash(monkeypatch):
-    import app.quarter_report as tab
+    import app.views.quarter_report as tab
     import app.year_picker as year_picker
 
     monkeypatch.setattr(tab, "first_data_year", lambda: 2024)
@@ -179,13 +179,13 @@ def test_quarter_report_custom_range_then_since_inception_does_not_crash(monkeyp
 
 
 def _browser_page() -> None:
-    from app import transaction_browser
+    from app.views import transaction_browser
 
     transaction_browser.render()
 
 
 def test_transaction_browser_reloads_when_the_period_changes(monkeypatch):
-    import app.transaction_browser as tab
+    import app.views.transaction_browser as tab
 
     calls: list[tuple] = []
 
@@ -211,7 +211,7 @@ def test_transaction_browser_reloads_when_the_period_changes(monkeypatch):
 
 def test_transaction_browser_raw_table_uses_native_row_selection(monkeypatch):
     """#168: the raw DB table is a native single-row-selection dataframe, not a hand-built checkbox editor."""
-    import app.transaction_browser as tab
+    import app.views.transaction_browser as tab
     import app.year_picker as year_picker
 
     rows = [{"id": "ch_1", "created_date": "2025-01-02T10:00:00", "description": "d",

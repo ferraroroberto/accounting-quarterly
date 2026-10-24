@@ -92,7 +92,7 @@ with st.sidebar:
     st.caption(f"SS payments stored: {_stats['ss_count']}")
 
 # --- Main content: horizontal tabs ---
-from app.welcome import TAB_NAMES
+from app.views.welcome import TAB_NAMES
 
 (tab_welcome, tab_report, tab_browser, tab_history,
  tab_currency, tab_config, tab_invoices, tab_invoice_ocr, tab_invoice_ledger,
@@ -100,24 +100,24 @@ from app.welcome import TAB_NAMES
  tab_filing_sheet, tab_validation, tab_audit) = st.tabs(TAB_NAMES)
 
 # --- Tab imports and rendering ---
-from app.welcome import render as render_welcome
-from app.quarter_report import render as render_quarter_report
-from app.social_security_tab import render as render_social_security
-from app.tax_obligations import render as render_tax_obligations
-from app.transaction_browser import render as render_transaction_browser
-from app.history import render as render_history
-from app.currency import render as render_currency
-from app.configuration import render as render_configuration
-from app.invoice_upload import render as render_invoice_upload
-from app.invoice_ocr_tab import render as render_invoice_ocr
-from app.invoice_ledger import render as render_invoice_ledger
-from app.invoice_dedupe_tab import render as render_invoice_dedupe
-from app.vendor_registry_tab import render as render_vendor_registry
-from app.fixed_assets_tab import render as render_fixed_assets
-from app.invoice_explorer import render as render_invoice_explorer
-from app.filing_sheet_tab import render as render_filing_sheet
-from app.tax_validation import render as render_tax_validation
-from app.tax_audit import render as render_tax_audit
+from app.views.welcome import render as render_welcome
+from app.views.quarter_report import render as render_quarter_report
+from app.views.social_security import render as render_social_security
+from app.views.tax_obligations import render as render_tax_obligations
+from app.views.transaction_browser import render as render_transaction_browser
+from app.views.history import render as render_history
+from app.views.currency import render as render_currency
+from app.views.configuration import render as render_configuration
+from app.views.invoice_upload import render as render_invoice_upload
+from app.views.invoice_ocr import render as render_invoice_ocr
+from app.views.invoice_ledger import render as render_invoice_ledger
+from app.views.invoice_dedupe import render as render_invoice_dedupe
+from app.views.vendor_registry import render as render_vendor_registry
+from app.views.fixed_assets import render as render_fixed_assets
+from app.views.invoice_explorer import render as render_invoice_explorer
+from app.views.filing_sheet import render as render_filing_sheet
+from app.views.tax_validation import render as render_tax_validation
+from app.views.tax_audit import render as render_tax_audit
 
 with tab_welcome:
     render_welcome()

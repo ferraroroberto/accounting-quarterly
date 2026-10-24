@@ -14,7 +14,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from app.tax_audit import _render_audit_table  # same per-cell drill-down as the Tax Audit tab
+from app.views.tax_audit import _render_audit_table  # same per-cell drill-down as the Tax Audit tab
 from app.year_picker import year_input
 from src.database import get_connection, load_audit_entries
 from src.filed_returns import import_pdf

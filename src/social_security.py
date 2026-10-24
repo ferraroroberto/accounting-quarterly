@@ -233,7 +233,7 @@ def load_bank_export(
 
 
 # ---------------------------------------------------------------------------
-# DB helpers (called by database.py's init_db, but also directly usable)
+# DB helpers (called by database.schema's init_db, but also directly usable)
 # ---------------------------------------------------------------------------
 
 def upsert_ss_payments(

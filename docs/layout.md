@@ -14,7 +14,7 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 
 ## Subpackages
 
-`app/`, `src/` and `tests/` are flat: none has a subpackage yet. `src/` holds 46 modules and `tests/` 42, both past the 40-module limit, so they are baselined as `dir:src` and `dir:tests` and take no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
+`app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `src/` holds 45 modules and `tests/` 42, both past the 40-module limit, so they are baselined as `dir:src` and `dir:tests` and take no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
 
 ## Declared exceptions
 
@@ -24,5 +24,5 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 
 The `streamlit` shape puts views in `app/views/<name>.py` behind `st.navigation`. This repo differs, and the ratchet does not check it:
 
-- Views live flat in `app/`, and several are named `<name>_tab.py`. Renaming and moving them into `app/views/` is separate work.
-- Two files and 24 functions already exceed the size limits (the largest are `src/database.py`, `src/close_pipeline.py` and the `render` functions of the configuration, social security and history views). They are baselined at today's size; splitting them is separate work.
+- `app/streamlit_app.py` routes the views through `st.tabs` rather than `st.navigation`.
+- One file and 23 functions still exceed the size limits (the largest are `src/close_pipeline.py` and the `render` functions of the social security, history and transaction browser views). They are baselined at today's size; splitting them is separate work.

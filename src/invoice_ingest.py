@@ -1,7 +1,7 @@
 """Invoice PDF ingestion: OCR extraction → FX resolution → vendor registry → DB.
 
 The single save path for an extracted invoice, shared by the Invoice OCR tab
-(``app/invoice_ocr_tab.py``) and the quarter-close pipeline
+(``app/views/invoice_ocr.py``) and the quarter-close pipeline
 (``scripts/close_quarter.py ocr``, via ``src/close_pipeline.py``). A file needs
 extraction when it has no stored row yet or its MD5 differs from the stored
 ``file_hash`` (the PDF changed since it was extracted).

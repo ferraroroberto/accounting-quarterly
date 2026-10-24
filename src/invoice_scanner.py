@@ -1,6 +1,6 @@
 """Single owner of invoice-PDF directory scanning.
 
-`app/invoice_upload.py`, `app/invoice_ocr_tab.py`, and `scripts/close_quarter.py`
+`app/views/invoice_upload.py`, `app/views/invoice_ocr.py`, and `scripts/close_quarter.py`
 each used to scan `config["app"]["invoice_in_dir"]` / `invoice_out_dir` for PDFs
 with their own copy of the logic; the three copies disagreed on recursion and on
 whether an absolute configured path was honoured. This module is the one place

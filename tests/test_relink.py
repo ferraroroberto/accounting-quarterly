@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-import src.database as database
+import src.database.connection as db_connection
 from src.close_pipeline import CloseContext, step_archive
 from src.database import init_db, upsert_invoice
 from src.relink import apply_relink, load_manifests, plan_relink
@@ -21,7 +21,7 @@ from src.relink import apply_relink, load_manifests, plan_relink
 def env(tmp_path, monkeypatch):
     db = tmp_path / "data" / "accounting.db"
     db.parent.mkdir()
-    monkeypatch.setattr(database, "_DB_PATH", db)  # safety net: nothing may reach the real DB
+    monkeypatch.setattr(db_connection, "_DB_PATH", db)  # safety net: nothing may reach the real DB
     init_db(db)
     old_in, new_in = tmp_path / "old" / "in", tmp_path / "new" / "in"
     old_out, new_out = tmp_path / "old" / "out", tmp_path / "new" / "out"

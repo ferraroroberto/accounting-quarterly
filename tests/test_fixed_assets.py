@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import src.database as database  # noqa: E402
+import src.database.connection as db_connection  # noqa: E402
 from src.database import get_invoice_by_filename, init_db, update_invoice_fields, upsert_invoice  # noqa: E402
 from src.fixed_assets import (  # noqa: E402
     ASSET_CLASSES,
@@ -357,20 +358,20 @@ class TestModelo130Hook:
 # ---------------------------------------------------------------------------
 
 def _render_fixed_assets() -> None:
-    from app import fixed_assets_tab
+    from app.views import fixed_assets
 
-    fixed_assets_tab.render()
+    fixed_assets.render()
 
 
 def _render_ledger() -> None:
-    from app import invoice_ledger
+    from app.views import invoice_ledger
 
     invoice_ledger.render()
 
 
 @pytest.fixture
 def ui_db(db, monkeypatch):
-    monkeypatch.setattr(database, "_DB_PATH", db)
+    monkeypatch.setattr(db_connection, "_DB_PATH", db)
     return db
 
 

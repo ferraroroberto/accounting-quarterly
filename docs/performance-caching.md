@@ -4,8 +4,8 @@ Streamlit re-runs the entire app script on every user interaction (widget change
 
 | Cached function | Where | What it avoids |
 |----------------|-------|----------------|
-| `_cached_reconciliation()` · `_cached_filed_periods()` · `_cached_logged_audit()` | `app/tax_validation.py` | Engine computation + filed-return reads on every Reconciliation tab interaction (the catalogue is applied after the cache, so edits show at once) |
-| `_load_invoices_df()` | `app/invoice_explorer.py` | Full `invoices` table scan + type conversions on every filter interaction |
+| `_cached_reconciliation()` · `_cached_filed_periods()` · `_cached_logged_audit()` | `app/views/tax_validation.py` | Engine computation + filed-return reads on every Reconciliation tab interaction (the catalogue is applied after the cache, so edits show at once) |
+| `_load_invoices_df()` | `app/views/invoice_explorer.py` | Full `invoices` table scan + type conversions on every filter interaction |
 | `_sidebar_stats()` | `app/streamlit_app.py` | 5 DB queries on every widget interaction across all tabs |
 
 **Cache TTL:** 5 minutes. Results auto-refresh after 5 minutes, or immediately via the **↺ Refresh** button present in the Reconciliation and Invoice Explorer tabs.

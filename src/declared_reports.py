@@ -9,7 +9,7 @@ them over the live row for every transaction that appears in a frozen report
 (see :func:`apply_frozen_amounts`).
 
 Schema lives here (own module, own ``_ensure_declared_reports_schema``) rather
-than in ``src/database.py``; every public function ensures it lazily, and
+than in ``src/database/``; every public function ensures it lazily, and
 read-side helpers treat a missing table as "nothing frozen".
 
 Immutability is enforced by SQLite triggers: rows can be inserted, never

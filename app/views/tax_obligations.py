@@ -7,7 +7,7 @@ from typing import Any
 
 import streamlit as st
 
-from app.annual_pack_tab import render as render_annual_pack
+from app.views.annual_pack import render as render_annual_pack
 from app.flash import flash, show_flash
 from app.year_picker import year_choices
 from src.config import reload_config

@@ -13,19 +13,19 @@ ROOT = Path(__file__).parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import src.database as database  # noqa: E402
+import src.database.connection as db_connection  # noqa: E402
 from src.database import get_invoice_by_filename, init_db, upsert_invoice  # noqa: E402
 
 
 def _render_ledger() -> None:
     """AppTest script body (runs in-process, so the fixture's DB-path patch applies)."""
-    from app import invoice_ledger
+    from app.views import invoice_ledger
 
     invoice_ledger.render()
 
 
 def _use_db(monkeypatch, path: Path) -> None:
-    monkeypatch.setattr(database, "_DB_PATH", path)
+    monkeypatch.setattr(db_connection, "_DB_PATH", path)
 
 
 @pytest.fixture

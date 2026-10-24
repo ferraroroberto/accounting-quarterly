@@ -9,7 +9,7 @@ CLI::
     python -m src.annual_pack --year 2026 --out tmp/annual_2026
     python -m src.annual_pack --year 2025 --db path/to/copy.db
 
-No Streamlit here: the UI lives in ``app/annual_pack_tab.py``.
+No Streamlit here: the UI lives in ``app/views/annual_pack.py``.
 """
 from __future__ import annotations
 

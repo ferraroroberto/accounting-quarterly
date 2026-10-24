@@ -11,13 +11,13 @@ from streamlit.testing.v1 import AppTest
 
 
 def _configuration_page() -> None:
-    from app import configuration
+    from app.views import configuration
 
     configuration.render()
 
 
 def test_save_tax_settings_keeps_undisplayed_tax_keys(monkeypatch, sample_rules):
-    import app.configuration as tab
+    import app.views.configuration as tab
 
     prorrata = {"provisional_pct": 80, "definitive_pct_by_year": {"2025": 75}}
     cfg = {

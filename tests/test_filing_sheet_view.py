@@ -1,4 +1,4 @@
-"""AppTest coverage for the Filing Sheet tab (app/filing_sheet_tab.py).
+"""AppTest coverage for the Filing Sheet tab (app/views/filing_sheet.py).
 
 The data-access functions are replaced so no test touches a real DB.
 """
@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 
 
 def _render_sheet() -> None:
-    from app import filing_sheet_tab
+    from app.views import filing_sheet
     from src.filing_sheet import FilingSheet, ModelSheet, SheetBox, filing_deadline
 
     def _sheet(year: int, quarter: int) -> FilingSheet:
@@ -43,9 +43,9 @@ def _render_sheet() -> None:
         calls.append((year, quarter, model, justificante, presented_on))
         return 2
 
-    filing_sheet_tab._load_sheet = _sheet
-    filing_sheet_tab._mark_filed = _mark
-    filing_sheet_tab.render()
+    filing_sheet._load_sheet = _sheet
+    filing_sheet._mark_filed = _mark
+    filing_sheet.render()
 
 
 def test_tab_renders_boxes_as_copyable_values():

@@ -16,7 +16,11 @@
                          beyond .structure-ratchet-baseline.json, or a root folder
                          outside the declared shape, fails. Whole tree, never
                          routed; exit 3 (not confirmed) fails, never a pass.
-      4. pytest        - the unit suite
+      4. instruction ratchet - a rule hit in CLAUDE.md, AGENTS.md, .claude/rules or
+                         a SKILL.md (or a file passing its size cap) beyond
+                         .instruction-ratchet-baseline.json fails. Whole tree,
+                         never routed; exit 3 (not confirmed) fails, never a pass.
+      5. pytest        - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -58,6 +62,9 @@ Invoke-Stage "docs ratchet"  { & $py -m scripts.docs_ratchet_gate }
 # Invoke-Stage fails on any non-zero exit, so the script's exit 3 (git unusable, an
 # unparseable file, an unknown shape: nothing was checked) is a failure, not a pass.
 Invoke-Stage "structure ratchet" { & $py "scripts/structure_ratchet.py" }
+# Not path-routed: the reader of one file depends on another (AGENTS.md), and a skill's
+# reference docs live outside its folder. Exit 3 fails here the same way.
+Invoke-Stage "instruction ratchet" { & $py "scripts/instruction_ratchet.py" }
 Invoke-Stage "pytest"        { & $py -m pytest }
 
 Write-Host ""

@@ -66,6 +66,8 @@ The docs ratchet keeps `README.md` under 40 KiB and fails on a new history marke
 
 The structure ratchet fails when a new file passes 1,000 lines, a new function 100 lines or a directory 40 modules, when `src/` imports `app/`, when a baselined offender grows past its size in `.structure-ratchet-baseline.json`, or when a root folder falls outside the declared shape. Split the offender rather than raising its baseline; exit 3 also fails as not confirmed.
 
+The instruction ratchet lints the instruction files (`CLAUDE.md`, `AGENTS.md`, `.claude/rules/`, every `SKILL.md` and the docs a skill links to) with the fleet's prompt-audit rules and fails when a rule's hit count rises above `.instruction-ratchet-baseline.json` or a file passes its size cap. Reword the offending line rather than raising the baseline; exit 3 also fails as not confirmed.
+
 ---
 
 ## Data Flow

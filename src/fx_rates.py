@@ -821,13 +821,3 @@ def get_exchange_differences(
         return [dict(r) for r in rows]
     finally:
         conn.close()
-
-
-def delete_exchange_difference(diff_id: int, db_path: Optional[str | Path] = None) -> None:
-    """Delete one recorded exchange difference (data-entry correction)."""
-    conn = get_connection(db_path)
-    try:
-        conn.execute("DELETE FROM fx_exchange_differences WHERE id = ?", (diff_id,))
-        conn.commit()
-    finally:
-        conn.close()

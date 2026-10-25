@@ -59,13 +59,14 @@ baseline = ".instruction-ratchet-baseline.json"
 # (scripts/verify-before-ship.ps1) runs scripts/doc_refs_ratchet.py, which fails when
 # README.md, CLAUDE.md or docs/**/*.md names a repo path, `python -m` module, relative
 # link or loopback port that does not exist, beyond .doc-refs-ratchet-baseline.json.
-# allow_refs lists the local-llm-hub port the docs name on purpose. Exit 3 (git
-# unusable, an unreadable file) is NOT CONFIRMED; the gate stage fails on any non-zero
-# exit. Procedure: project-scaffolding docs/doc-refs-ratchet.md.
+# allow_refs lists what the docs name on purpose: the local-llm-hub port, and
+# data/backups, which `close_quarter.py relink --apply` creates beside the database at
+# run time. Exit 3 (git unusable, an unreadable file) is NOT CONFIRMED; the gate stage
+# fails on any non-zero exit. Procedure: project-scaffolding docs/doc-refs-ratchet.md.
 [doc_refs_ratchet]
 enabled    = true
 baseline   = ".doc-refs-ratchet-baseline.json"
-allow_refs = [":8000"]
+allow_refs = [":8000", "data/backups"]
 
 # [dead_code_ratchet] -- the scaffold's unreferenced-definition ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/dead_code_ratchet.py, which fails when a

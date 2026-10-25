@@ -107,6 +107,97 @@ def get_uploaded_files(direction: str,
 # invoices table helpers
 # ---------------------------------------------------------------------------
 
+def _invoice_row_values(data: dict, record_id: str, filename: str, direction: str) -> dict:
+    """Column values for an invoices row, with the derived geo / VAT / tax-treatment fields filled in."""
+    iva_amount = data.get("iva_amount")
+    vendor_nif = data.get("vendor_nif")
+    client_nif = data.get("client_nif")
+    # Auto-derive geo_region from NIF if not explicitly provided
+    nif_for_geo = vendor_nif if direction == "in" else client_nif
+    geo_region = data.get("geo_region") or derive_geo_region_from_nif(nif_for_geo)
+    tax_treatment = data.get("tax_treatment")
+    if tax_treatment:
+        vat_treatment = (data.get("vat_treatment")
+                         or legacy_vat_treatment_for(tax_treatment)
+                         or derive_vat_treatment_for_invoice(direction, geo_region, iva_amount))
+    else:
+        vat_treatment = data.get("vat_treatment") or derive_vat_treatment_for_invoice(
+            direction, geo_region, iva_amount
+        )
+        tax_treatment = derive_tax_treatment_for_invoice(
+            direction, vat_treatment, geo_region, iva_amount
+        )
+    # activity_type is an IAE activity only (COACHING | NEWSLETTER | ILLUSTRATIONS), set by
+    # the vendor registry or the ledger. The OCR expense `category` lives in its own column.
+    activity_type = data.get("activity_type")
+    # The split VAT/IRPF percentages default to the OCR's single deductible_pct.
+    ded_pct = data.get("deductible_pct", 100)
+    ded_default = 100.0 if ded_pct is None else ded_pct
+    ded_vat = data.get("deductible_pct_vat")
+    ded_irpf = data.get("deductible_pct_irpf")
+
+    values: dict = {
+        "id": record_id,
+        "filename": filename,
+        "direction": direction,
+        "invoice_number": data.get("invoice_number"),
+        "invoice_date": data.get("invoice_date"),
+        "vendor_name": data.get("vendor_name"),
+        "vendor_nif": vendor_nif,
+        "vendor_address": data.get("vendor_address"),
+        "client_name": data.get("client_name"),
+        "client_nif": client_nif,
+        "client_address": data.get("client_address"),
+        "description": data.get("description"),
+        "subtotal_eur": data.get("subtotal_eur"),
+        "iva_rate": data.get("iva_rate"),
+        "iva_amount": iva_amount,
+        "irpf_rate": data.get("irpf_rate"),
+        "irpf_amount": data.get("irpf_amount"),
+        "total_eur": data.get("total_eur"),
+        "currency": data.get("currency", "EUR"),
+        "original_currency": data.get("original_currency"),
+        "original_amount": data.get("original_amount"),
+        "fx_rate": data.get("fx_rate"),
+        "payment_method": data.get("payment_method"),
+        "category": data.get("category"),
+        "notes": data.get("notes"),
+        "raw_json": data.get("raw_json"),
+        "file_hash": data.get("file_hash"),
+        "invoice_type": data.get("invoice_type"),
+        "supply_date": data.get("supply_date"),
+        "due_date": data.get("due_date"),
+        "is_rectificativa": data.get("is_rectificativa", 0),
+        "rectified_invoice_ref": data.get("rectified_invoice_ref"),
+        "vat_exempt_reason": data.get("vat_exempt_reason"),
+        "iva_breakdown": data.get("iva_breakdown"),
+        "deductible_pct": ded_pct,
+        "billing_period_start": data.get("billing_period_start"),
+        "billing_period_end": data.get("billing_period_end"),
+        "geo_region": geo_region,
+        "vat_treatment": vat_treatment,
+        "activity_type": activity_type,
+        "supply_country": data.get("supply_country"),
+        "tax_treatment": tax_treatment,
+        "deductible_pct_vat": ded_default if ded_vat is None else ded_vat,
+        "deductible_pct_irpf": ded_default if ded_irpf is None else ded_irpf,
+        "vendor_vat_id_norm": normalize_vat_id(vendor_nif),
+        "is_capital_asset": 1 if data.get("is_capital_asset") else 0,
+        "asset_class": data.get("asset_class"),
+        "excluded": 1 if data.get("excluded") else 0,
+        "excluded_reason": data.get("excluded_reason"),
+        "eur_received": data.get("eur_received"),
+        "payment_date": data.get("payment_date"),
+        "charged_eur": data.get("charged_eur"),
+        "fx_rate_used": data.get("fx_rate_used"),
+        "fx_rate_date": data.get("fx_rate_date"),
+        "fx_source": data.get("fx_source"),
+        "fx_stale": 1 if data.get("fx_stale") else 0,
+        "fx_cross_check_diff_pct": data.get("fx_cross_check_diff_pct"),
+    }
+    return values
+
+
 def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
     """Insert or update a parsed invoice record keyed on (filename, direction). Returns its id.
 
@@ -143,92 +234,7 @@ def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
         else:
             record_id = data.get("id") or str(uuid.uuid4())
 
-        iva_amount = data.get("iva_amount")
-        vendor_nif = data.get("vendor_nif")
-        client_nif = data.get("client_nif")
-        # Auto-derive geo_region from NIF if not explicitly provided
-        nif_for_geo = vendor_nif if direction == "in" else client_nif
-        geo_region = data.get("geo_region") or derive_geo_region_from_nif(nif_for_geo)
-        tax_treatment = data.get("tax_treatment")
-        if tax_treatment:
-            vat_treatment = (data.get("vat_treatment")
-                             or legacy_vat_treatment_for(tax_treatment)
-                             or derive_vat_treatment_for_invoice(direction, geo_region, iva_amount))
-        else:
-            vat_treatment = data.get("vat_treatment") or derive_vat_treatment_for_invoice(
-                direction, geo_region, iva_amount
-            )
-            tax_treatment = derive_tax_treatment_for_invoice(
-                direction, vat_treatment, geo_region, iva_amount
-            )
-        # activity_type is an IAE activity only (COACHING | NEWSLETTER | ILLUSTRATIONS), set by
-        # the vendor registry or the ledger. The OCR expense `category` lives in its own column.
-        activity_type = data.get("activity_type")
-        # The split VAT/IRPF percentages default to the OCR's single deductible_pct.
-        ded_pct = data.get("deductible_pct", 100)
-        ded_default = 100.0 if ded_pct is None else ded_pct
-        ded_vat = data.get("deductible_pct_vat")
-        ded_irpf = data.get("deductible_pct_irpf")
-
-        values: dict = {
-            "id": record_id,
-            "filename": filename,
-            "direction": direction,
-            "invoice_number": data.get("invoice_number"),
-            "invoice_date": data.get("invoice_date"),
-            "vendor_name": data.get("vendor_name"),
-            "vendor_nif": vendor_nif,
-            "vendor_address": data.get("vendor_address"),
-            "client_name": data.get("client_name"),
-            "client_nif": client_nif,
-            "client_address": data.get("client_address"),
-            "description": data.get("description"),
-            "subtotal_eur": data.get("subtotal_eur"),
-            "iva_rate": data.get("iva_rate"),
-            "iva_amount": iva_amount,
-            "irpf_rate": data.get("irpf_rate"),
-            "irpf_amount": data.get("irpf_amount"),
-            "total_eur": data.get("total_eur"),
-            "currency": data.get("currency", "EUR"),
-            "original_currency": data.get("original_currency"),
-            "original_amount": data.get("original_amount"),
-            "fx_rate": data.get("fx_rate"),
-            "payment_method": data.get("payment_method"),
-            "category": data.get("category"),
-            "notes": data.get("notes"),
-            "raw_json": data.get("raw_json"),
-            "file_hash": data.get("file_hash"),
-            "invoice_type": data.get("invoice_type"),
-            "supply_date": data.get("supply_date"),
-            "due_date": data.get("due_date"),
-            "is_rectificativa": data.get("is_rectificativa", 0),
-            "rectified_invoice_ref": data.get("rectified_invoice_ref"),
-            "vat_exempt_reason": data.get("vat_exempt_reason"),
-            "iva_breakdown": data.get("iva_breakdown"),
-            "deductible_pct": ded_pct,
-            "billing_period_start": data.get("billing_period_start"),
-            "billing_period_end": data.get("billing_period_end"),
-            "geo_region": geo_region,
-            "vat_treatment": vat_treatment,
-            "activity_type": activity_type,
-            "supply_country": data.get("supply_country"),
-            "tax_treatment": tax_treatment,
-            "deductible_pct_vat": ded_default if ded_vat is None else ded_vat,
-            "deductible_pct_irpf": ded_default if ded_irpf is None else ded_irpf,
-            "vendor_vat_id_norm": normalize_vat_id(vendor_nif),
-            "is_capital_asset": 1 if data.get("is_capital_asset") else 0,
-            "asset_class": data.get("asset_class"),
-            "excluded": 1 if data.get("excluded") else 0,
-            "excluded_reason": data.get("excluded_reason"),
-            "eur_received": data.get("eur_received"),
-            "payment_date": data.get("payment_date"),
-            "charged_eur": data.get("charged_eur"),
-            "fx_rate_used": data.get("fx_rate_used"),
-            "fx_rate_date": data.get("fx_rate_date"),
-            "fx_source": data.get("fx_source"),
-            "fx_stale": 1 if data.get("fx_stale") else 0,
-            "fx_cross_check_diff_pct": data.get("fx_cross_check_diff_pct"),
-        }
+        values = _invoice_row_values(data, record_id, filename, direction)
         update_cols = [
             c for c in values
             if c not in ("id", "filename", "direction")

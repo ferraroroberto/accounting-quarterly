@@ -34,7 +34,7 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from src.fixed_assets import capital_asset_invoice_ids, depreciation_for_period
 from src.logger import get_logger
@@ -138,48 +138,39 @@ def _norm_activity(value: Any) -> Optional[str]:
     return v if v in ACTIVITIES else None
 
 
-def compute_pl_by_activity(
-    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None, registry=None,
-) -> PLByActivity:
-    """P&L of ``year`` per IAE activity, tied to the Q4 Modelo 130 (see module doc)."""
-    if config is None:
-        config = load_app_config()
-    if registry is None:
-        from src.vendor_registry import load_registry
-        registry = load_registry()
-    rules, notes = allocation_rules(config)
-    meta = _invoice_meta(db_conn, year)
-    lines: list[dict] = []
+def _add_income_lines(year: int, db_conn: sqlite3.Connection, config: Optional[dict],
+                      meta: dict, add: Callable[..., None]) -> list[dict]:
+    """Income lines (130 box 01): Stripe, issued invoices and exchange differences.
 
-    def _line(kind: str, source: str, amount: float, activity: Optional[str], rule_key: str,
-              **extra: Any) -> None:
-        lines.append({"kind": kind, "source": source, "amount_eur": amount, "activity": activity,
-                      "rule": None if activity else rule_key, **extra})
-
-    # --- Income (130 box 01) ----------------------------------------------------
+    Returns the Stripe rows, which the expense lines reuse for the platform fees.
+    """
     stripe_rows = load_classified_ytd(year, 4, db_conn, config)
     for r in stripe_rows:
-        _line("income", "stripe", get_vat_base(r, config), _norm_activity(r.get("activity_type")), "unallocated",
-              id=r["id"], date=str(r.get("created_date", ""))[:10])
+        add("income", "stripe", get_vat_base(r, config), _norm_activity(r.get("activity_type")), "unallocated",
+            id=r["id"], date=str(r.get("created_date", ""))[:10])
     for inv in load_income_invoices_ytd(year, 4, db_conn, config):
         m = meta.get(inv["id"], {})
         act = _norm_activity(m.get("activity_type"))
         if act is None and (inv.get("tax_treatment") or m.get("tax_treatment")) == "EXEMPT_TEACHING":
             act = "COACHING"
-        _line("income", "invoice_out", income_invoice_eur(inv), act, "unallocated",
-              id=inv["id"], date=str(inv.get("tx_date", ""))[:10],
-              description=str(inv.get("client_name") or inv.get("description") or "")[:50])
+        add("income", "invoice_out", income_invoice_eur(inv), act, "unallocated",
+            id=inv["id"], date=str(inv.get("tx_date", ""))[:10],
+            description=str(inv.get("client_name") or inv.get("description") or "")[:50])
     for r in db_conn.execute(
         """SELECT id, invoice_id, conversion_date, gain_loss_eur FROM fx_exchange_differences
            WHERE conversion_date >= ? AND conversion_date <= ? ORDER BY conversion_date""",
         (f"{year}-01-01", f"{year}-12-31"),
     ).fetchall():
         linked = meta.get(r["invoice_id"]) if r["invoice_id"] else None
-        _line("income", "fx_exchange_difference", float(r["gain_loss_eur"]),
-              _norm_activity(linked.get("activity_type")) if linked else None, "unallocated",
-              id=r["id"], date=r["conversion_date"], invoice_id=r["invoice_id"])
+        add("income", "fx_exchange_difference", float(r["gain_loss_eur"]),
+            _norm_activity(linked.get("activity_type")) if linked else None, "unallocated",
+            id=r["id"], date=r["conversion_date"], invoice_id=r["invoice_id"])
+    return stripe_rows
 
-    # --- Expenses (real expenses of 130 box 02) -------------------------------------
+
+def _add_expense_lines(year: int, db_conn: sqlite3.Connection, config: Optional[dict], meta: dict,
+                       registry, stripe_rows: list[dict], add: Callable[..., None]) -> None:
+    """Expense lines (the real expenses of 130 box 02)."""
     capital_ids = capital_asset_invoice_ids(db_conn)
     for inv in load_expense_invoices_ytd(year, 4, db_conn, config):
         if inv["id"] in capital_ids:
@@ -190,29 +181,31 @@ def compute_pl_by_activity(
             match = registry.match_invoice(m or inv)
             act = _norm_activity(match.vendor.activity) if match else None
         amount = irpf_expense(inv).total_eur    # base + non-deducted VAT, as in the 130
-        _line("expense", "invoice_in", amount, act, "unallocated", id=inv["id"],
-              date=str(inv.get("tx_date", ""))[:10],
-              description=str(inv.get("vendor_name") or inv.get("description") or "")[:50])
+        add("expense", "invoice_in", amount, act, "unallocated", id=inv["id"],
+            date=str(inv.get("tx_date", ""))[:10],
+            description=str(inv.get("vendor_name") or inv.get("description") or "")[:50])
     for r in db_conn.execute(
         """SELECT id, payment_date, amount_eur FROM social_security_payments
            WHERE payment_date >= ? AND payment_date <= ? ORDER BY payment_date""",
         (f"{year}-01-01", f"{year}-12-31"),
     ).fetchall():
-        _line("expense", "reta", float(r["amount_eur"]), None, "reta", id=r["id"], date=r["payment_date"])
+        add("expense", "reta", float(r["amount_eur"]), None, "reta", id=r["id"], date=r["payment_date"])
     for r in stripe_rows:
         if r.get("fee_application"):
-            _line("expense", "platform_fee", float(r["fee_application"]), _norm_activity(r.get("activity_type")),
-                  "unallocated", id=r["id"], date=str(r.get("created_date", ""))[:10])
+            add("expense", "platform_fee", float(r["fee_application"]), _norm_activity(r.get("activity_type")),
+                "unallocated", id=r["id"], date=str(r.get("created_date", ""))[:10])
     dep = depreciation_for_period(year, 4, db_conn, ytd=True, config=config)
     for d in dep.lines:
         if d.charge_eur:
-            _line("expense", "depreciation", d.charge_eur, None, "depreciation", id=d.asset_id,
-                  description=d.description[:50])
+            add("expense", "depreciation", d.charge_eur, None, "depreciation", id=d.asset_id,
+                description=d.description[:50])
     manual = get_tax_entries_total(year, 4, "GASTOS_DEDUCIBLES", db_conn, ytd=True)
     if manual:
-        _line("expense", "manual_entry", manual, None, "unallocated", description="GASTOS_DEDUCIBLES")
+        add("expense", "manual_entry", manual, None, "unallocated", description="GASTOS_DEDUCIBLES")
 
-    # --- Allocation ---------------------------------------------------------------
+
+def _allocate_lines(lines: list[dict], rules: dict) -> tuple[list[dict], dict[str, ActivityPL]]:
+    """Allocate unattributed lines to activities by the configured rules; sum per activity."""
     direct_income: dict[str, float] = defaultdict(float)
     for ln in lines:
         if ln["kind"] == "income" and ln["activity"]:
@@ -246,6 +239,32 @@ def compute_pl_by_activity(
         sums[(ln["activity"], col)] += ln["amount_eur"]
     for (act, col), v in sums.items():
         setattr(by_act[act], col, round(v, 2))
+    return allocated, by_act
+
+
+def compute_pl_by_activity(
+    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None, registry=None,
+) -> PLByActivity:
+    """P&L of ``year`` per IAE activity, tied to the Q4 Modelo 130 (see module doc)."""
+    if config is None:
+        config = load_app_config()
+    if registry is None:
+        from src.vendor_registry import load_registry
+        registry = load_registry()
+    rules, notes = allocation_rules(config)
+    meta = _invoice_meta(db_conn, year)
+    lines: list[dict] = []
+
+    def _line(kind: str, source: str, amount: float, activity: Optional[str], rule_key: str,
+              **extra: Any) -> None:
+        lines.append({"kind": kind, "source": source, "amount_eur": amount, "activity": activity,
+                      "rule": None if activity else rule_key, **extra})
+
+    stripe_rows = _add_income_lines(year, db_conn, config, meta, _line)
+
+    _add_expense_lines(year, db_conn, config, meta, registry, stripe_rows, _line)
+
+    allocated, by_act = _allocate_lines(lines, rules)
 
     for kind in ("income", "expense"):
         unallocated = [ln for ln in lines if not ln["activity"] and ln["rule"] == "unallocated" and ln["kind"] == kind]

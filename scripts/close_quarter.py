@@ -427,22 +427,11 @@ def cmd_fx_recompute(args: argparse.Namespace) -> int:
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    default_year, default_quarter = previous_quarter()
+_AddStep = Callable[[str, Callable[[argparse.Namespace], int], str], argparse.ArgumentParser]
 
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = parser.add_subparsers(dest="command", required=True)
 
-    def add_yq(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--year", type=int, default=default_year)
-        p.add_argument("--quarter", type=int, default=default_quarter, choices=[1, 2, 3, 4])
-
-    def add_step(name: str, func: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
-        p = sub.add_parser(name, help=help_text)
-        add_yq(p)
-        p.set_defaults(func=func)
-        return p
-
+def _add_quarter_steps(add_step: _AddStep) -> None:
+    """Register the numbered quarter-close steps and `all`."""
     add_step("sweep", cmd_sweep, "1. Copy new invoice PDFs into the quarter's tmp folder")
 
     p_ocr = add_step("ocr", cmd_ocr, "2. Extract new/changed invoice PDFs (OCR + FX + vendor registry)")
@@ -484,6 +473,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--reta-file", default=None, help="Bank export for the reta step (skipped if absent)")
     p_all.add_argument("--model", default=None, help="Hub model for the ocr step (overrides LLM_HUB_MODEL)")
 
+
+def _add_maintenance_commands(sub, add_step: _AddStep) -> None:
+    """Register the Stripe, override, reclassify, report, archive, relink and FX commands."""
     p_check = sub.add_parser("stripe-check", help="Read-only Stripe API smoke test")
     p_check.add_argument("--days", type=int, default=90)
     p_check.set_defaults(func=cmd_stripe_check)
@@ -549,6 +541,26 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Report changes without writing")
     p_fx_recompute.add_argument("--since", default=None, help="Only invoices dated on/after this ISO date")
     p_fx_recompute.set_defaults(func=cmd_fx_recompute)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    default_year, default_quarter = previous_quarter()
+
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add_yq(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--year", type=int, default=default_year)
+        p.add_argument("--quarter", type=int, default=default_quarter, choices=[1, 2, 3, 4])
+
+    def add_step(name: str, func: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
+        p = sub.add_parser(name, help=help_text)
+        add_yq(p)
+        p.set_defaults(func=func)
+        return p
+
+    _add_quarter_steps(add_step)
+    _add_maintenance_commands(sub, add_step)
     return parser
 
 

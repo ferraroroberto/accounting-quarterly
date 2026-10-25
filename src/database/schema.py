@@ -328,145 +328,148 @@ def _ensure_tax_snapshots_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+_BASE_SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        created_date TEXT NOT NULL,
+        converted_amount REAL NOT NULL,
+        converted_amount_refunded REAL NOT NULL DEFAULT 0,
+        description TEXT NOT NULL DEFAULT '',
+        fee REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'eur',
+        payment_type_meta TEXT,
+        event_api_id_meta TEXT,
+        email_meta TEXT,
+        card_country TEXT,
+        amount_original REAL,
+        fx_rate REAL,
+        activity_type TEXT,
+        geo_region TEXT,
+        classification_rule TEXT,
+        geo_rule TEXT,
+        source TEXT NOT NULL DEFAULT 'api',
+        loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_transactions_created
+        ON transactions(created_date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_activity
+        ON transactions(activity_type);
+    CREATE INDEX IF NOT EXISTS idx_transactions_geo
+        ON transactions(geo_region);
+
+    CREATE TABLE IF NOT EXISTS upload_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        api_response TEXT,
+        UNIQUE(filename, direction)
+    );
+
+    CREATE TABLE IF NOT EXISTS invoices (
+        id TEXT PRIMARY KEY,
+        filename TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+        invoice_number TEXT,
+        invoice_date TEXT,
+        vendor_name TEXT,
+        vendor_nif TEXT,
+        vendor_address TEXT,
+        client_name TEXT,
+        client_nif TEXT,
+        client_address TEXT,
+        description TEXT,
+        subtotal_eur REAL,
+        iva_rate REAL,
+        iva_amount REAL,
+        irpf_rate REAL,
+        irpf_amount REAL,
+        total_eur REAL,
+        currency TEXT DEFAULT 'EUR',
+        original_currency TEXT,
+        original_amount REAL,
+        fx_rate REAL,
+        payment_method TEXT,
+        category TEXT,
+        notes TEXT,
+        raw_json TEXT,
+        file_hash TEXT,
+        extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(filename, direction)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_invoices_direction
+        ON invoices(direction);
+    CREATE INDEX IF NOT EXISTS idx_invoices_date
+        ON invoices(invoice_date);
+
+    CREATE TABLE IF NOT EXISTS quarterly_tax_entries (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        year        INTEGER NOT NULL,
+        quarter     INTEGER NOT NULL,
+        entry_type  TEXT NOT NULL,
+        amount_eur  REAL NOT NULL DEFAULT 0,
+        description TEXT,
+        notes       TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tax_entries_period
+        ON quarterly_tax_entries(year, quarter);
+
+    CREATE TABLE IF NOT EXISTS tax_filing_status (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        year        INTEGER NOT NULL,
+        quarter     INTEGER,
+        model       TEXT NOT NULL,
+        status      TEXT NOT NULL DEFAULT 'PENDING',
+        filed_at    TEXT,
+        amount_eur  REAL,
+        notes       TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_status_key
+        ON tax_filing_status(year, model, COALESCE(quarter, -1));
+
+    CREATE TABLE IF NOT EXISTS social_security_payments (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        payment_date TEXT NOT NULL,
+        amount_eur   REAL NOT NULL,
+        description  TEXT NOT NULL DEFAULT '',
+        source_file  TEXT NOT NULL DEFAULT '',
+        imported_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ss_payments_date
+        ON social_security_payments(payment_date);
+
+    CREATE TABLE IF NOT EXISTS fx_exchange_differences (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id      TEXT,
+        conversion_date TEXT NOT NULL,
+        currency        TEXT NOT NULL,
+        foreign_amount  REAL NOT NULL,
+        eur_obtained    REAL NOT NULL,
+        booked_eur      REAL NOT NULL,
+        gain_loss_eur   REAL NOT NULL,
+        notes           TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fx_exchange_diff_date
+        ON fx_exchange_differences(conversion_date);
+"""
+
+
 def init_db(db_path: Optional[str | Path] = None) -> None:
     """Create tables if they don't exist."""
     conn = get_connection(db_path)
     try:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id TEXT PRIMARY KEY,
-                created_date TEXT NOT NULL,
-                converted_amount REAL NOT NULL,
-                converted_amount_refunded REAL NOT NULL DEFAULT 0,
-                description TEXT NOT NULL DEFAULT '',
-                fee REAL NOT NULL DEFAULT 0,
-                currency TEXT NOT NULL DEFAULT 'eur',
-                payment_type_meta TEXT,
-                event_api_id_meta TEXT,
-                email_meta TEXT,
-                card_country TEXT,
-                amount_original REAL,
-                fx_rate REAL,
-                activity_type TEXT,
-                geo_region TEXT,
-                classification_rule TEXT,
-                geo_rule TEXT,
-                source TEXT NOT NULL DEFAULT 'api',
-                loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_transactions_created
-                ON transactions(created_date);
-            CREATE INDEX IF NOT EXISTS idx_transactions_activity
-                ON transactions(activity_type);
-            CREATE INDEX IF NOT EXISTS idx_transactions_geo
-                ON transactions(geo_region);
-
-            CREATE TABLE IF NOT EXISTS upload_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT NOT NULL,
-                direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
-                uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-                api_response TEXT,
-                UNIQUE(filename, direction)
-            );
-
-            CREATE TABLE IF NOT EXISTS invoices (
-                id TEXT PRIMARY KEY,
-                filename TEXT NOT NULL,
-                direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
-                invoice_number TEXT,
-                invoice_date TEXT,
-                vendor_name TEXT,
-                vendor_nif TEXT,
-                vendor_address TEXT,
-                client_name TEXT,
-                client_nif TEXT,
-                client_address TEXT,
-                description TEXT,
-                subtotal_eur REAL,
-                iva_rate REAL,
-                iva_amount REAL,
-                irpf_rate REAL,
-                irpf_amount REAL,
-                total_eur REAL,
-                currency TEXT DEFAULT 'EUR',
-                original_currency TEXT,
-                original_amount REAL,
-                fx_rate REAL,
-                payment_method TEXT,
-                category TEXT,
-                notes TEXT,
-                raw_json TEXT,
-                file_hash TEXT,
-                extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
-                UNIQUE(filename, direction)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_invoices_direction
-                ON invoices(direction);
-            CREATE INDEX IF NOT EXISTS idx_invoices_date
-                ON invoices(invoice_date);
-
-            CREATE TABLE IF NOT EXISTS quarterly_tax_entries (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                year        INTEGER NOT NULL,
-                quarter     INTEGER NOT NULL,
-                entry_type  TEXT NOT NULL,
-                amount_eur  REAL NOT NULL DEFAULT 0,
-                description TEXT,
-                notes       TEXT,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_tax_entries_period
-                ON quarterly_tax_entries(year, quarter);
-
-            CREATE TABLE IF NOT EXISTS tax_filing_status (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                year        INTEGER NOT NULL,
-                quarter     INTEGER,
-                model       TEXT NOT NULL,
-                status      TEXT NOT NULL DEFAULT 'PENDING',
-                filed_at    TEXT,
-                amount_eur  REAL,
-                notes       TEXT,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_filing_status_key
-                ON tax_filing_status(year, model, COALESCE(quarter, -1));
-
-            CREATE TABLE IF NOT EXISTS social_security_payments (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                payment_date TEXT NOT NULL,
-                amount_eur   REAL NOT NULL,
-                description  TEXT NOT NULL DEFAULT '',
-                source_file  TEXT NOT NULL DEFAULT '',
-                imported_at  TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_ss_payments_date
-                ON social_security_payments(payment_date);
-
-            CREATE TABLE IF NOT EXISTS fx_exchange_differences (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                invoice_id      TEXT,
-                conversion_date TEXT NOT NULL,
-                currency        TEXT NOT NULL,
-                foreign_amount  REAL NOT NULL,
-                eur_obtained    REAL NOT NULL,
-                booked_eur      REAL NOT NULL,
-                gain_loss_eur   REAL NOT NULL,
-                notes           TEXT,
-                created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_fx_exchange_diff_date
-                ON fx_exchange_differences(conversion_date);
-        """)
+        conn.executescript(_BASE_SCHEMA_SQL)
         _create_fx_rates_table(conn)
         _ensure_transactions_schema(conn)
         _ensure_invoices_schema(conn)

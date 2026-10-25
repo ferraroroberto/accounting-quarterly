@@ -439,6 +439,61 @@ class InvoiceFxResolution:
     fx_warning: Optional[str]
 
 
+def _unconverted_resolution(
+    data: dict, fx_source: str, *, fx_stale: bool, warning: Optional[str],
+) -> InvoiceFxResolution:
+    """The LLM's own EUR figures, passed through unconverted under `fx_source`."""
+    return InvoiceFxResolution(
+        subtotal_eur=data.get("subtotal_eur"), iva_amount=data.get("iva_amount"),
+        total_eur=data.get("total_eur"),
+        fx_rate_used=None, fx_rate_date=None, fx_source=fx_source,
+        fx_stale=fx_stale, fx_cross_check_diff_pct=None, fx_warning=warning,
+    )
+
+
+def _rescale_to_resolved_total(
+    data: dict,
+    total_new: float,
+    fx_rate_used: Optional[float],
+    rate_date_str: Optional[str],
+    fx_source: str,
+    fx_stale: bool,
+) -> InvoiceFxResolution:
+    """Rescale the LLM's subtotal/IVA onto the resolved total and cross-check the totals."""
+    llm_subtotal = data.get("subtotal_eur")
+    llm_iva = data.get("iva_amount")
+    llm_total = data.get("total_eur")
+
+    # Rescale the LLM's subtotal/IVA split onto the resolved total, preserving
+    # whatever VAT breakdown it gave; a foreign invoice with no VAT breakdown
+    # (the common case — non-EU services) has no basis to invent one, so the
+    # whole resolved amount becomes the base.
+    if llm_total:
+        ratio = total_new / llm_total
+        subtotal_new = round((llm_subtotal or 0.0) * ratio, 2)
+        iva_new = round((llm_iva or 0.0) * ratio, 2)
+    else:
+        subtotal_new = total_new
+        iva_new = 0.0
+
+    diff_pct: Optional[float] = None
+    warning = None
+    if llm_total and total_new:
+        diff_pct = round(abs(llm_total - total_new) / total_new * 100, 2)
+        if diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
+            warning = (
+                f"⚠️ LLM EUR estimate ({llm_total:.2f}) differs from the {fx_source} "
+                f"conversion ({total_new:.2f}) by {diff_pct:.1f}%"
+            )
+            log.warning(warning)
+
+    return InvoiceFxResolution(
+        subtotal_eur=subtotal_new, iva_amount=iva_new, total_eur=total_new,
+        fx_rate_used=fx_rate_used, fx_rate_date=rate_date_str, fx_source=fx_source,
+        fx_stale=fx_stale, fx_cross_check_diff_pct=diff_pct, fx_warning=warning,
+    )
+
+
 def resolve_invoice_amounts(
     direction: str,
     data: dict,
@@ -471,17 +526,10 @@ def resolve_invoice_amounts(
     currency = (data.get("original_currency") or data.get("currency") or "EUR").upper()
     original_amount = data.get("original_amount")
     invoice_date_str = data.get("invoice_date")
-    llm_subtotal = data.get("subtotal_eur")
-    llm_iva = data.get("iva_amount")
-    llm_total = data.get("total_eur")
     charged_eur = data.get("charged_eur")
 
     if currency == "EUR":
-        return InvoiceFxResolution(
-            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
-            fx_rate_used=None, fx_rate_date=None, fx_source="NATIVE_EUR",
-            fx_stale=False, fx_cross_check_diff_pct=None, fx_warning=None,
-        )
+        return _unconverted_resolution(data, "NATIVE_EUR", fx_stale=False, warning=None)
 
     if not original_amount or not invoice_date_str:
         # A foreign-currency invoice with nothing to convert: the LLM's own EUR
@@ -495,22 +543,14 @@ def resolve_invoice_amounts(
             f"the LLM's own EUR estimate is kept unverified"
         )
         log.warning(warning)
-        return InvoiceFxResolution(
-            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
-            fx_rate_used=None, fx_rate_date=None, fx_source="MISSING_FX_INPUT",
-            fx_stale=True, fx_cross_check_diff_pct=None, fx_warning=warning,
-        )
+        return _unconverted_resolution(data, "MISSING_FX_INPUT", fx_stale=True, warning=warning)
 
     try:
         invoice_date = date.fromisoformat(str(invoice_date_str)[:10])
     except ValueError:
         warning = f"⚠️ Could not parse invoice_date {invoice_date_str!r} for FX conversion"
         log.warning(warning)
-        return InvoiceFxResolution(
-            subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
-            fx_rate_used=None, fx_rate_date=None, fx_source="INVALID_DATE",
-            fx_stale=False, fx_cross_check_diff_pct=None, fx_warning=warning,
-        )
+        return _unconverted_resolution(data, "INVALID_DATE", fx_stale=False, warning=warning)
 
     fx_stale = False
     if direction == "in" and charged_eur is not None:
@@ -526,44 +566,15 @@ def resolve_invoice_amounts(
                 f"amount left unconverted; load rates for this period in the Currency tab"
             )
             log.warning(warning)
-            return InvoiceFxResolution(
-                subtotal_eur=llm_subtotal, iva_amount=llm_iva, total_eur=llm_total,
-                fx_rate_used=None, fx_rate_date=None, fx_source="NO_RATE",
-                fx_stale=True, fx_cross_check_diff_pct=None, fx_warning=warning,
-            )
+            return _unconverted_resolution(data, "NO_RATE", fx_stale=True, warning=warning)
         total_new = round(original_amount / info.rate, 2)
         fx_rate_used = info.rate
         fx_source = "ECB"
         fx_stale = info.is_stale
         rate_date_str = info.rate_date.isoformat() if info.rate_date else None
 
-    # Rescale the LLM's subtotal/IVA split onto the resolved total, preserving
-    # whatever VAT breakdown it gave; a foreign invoice with no VAT breakdown
-    # (the common case — non-EU services) has no basis to invent one, so the
-    # whole resolved amount becomes the base.
-    if llm_total:
-        ratio = total_new / llm_total
-        subtotal_new = round((llm_subtotal or 0.0) * ratio, 2)
-        iva_new = round((llm_iva or 0.0) * ratio, 2)
-    else:
-        subtotal_new = total_new
-        iva_new = 0.0
-
-    diff_pct: Optional[float] = None
-    warning = None
-    if llm_total and total_new:
-        diff_pct = round(abs(llm_total - total_new) / total_new * 100, 2)
-        if diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
-            warning = (
-                f"⚠️ LLM EUR estimate ({llm_total:.2f}) differs from the {fx_source} "
-                f"conversion ({total_new:.2f}) by {diff_pct:.1f}%"
-            )
-            log.warning(warning)
-
-    return InvoiceFxResolution(
-        subtotal_eur=subtotal_new, iva_amount=iva_new, total_eur=total_new,
-        fx_rate_used=fx_rate_used, fx_rate_date=rate_date_str, fx_source=fx_source,
-        fx_stale=fx_stale, fx_cross_check_diff_pct=diff_pct, fx_warning=warning,
+    return _rescale_to_resolved_total(
+        data, total_new, fx_rate_used, rate_date_str, fx_source, fx_stale,
     )
 
 
@@ -624,6 +635,59 @@ def _floats_differ(a: Optional[float], b: Optional[float], tol: float = 0.01) ->
     return abs(a - b) > tol
 
 
+def _stored_foreign_invoices(conn: sqlite3.Connection, since: Optional[str]) -> list[sqlite3.Row]:
+    """Stored invoices in a foreign currency, optionally only those dated on/after `since`."""
+    query = (
+        "SELECT id, filename, direction, invoice_date, currency, original_currency, "
+        "original_amount, subtotal_eur, iva_amount, total_eur, charged_eur, "
+        "fx_rate_used, fx_rate_date, fx_source, fx_stale, fx_cross_check_diff_pct, locked_fields "
+        "FROM invoices WHERE original_currency IS NOT NULL AND original_currency != 'EUR'"
+    )
+    params: list = []
+    if since:
+        query += " AND invoice_date >= ?"
+        params.append(since)
+    return conn.execute(query, params).fetchall()
+
+
+def _locked_skipped_row(row: sqlite3.Row) -> InvoiceFxRecomputeRow:
+    """Recompute outcome for a row whose EUR figures a user locked: reported, never rewritten."""
+    return InvoiceFxRecomputeRow(
+        invoice_id=row["id"], filename=row["filename"], direction=row["direction"],
+        currency=row["original_currency"], old_total_eur=row["total_eur"],
+        new_total_eur=row["total_eur"], fx_source=row["fx_source"] or "",
+        fx_stale=bool(row["fx_stale"]), fx_cross_check_diff_pct=row["fx_cross_check_diff_pct"],
+        locked_skipped=True,
+    )
+
+
+def _fx_input_from_row(row: sqlite3.Row) -> dict:
+    """The `resolve_invoice_amounts` input dict for a stored invoice row."""
+    return {
+        "invoice_date": row["invoice_date"],
+        "currency": row["currency"],
+        "original_currency": row["original_currency"],
+        "original_amount": row["original_amount"],
+        "subtotal_eur": row["subtotal_eur"],
+        "iva_amount": row["iva_amount"],
+        "total_eur": row["total_eur"],
+        "charged_eur": row["charged_eur"],
+    }
+
+
+def _write_recomputed_fx(conn: sqlite3.Connection, invoice_id: str, new_values: dict) -> None:
+    """Write the recomputed EUR figures and FX provenance columns for one invoice."""
+    conn.execute(
+        """UPDATE invoices SET
+               subtotal_eur = :subtotal_eur, iva_amount = :iva_amount,
+               total_eur = :total_eur, fx_rate_used = :fx_rate_used,
+               fx_rate_date = :fx_rate_date, fx_source = :fx_source,
+               fx_stale = :fx_stale, fx_cross_check_diff_pct = :fx_cross_check_diff_pct
+           WHERE id = :id""",
+        {**new_values, "fx_stale": 1 if new_values["fx_stale"] else 0, "id": invoice_id},
+    )
+
+
 def recompute_stored_invoice_fx(
     db_path: Optional[str | Path] = None,
     dry_run: bool = True,
@@ -649,17 +713,7 @@ def recompute_stored_invoice_fx(
     """
     conn = get_connection(db_path)
     try:
-        query = (
-            "SELECT id, filename, direction, invoice_date, currency, original_currency, "
-            "original_amount, subtotal_eur, iva_amount, total_eur, charged_eur, "
-            "fx_rate_used, fx_rate_date, fx_source, fx_stale, fx_cross_check_diff_pct, locked_fields "
-            "FROM invoices WHERE original_currency IS NOT NULL AND original_currency != 'EUR'"
-        )
-        params: list = []
-        if since:
-            query += " AND invoice_date >= ?"
-            params.append(since)
-        rows = conn.execute(query, params).fetchall()
+        rows = _stored_foreign_invoices(conn, since)
 
         scanned = 0
         changed = 0
@@ -673,26 +727,10 @@ def recompute_stored_invoice_fx(
             locked = set(parse_locked_fields(row["locked_fields"]))
             if locked & _FX_LOCK_GUARDS:
                 locked_skipped += 1
-                result_rows.append(InvoiceFxRecomputeRow(
-                    invoice_id=row["id"], filename=row["filename"], direction=row["direction"],
-                    currency=row["original_currency"], old_total_eur=row["total_eur"],
-                    new_total_eur=row["total_eur"], fx_source=row["fx_source"] or "",
-                    fx_stale=bool(row["fx_stale"]), fx_cross_check_diff_pct=row["fx_cross_check_diff_pct"],
-                    locked_skipped=True,
-                ))
+                result_rows.append(_locked_skipped_row(row))
                 continue
 
-            data = {
-                "invoice_date": row["invoice_date"],
-                "currency": row["currency"],
-                "original_currency": row["original_currency"],
-                "original_amount": row["original_amount"],
-                "subtotal_eur": row["subtotal_eur"],
-                "iva_amount": row["iva_amount"],
-                "total_eur": row["total_eur"],
-                "charged_eur": row["charged_eur"],
-            }
-            fx = resolve_invoice_amounts(row["direction"], data, db_path)
+            fx = resolve_invoice_amounts(row["direction"], _fx_input_from_row(row), db_path)
 
             if fx.fx_stale:
                 stale += 1
@@ -733,15 +771,7 @@ def recompute_stored_invoice_fx(
                     locked_skipped=False,
                 ))
                 if not dry_run:
-                    conn.execute(
-                        """UPDATE invoices SET
-                               subtotal_eur = :subtotal_eur, iva_amount = :iva_amount,
-                               total_eur = :total_eur, fx_rate_used = :fx_rate_used,
-                               fx_rate_date = :fx_rate_date, fx_source = :fx_source,
-                               fx_stale = :fx_stale, fx_cross_check_diff_pct = :fx_cross_check_diff_pct
-                           WHERE id = :id""",
-                        {**new_values, "fx_stale": 1 if new_values["fx_stale"] else 0, "id": row["id"]},
-                    )
+                    _write_recomputed_fx(conn, row["id"], new_values)
 
         if not dry_run:
             conn.commit()

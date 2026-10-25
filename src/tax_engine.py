@@ -10,11 +10,11 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from src.logger import get_logger
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
-from src.modelo_347 import compute_modelo_347
-from src.modelo_349 import compute_modelo_349
-from src.oss_return import compute_eu_b2c_threshold, compute_oss_return  # noqa: F401  (re-exported)
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
+from src.returns.modelo_347 import compute_modelo_347
+from src.returns.modelo_349 import compute_modelo_349
+from src.returns.oss_return import compute_eu_b2c_threshold, compute_oss_return  # noqa: F401  (re-exported)
 from src.tax_data import load_app_config
 from src.tax_deadlines import calendar_deadline
 from src.tax_models import TaxDeadline

@@ -334,7 +334,7 @@ class TestManualEntry:
 class TestModelo130Integration:
     def test_box_02_includes_ytd_contributions_net_of_refunds(self, tmp_db, synthetic_export):
         from src.database import get_connection
-        from src.modelo_130 import compute_modelo_130
+        from src.returns.modelo_130 import compute_modelo_130
 
         init_db(tmp_db)
         rows = load_bank_export(

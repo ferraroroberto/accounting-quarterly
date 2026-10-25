@@ -32,9 +32,7 @@ def _get_env(name: str) -> Optional[str]:
 
 
 def load_accounting_api_config() -> AccountingAPIConfig:
-    cfg = load_config()
-    api_cfg = cfg.get("accounting_api", {}) or {}
-
+    load_config()  # fails fast on a missing config.json; importing src.config loads .env
     base_url = (_get_env("ACCOUNTING_BASE_URL") or "").rstrip("/")
     if not base_url:
         raise AccountingAPIError("ACCOUNTING_BASE_URL not set in environment / .env file")

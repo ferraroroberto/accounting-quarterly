@@ -14,7 +14,7 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 
 ## Subpackages
 
-`app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `tests/tax/` holds the tax engine's tests, which leaves `tests/` at 36 modules. `src/` holds 45 modules, past the 40-module limit, so it is baselined as `dir:src` and takes no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
+`app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `tests/tax/` holds the tax engine's tests, which leaves `tests/` at 36 modules. `src/returns/` holds the tax-return engines, one module per AEAT model plus the OSS return. `src/close/` holds the quarter-close pipeline's shared types (`context`) and its Stripe report and gestor pack (`gestor_pack`); `src/close_pipeline.py` keeps the steps and `run_all` and re-exports those names. `src/` holds 40 modules, at the 40-module limit, so it takes no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
 
 ## Declared exceptions
 
@@ -25,4 +25,3 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 The `streamlit` shape puts views in `app/views/<name>.py` behind `st.navigation`. This repo differs, and the ratchet does not check it:
 
 - `app/streamlit_app.py` routes the views through `st.tabs` rather than `st.navigation`.
-- `src/close_pipeline.py` still exceeds the file-size limit. It is baselined at today's size in `.structure-ratchet-baseline.json`.

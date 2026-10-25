@@ -25,7 +25,7 @@ flowchart TB
     PAYMENTSLOADER["payments_loader.py\nperiod loading, FX conversion, classification\n(CLI-facing; app/data_loader.py adds @st.cache_data)"]
     SCANNER["invoice_scanner.py\ninvoice folder resolution + recursive PDF scan"]
     RELINK["relink.py\nre-point invoice records after PDFs move or rename\n(move record, then content hash; unmatched/ambiguous reported)"]
-    PIPELINE["close_pipeline.py\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack, archive\n(idempotent, each reports its changes)"]
+    PIPELINE["close_pipeline.py + close/ (context, gestor_pack)\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack, archive\n(idempotent, each reports its changes)"]
     VENDORS["vendor_registry.py\nvendor match (folder, VAT id, name) + tax defaults"]
     ACCCLIENT["accounting_api_client.py"]
     SOCSEC["social_security.py\nbank-export cuota import"]
@@ -38,7 +38,7 @@ flowchart TB
 
   subgraph taxcore["src/ — Spanish tax engine"]
     VATRULES["vat_rules.py\nactivity x geo VAT matrix, base extraction"]
-    MODELS["modelo_303.py · modelo_130.py · modelo_349.py ·\nmodelo_347.py (sales + purchases) · oss_return.py\n303 (AEAT boxes, pro-rata, credit chain), 130 (13 reduction, 15 carry),\n349, 347, OSS return, EU B2C threshold"]
+    MODELS["returns/ modelo_303.py · modelo_130.py · modelo_349.py ·\nmodelo_347.py (sales + purchases) · oss_return.py\n303 (AEAT boxes, pro-rata, credit chain), 130 (13 reduction, 15 carry),\n349, 347, OSS return, EU B2C threshold"]
     TAXENGINE["tax_engine.py\ntax calendar + snapshot persistence,\nre-exports the compute_* functions"]
     TAXMODELS["tax_models.py\nresult dataclasses named after the AEAT boxes\n(aeat_boxes() / operators()), OSS rates"]
     PERIODS["periods.py\nquarter bounds (date / ISO / datetime)"]
@@ -53,7 +53,7 @@ flowchart TB
 filing / direct-debit deadlines, business-day rules,
 shared by the filing sheet and the Obligations calendar"]
     FILINGSHEET["filing_sheet.py\nfiling sheet: AEAT form order, credit chain,\ndeadlines (direct debit / filing), mark filed\n(immutable FILED snapshot versions)"]
-    MODELO390["modelo_390.py\nModelo 390 from the four 303 results\n(per-rate rows, pro-rata, compensation, volume)"]
+    MODELO390["returns/modelo_390.py\nModelo 390 from the four 303 results\n(per-rate rows, pro-rata, compensation, volume)"]
     ANNUALPACK["annual_pack.py + pl_by_activity.py\nannual pack: 347 sales + purchases, P&L per IAE activity (ties to 130 Q4),\nmarkdown/CSV export + CLI"]
   end
 

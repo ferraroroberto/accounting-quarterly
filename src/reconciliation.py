@@ -27,7 +27,7 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 
 **App side** — ``reconcile`` computes the period's engine result and reads its
 ``aeat_boxes()``: the 303 (#97), 130 (#98) and 349 (#99)
-quarterly engines and the Modelo 390 engine (``src/modelo_390.py``, #103),
+quarterly engines and the Modelo 390 engine (``src/returns/modelo_390.py``, #103),
 which is built from the year's four 303 results.
 
 No Streamlit here: the UI lives in ``app/views/tax_validation.py``.
@@ -45,10 +45,10 @@ from typing import Any, Iterable, Optional
 from src.exceptions import StripeAutomationError
 from src.filed_returns import VALIDATOR_KEYS
 from src.logger import get_logger
-from src.modelo_390 import MODELO390_LABELS, compute_modelo_390
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
-from src.modelo_349 import compute_modelo_349
+from src.returns.modelo_390 import MODELO390_LABELS, compute_modelo_390
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
+from src.returns.modelo_349 import compute_modelo_349
 from src.tax_data import load_app_config
 from src.tax_models import BOX_LABELS as _CANONICAL_BOX_LABELS
 from src.tax_validator import find_filing, load_filings
@@ -85,7 +85,7 @@ CATALOGUE_FIELDS = (
 OPERATOR_PREFIX = "op:"
 
 # Canonical table: src/tax_models.BOX_LABELS — shared with the filing
-# sheet and the Tax Obligations tab. 390's labels live in src/modelo_390.py
+# sheet and the Tax Obligations tab. 390's labels live in src/returns/modelo_390.py
 # (that model has no filing-sheet/obligations-tab view to share with).
 BOX_LABELS: dict[str, dict[str, str]] = {
     **_CANONICAL_BOX_LABELS,

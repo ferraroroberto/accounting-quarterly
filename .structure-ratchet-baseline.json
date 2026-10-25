@@ -1,7 +1,4 @@
 {
   "version": 1,
-  "entries": [
-    {"key": "dir:src", "modules": 45},
-    {"key": "size:src/close_pipeline.py", "lines": 1056}
-  ]
+  "entries": []
 }

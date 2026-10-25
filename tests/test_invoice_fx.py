@@ -27,8 +27,8 @@ from src.fx_rates import (
     resolve_invoice_amounts,
     store_rates,
 )
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
 
 ES_CIF = "B00000000"
 US_EIN = "00-0000000"

@@ -6,7 +6,7 @@ The **Reconciliation** tab lines up every box of a filed AEAT return against the
 
 1. Pick a model (303, 130, 349, 390) and a period; the picker defaults to the latest filed period and lists the filed periods on record.
 2. Filed values come from the **AEAT receipts imported into the database** (tables `filed_returns` / `filed_349_operators`, see below). `tmp/validation/validation.yaml` (gitignored — never committed) is a fallback, used only for periods whose receipt has not been imported. On an imported return a blank box counts as 0; a YAML filing only knows the boxes it lists.
-3. App values come from `src/reconciliation.reconcile(model, year, quarter, conn, config)`: it computes the period's engine result and reads its `aeat_boxes()` (keyed by the box number printed on the form). The Modelo 390 comes from its own engine (`src/modelo_390.py`, see [Annual Pack](annual-pack.md)), built from the year's four 303 results; its drill-down shows the live 390 audit cells.
+3. App values come from `src/reconciliation.reconcile(model, year, quarter, conn, config)`: it computes the period's engine result and reads its `aeat_boxes()` (keyed by the box number printed on the form). The Modelo 390 comes from its own engine (`src/returns/modelo_390.py`, see [Annual Pack](annual-pack.md)), built from the year's four 303 results; its drill-down shows the live 390 audit cells.
 4. One row per box in the union of both sides: filed / app / diff (**app − filed**) / status / tag / explanation. The Modelo 349 also gets one row per operator, keyed `op:<VATID>:<KEY>` (country prefix + number, operation key) and summed per operator on each side.
 
 | Status | Meaning |

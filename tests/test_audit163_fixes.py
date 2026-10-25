@@ -4,7 +4,6 @@ from __future__ import annotations
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import src.database as database
 from src import invoice_ocr
 from src.config import save_stripe_api_key
 from src.database import get_uploaded_files, init_db, record_upload

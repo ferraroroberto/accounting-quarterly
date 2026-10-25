@@ -1,8 +1,6 @@
 """Invoice Explorer — filterable table of all extracted invoices."""
 from __future__ import annotations
 
-import json
-from datetime import date
 
 import pandas as pd
 import streamlit as st

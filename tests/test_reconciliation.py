@@ -32,7 +32,6 @@ from src.reconciliation import (
     operator_box,
     parse_entry,
     reconcile,
-    result_boxes,
     save_catalogue,
     to_markdown,
 )

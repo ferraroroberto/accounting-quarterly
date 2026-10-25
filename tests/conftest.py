@@ -11,8 +11,7 @@ if str(ROOT) not in sys.path:
 
 import src.vendor_registry as vendor_registry
 from src._json_store import JsonCache
-from src.models import ClassifiedPayment, Payment
-from src.rules_engine import load_rules
+from src.models import Payment
 
 
 @pytest.fixture(autouse=True)

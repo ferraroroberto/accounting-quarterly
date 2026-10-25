@@ -78,7 +78,7 @@ def _render_invoice_panel(direction: str, invoice_dir: str) -> None:
                 if st.button("Extract / Re-extract", key=f"extract_{direction}_{fname}"):
                     with st.spinner(f"Extracting {fname}…"):
                         try:
-                            record = extract_and_save(fname, direction)
+                            extract_and_save(fname, direction)
                             flash("ocr", "success", f"Extracted {fname}.")
                             st.rerun()
                         except Exception as exc:
@@ -238,7 +238,6 @@ def render() -> None:
     total_in = sum(r["total_eur"] or 0 for r in in_recs)
     total_out = sum(r["total_eur"] or 0 for r in out_recs)
     total_iva_in = sum(r["iva_amount"] or 0 for r in in_recs)
-    total_iva_out = sum(r["iva_amount"] or 0 for r in out_recs)
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Expense invoices", len(in_recs))

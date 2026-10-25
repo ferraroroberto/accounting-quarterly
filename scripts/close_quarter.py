@@ -245,7 +245,7 @@ def cmd_stripe_check(args: argparse.Namespace) -> int:
 def cmd_stripe_fetch(args: argparse.Namespace) -> int:
     if args.backfill_fee_split:
         return _backfill_fee_split(args, *quarter_datetime_bounds(args.year, args.quarter))
-    from src.aggregator import calculate_grand_totals, get_transaction_count
+    from src.aggregator import calculate_grand_totals
     from src.classifier import validate_classifications
 
     start, end = quarter_datetime_bounds(args.year, args.quarter)
@@ -254,7 +254,6 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> int:
         input_mode="api",
     )
     grand = calculate_grand_totals(payments)
-    counts = get_transaction_count(payments)
     val = validate_classifications(payments)
 
     print(f"Q{args.quarter} {args.year}: {len(payments)} transactions, "

@@ -12,30 +12,35 @@
                          and ruff in .venv. Whole tree, never routed; exit 3 (a
                          detector could not run) is NOT CONFIRMED and fails, never a
                          pass.
-      3. docs ratchet  - README.md within 40 KiB and no new history marker (issue
+      3. comment ratchet - a #NNN issue reference in a product-code comment (py, js,
+                         css, ps1; tests and vendored files left out) that raises a
+                         file's count above .comment-ratchet-baseline.json fails.
+                         Whole tree, never routed; exit 3 (a file could not be
+                         scanned) is NOT CONFIRMED and fails, never a pass.
+      4. docs ratchet  - README.md within 40 KiB and no new history marker (issue
                          reference, dated or changelog heading) in README.md or
                          docs/**/*.md beyond .docs-ratchet-baseline.json. Whole
                          tree, never routed; exit 3 (count not established) is
                          NOT CONFIRMED and fails, never a pass or a skip.
-      4. structure ratchet - a file past 1,000 lines, a function past 100, a
+      5. structure ratchet - a file past 1,000 lines, a function past 100, a
                          directory past 40 modules or a src/ module importing app/
                          beyond .structure-ratchet-baseline.json, or a root folder
                          outside the declared shape, fails. Whole tree, never
                          routed; exit 3 (not confirmed) fails, never a pass.
-      5. instruction ratchet - a rule hit in CLAUDE.md, AGENTS.md, .claude/rules or
+      6. instruction ratchet - a rule hit in CLAUDE.md, AGENTS.md, .claude/rules or
                          a SKILL.md (or a file passing its size cap) beyond
                          .instruction-ratchet-baseline.json fails. Whole tree,
                          never routed; exit 3 (not confirmed) fails, never a pass.
-      6. doc-refs ratchet - a repo path, python -m module, relative link or loopback
+      7. doc-refs ratchet - a repo path, python -m module, relative link or loopback
                          port named in README.md, CLAUDE.md or docs/**/*.md that
                          does not exist, beyond .doc-refs-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      7. dead-code ratchet - a new Python function, class or method that nothing in
+      8. dead-code ratchet - a new Python function, class or method that nothing in
                          the repo refers to, beyond .dead-code-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      8. pytest        - the unit suite
+      9. pytest        - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -74,6 +79,8 @@ Invoke-Stage "byte-compile"  { & $py -m compileall -q app src scripts tests }
 # Not path-routed: duplication needs the whole tree. Exit 3 (npx or ruff unusable)
 # fails here the same way.
 Invoke-Stage "static ratchet" { & $py "scripts/static_ratchet.py" }
+# Not path-routed: a count per file needs the whole tree. Exit 3 fails here the same way.
+Invoke-Stage "comment ratchet" { & $py "scripts/comment_ratchet.py" }
 # The wrapper maps the script's exit 3 to NOT CONFIRMED (tests/test_docs_ratchet_gate.py
 # pins it); call it, never scripts/docs_ratchet.py directly.
 Invoke-Stage "docs ratchet"  { & $py -m scripts.docs_ratchet_gate }

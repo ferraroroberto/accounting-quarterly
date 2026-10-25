@@ -21,6 +21,7 @@ instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "60fdd0350
 structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "84d2b12ab416551762e4a615e4a706df91cea69f", dest = "scripts/structure_ratchet.py" }
 static_ratchet = { src = "scripts/static_ratchet.py", sha = "537cf3931b57e7453ed251850c0dbeac042b03bf", dest = "scripts/static_ratchet.py" }
 comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "e56308e1c099712cf5a006557c94e3f9ae4fe8aa", dest = "scripts/comment_ratchet.py" }
+conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "0eb0da42298e391fc614b3fe550bd6cf2d07c693", dest = "scripts/conventions_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
 # runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when
@@ -101,3 +102,17 @@ baseline = ".static-ratchet-baseline.json"
 [comment_ratchet]
 enabled  = true
 baseline = ".comment-ratchet-baseline.json"
+
+# [conventions_ratchet] -- the scaffold's fleet-convention ratchet. The gate
+# (scripts/verify-before-ship.ps1) runs scripts/conventions_ratchet.py, which counts
+# per file the hits of each enabled rule (stdlib ast) and fails when a count rises above
+# .conventions-ratchet-baseline.json. Enabled rules: no-window (Windows-hosted app that
+# spawns subprocesses), logging-not-print (print() in app/ and src/ library code) and
+# no-drive-path (no hardcoded drive paths). secret-compare and git-wrapper stay off:
+# the repo has no constant-time-compare or git-spawn helper for them to route through.
+# Exit 3 (git unusable, a file that cannot be parsed) is NOT CONFIRMED; the gate stage
+# fails on any non-zero exit. Procedure: project-scaffolding docs/conventions-ratchet.md.
+[conventions_ratchet]
+enabled  = true
+baseline = ".conventions-ratchet-baseline.json"
+rules    = ["no-window", "logging-not-print", "no-drive-path"]

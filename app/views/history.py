@@ -15,8 +15,8 @@ from src.database import get_transaction_date_bounds
 from src.excel_exporter import generate_report_filename
 
 
-def render() -> None:
-    """Render the History & Charts tab."""
+def _quarters_to_load() -> list[tuple[int, int]]:
+    """Every (year, quarter) from the first stored transaction up to the current quarter."""
     current_year = datetime.now().year
     min_tx_dt, _ = get_transaction_date_bounds()
     first_year = first_data_year(min_tx_dt)
@@ -28,52 +28,60 @@ def render() -> None:
         end_q = (datetime.now().month - 1) // 3 + 1 if y == current_year else 4
         for q in range(start_q, end_q + 1):
             all_quarters.append((y, q))
+    return all_quarters
 
-    def _load_history(*, mode: str) -> None:
-        progress = st.progress(0, text="Loading quarters...")
-        history = {}
-        for i, (y, q) in enumerate(all_quarters):
-            s, e = quarter_datetime_bounds(y, q)
-            label = f"Q{q} {y}"
-            try:
-                payments = get_classified_for_period(
-                    y,
-                    q,
-                    s,
-                    e,
-                    input_mode=mode,
-                )
-                grand = calculate_grand_totals(payments)
-                regional = calculate_regional_totals(payments)
-                counts = get_transaction_count(payments)
-                history[label] = {
-                    "year": y, "quarter": q,
-                    "start": s.date().isoformat(),
-                    "end": e.date().isoformat(),
-                    "total_income": round(grand.get("total_income", 0), 2),
-                    "total_fee": round(grand.get("total_fee", 0), 2),
-                    "coaching": round(grand.get("coaching", 0), 2),
-                    "newsletter": round(grand.get("newsletter", 0), 2),
-                    "illustrations": round(grand.get("illustrations", 0), 2),
-                    "transactions": counts.get("total", 0),
-                    "regional": regional,
-                    "payments": payments,
-                    "data_source": mode,
-                }
-            except Exception as exc:
-                history[label] = {"year": y, "quarter": q, "error": str(exc)}
-            progress.progress((i + 1) / len(all_quarters), text=f"Loaded {label}")
-        st.session_state["history_data"] = history
-        progress.empty()
+
+def _load_history(all_quarters: list[tuple[int, int]], *, mode: str) -> None:
+    """Classify every quarter and store the per-quarter summaries in session state."""
+    progress = st.progress(0, text="Loading quarters...")
+    history = {}
+    for i, (y, q) in enumerate(all_quarters):
+        s, e = quarter_datetime_bounds(y, q)
+        label = f"Q{q} {y}"
+        try:
+            payments = get_classified_for_period(
+                y,
+                q,
+                s,
+                e,
+                input_mode=mode,
+            )
+            grand = calculate_grand_totals(payments)
+            regional = calculate_regional_totals(payments)
+            counts = get_transaction_count(payments)
+            history[label] = {
+                "year": y, "quarter": q,
+                "start": s.date().isoformat(),
+                "end": e.date().isoformat(),
+                "total_income": round(grand.get("total_income", 0), 2),
+                "total_fee": round(grand.get("total_fee", 0), 2),
+                "coaching": round(grand.get("coaching", 0), 2),
+                "newsletter": round(grand.get("newsletter", 0), 2),
+                "illustrations": round(grand.get("illustrations", 0), 2),
+                "transactions": counts.get("total", 0),
+                "regional": regional,
+                "payments": payments,
+                "data_source": mode,
+            }
+        except Exception as exc:
+            history[label] = {"year": y, "quarter": q, "error": str(exc)}
+        progress.progress((i + 1) / len(all_quarters), text=f"Loaded {label}")
+    st.session_state["history_data"] = history
+    progress.empty()
+
+
+def render() -> None:
+    """Render the History & Charts tab."""
+    all_quarters = _quarters_to_load()
 
     # Default behaviour: on first visit, load from SQLite.
     if "history_data" not in st.session_state:
         with st.spinner("Loading from SQLite..."):
-            _load_history(mode="db")
+            _load_history(all_quarters, mode="db")
 
     refresh_api = st.button("Refresh history from API", type="primary", key="hist_refresh_api")
     if refresh_api:
-        _load_history(mode="api")
+        _load_history(all_quarters, mode="api")
         st.success("History refreshed from Stripe API.")
 
     history = st.session_state.get("history_data", {})
@@ -86,7 +94,22 @@ def render() -> None:
         st.warning("No valid quarter data found.")
         return
 
-    # --- Summary Table ---
+    _render_summary_table(valid_quarters)
+
+    chronological = sorted(
+        valid_quarters.items(),
+        key=lambda kv: (kv[1].get("year", 0), kv[1].get("quarter", 0)),
+    )
+    sorted_labels = [label for label, _ in chronological]
+    sorted_data = [data for _, data in chronological]
+
+    _render_activity_chart(sorted_labels, sorted_data)
+    _render_geo_chart(sorted_labels, sorted_data)
+    _render_export(valid_quarters)
+
+
+def _render_summary_table(valid_quarters: dict) -> None:
+    """Quarterly summary table, newest quarter first."""
     st.subheader("Quarterly Summary")
 
     table_rows = []
@@ -120,15 +143,10 @@ def render() -> None:
 
     st.markdown("---")
 
-    # --- Stacked Area Chart: Income by Activity ---
-    st.subheader("Income by Activity Type")
 
-    chronological = sorted(
-        valid_quarters.items(),
-        key=lambda kv: (kv[1].get("year", 0), kv[1].get("quarter", 0)),
-    )
-    sorted_labels = [label for label, _ in chronological]
-    sorted_data = [data for _, data in chronological]
+def _render_activity_chart(sorted_labels: list[str], sorted_data: list[dict]) -> None:
+    """Stacked area chart: income by activity type."""
+    st.subheader("Income by Activity Type")
 
     fig_activity = go.Figure()
     fig_activity.add_trace(go.Scatter(
@@ -172,7 +190,9 @@ def render() -> None:
 
     st.markdown("---")
 
-    # --- Stacked Area Chart: Income by Geography ---
+
+def _render_geo_chart(sorted_labels: list[str], sorted_data: list[dict]) -> None:
+    """Stacked area chart: income by geographic region."""
     st.subheader("Income by Geographic Region")
 
     fig_geo = go.Figure()
@@ -206,7 +226,9 @@ def render() -> None:
 
     st.markdown("---")
 
-    # --- Per-Quarter Export ---
+
+def _render_export(valid_quarters: dict) -> None:
+    """Per-quarter Excel export."""
     st.subheader("Export Quarter")
 
     export_quarter = st.selectbox(

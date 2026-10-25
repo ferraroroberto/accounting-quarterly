@@ -207,6 +207,112 @@ def _fmt_pct(val) -> str:
     return f"{val:g}%"
 
 
+def _render_summary_metrics(all_invoices: list[dict]) -> None:
+    """Invoice counts and totals for both directions."""
+    in_recs = [r for r in all_invoices if r["direction"] == "in"]
+    out_recs = [r for r in all_invoices if r["direction"] == "out"]
+
+    total_in = sum(r["total_eur"] or 0 for r in in_recs)
+    total_out = sum(r["total_eur"] or 0 for r in out_recs)
+    total_iva_in = sum(r["iva_amount"] or 0 for r in in_recs)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Expense invoices", len(in_recs))
+    m2.metric("Total expenses", f"€{total_in:,.2f}")
+    m3.metric("IVA soportado", f"€{total_iva_in:,.2f}")
+    m4.metric("Income invoices", len(out_recs))
+    m5.metric("Total income", f"€{total_out:,.2f}")
+
+
+def _render_danger_zone() -> None:
+    """Clear-the-invoice-table control, behind a confirmation step."""
+    with st.expander("Danger zone", expanded=False):
+        if not st.session_state.get("confirm_clear_invoices"):
+            if st.button("Clear invoice table", type="secondary", key="inv_ocr_clear_start"):
+                st.session_state["confirm_clear_invoices"] = True
+                st.rerun()
+        else:
+            st.warning(
+                "This will permanently delete **all** invoice records from the database. "
+                "The PDF files themselves are not touched."
+            )
+            col_yes, col_no = st.columns(2)
+            if col_yes.button("Yes, delete everything", type="primary", key="inv_ocr_clear_confirm"):
+                n = clear_invoices()
+                st.session_state["confirm_clear_invoices"] = False
+                flash("ocr", "success", f"Deleted {n} record(s).")
+                st.rerun()
+            if col_no.button("Cancel", key="inv_ocr_clear_cancel"):
+                st.session_state["confirm_clear_invoices"] = False
+                st.rerun()
+
+
+def _render_all_records(all_invoices: list[dict]) -> None:
+    """All extracted invoices: danger zone, selectable table, CSV download."""
+    st.subheader("All extracted invoices")
+
+    _render_danger_zone()
+
+    if not all_invoices:
+        st.info("No invoices extracted yet.")
+    else:
+        display_cols = [
+            "id", "direction", "filename", "extracted_at", "invoice_date",
+            "invoice_type", "vendor_name", "vendor_nif",
+            "client_name", "client_nif", "description",
+            "subtotal_eur", "iva_rate", "iva_amount",
+            "irpf_rate", "irpf_amount", "total_eur",
+            "currency", "category", "payment_method",
+            "supply_date", "due_date", "tax_treatment",
+            "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
+            "is_rectificativa", "vat_exempt_reason", "notes",
+        ]
+        df = pd.DataFrame(all_invoices)
+        visible = [c for c in display_cols if c in df.columns]
+        df_display = df[visible].rename(columns={"extracted_at": "date_scanned"})
+
+        # Row-selection dataframe (Streamlit ≥ 1.35)
+        event = st.dataframe(
+            df_display.drop(columns=["id"], errors="ignore"),
+            width="stretch",
+            hide_index=True,
+            selection_mode="multi-row",
+            on_select="rerun",
+            key="all_invoices_table",
+        )
+
+        selected_indices = event.selection.rows if event and event.selection else []
+
+        col_del, col_csv = st.columns([1, 3])
+        with col_del:
+            if selected_indices:
+                if st.button(
+                    f"Delete {len(selected_indices)} selected record(s)",
+                    type="primary",
+                    key="inv_ocr_delete_selected",
+                ):
+                    ids_to_delete = [
+                        df_display.iloc[i]["id"]
+                        for i in selected_indices
+                        if "id" in df_display.columns
+                    ]
+                    n = delete_invoices_by_ids(ids_to_delete)
+                    flash("ocr", "success", f"Deleted {n} record(s).")
+                    st.rerun()
+            else:
+                st.caption("Select rows to enable deletion.")
+
+        with col_csv:
+            csv = df_display.drop(columns=["id"], errors="ignore").to_csv(index=False).encode()
+            st.download_button(
+                "Download CSV",
+                data=csv,
+                file_name="invoices_extracted.csv",
+                mime="text/csv",
+                key="inv_ocr_download_csv",
+            )
+
+
 def render() -> None:
     """Render the Invoice OCR tab."""
     show_flash("ocr")
@@ -230,21 +336,8 @@ def render() -> None:
 
     st.markdown("---")
 
-    # Summary metrics
     all_invoices = get_invoices()
-    in_recs = [r for r in all_invoices if r["direction"] == "in"]
-    out_recs = [r for r in all_invoices if r["direction"] == "out"]
-
-    total_in = sum(r["total_eur"] or 0 for r in in_recs)
-    total_out = sum(r["total_eur"] or 0 for r in out_recs)
-    total_iva_in = sum(r["iva_amount"] or 0 for r in in_recs)
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Expense invoices", len(in_recs))
-    m2.metric("Total expenses", f"€{total_in:,.2f}")
-    m3.metric("IVA soportado", f"€{total_iva_in:,.2f}")
-    m4.metric("Income invoices", len(out_recs))
-    m5.metric("Total income", f"€{total_out:,.2f}")
+    _render_summary_metrics(all_invoices)
 
     st.markdown("---")
 
@@ -262,84 +355,4 @@ def render() -> None:
         _render_invoice_panel("out", invoice_out_dir)
 
     with tab_all:
-        st.subheader("All extracted invoices")
-
-        # ── Clear table button (with confirmation) ───────────────────────────
-        with st.expander("Danger zone", expanded=False):
-            if not st.session_state.get("confirm_clear_invoices"):
-                if st.button("Clear invoice table", type="secondary", key="inv_ocr_clear_start"):
-                    st.session_state["confirm_clear_invoices"] = True
-                    st.rerun()
-            else:
-                st.warning(
-                    "This will permanently delete **all** invoice records from the database. "
-                    "The PDF files themselves are not touched."
-                )
-                col_yes, col_no = st.columns(2)
-                if col_yes.button("Yes, delete everything", type="primary", key="inv_ocr_clear_confirm"):
-                    n = clear_invoices()
-                    st.session_state["confirm_clear_invoices"] = False
-                    flash("ocr", "success", f"Deleted {n} record(s).")
-                    st.rerun()
-                if col_no.button("Cancel", key="inv_ocr_clear_cancel"):
-                    st.session_state["confirm_clear_invoices"] = False
-                    st.rerun()
-
-        if not all_invoices:
-            st.info("No invoices extracted yet.")
-        else:
-            display_cols = [
-                "id", "direction", "filename", "extracted_at", "invoice_date",
-                "invoice_type", "vendor_name", "vendor_nif",
-                "client_name", "client_nif", "description",
-                "subtotal_eur", "iva_rate", "iva_amount",
-                "irpf_rate", "irpf_amount", "total_eur",
-                "currency", "category", "payment_method",
-                "supply_date", "due_date", "tax_treatment",
-                "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
-                "is_rectificativa", "vat_exempt_reason", "notes",
-            ]
-            df = pd.DataFrame(all_invoices)
-            visible = [c for c in display_cols if c in df.columns]
-            df_display = df[visible].rename(columns={"extracted_at": "date_scanned"})
-
-            # Row-selection dataframe (Streamlit ≥ 1.35)
-            event = st.dataframe(
-                df_display.drop(columns=["id"], errors="ignore"),
-                width="stretch",
-                hide_index=True,
-                selection_mode="multi-row",
-                on_select="rerun",
-                key="all_invoices_table",
-            )
-
-            selected_indices = event.selection.rows if event and event.selection else []
-
-            col_del, col_csv = st.columns([1, 3])
-            with col_del:
-                if selected_indices:
-                    if st.button(
-                        f"Delete {len(selected_indices)} selected record(s)",
-                        type="primary",
-                        key="inv_ocr_delete_selected",
-                    ):
-                        ids_to_delete = [
-                            df_display.iloc[i]["id"]
-                            for i in selected_indices
-                            if "id" in df_display.columns
-                        ]
-                        n = delete_invoices_by_ids(ids_to_delete)
-                        flash("ocr", "success", f"Deleted {n} record(s).")
-                        st.rerun()
-                else:
-                    st.caption("Select rows to enable deletion.")
-
-            with col_csv:
-                csv = df_display.drop(columns=["id"], errors="ignore").to_csv(index=False).encode()
-                st.download_button(
-                    "Download CSV",
-                    data=csv,
-                    file_name="invoices_extracted.csv",
-                    mime="text/csv",
-                    key="inv_ocr_download_csv",
-                )
+        _render_all_records(all_invoices)

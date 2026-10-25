@@ -25,4 +25,4 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 The `streamlit` shape puts views in `app/views/<name>.py` behind `st.navigation`. This repo differs, and the ratchet does not check it:
 
 - `app/streamlit_app.py` routes the views through `st.tabs` rather than `st.navigation`.
-- One file and 23 functions still exceed the size limits (the largest are `src/close_pipeline.py` and the `render` functions of the social security, history and transaction browser views). They are baselined at today's size; splitting them is separate work.
+- One file and 14 functions still exceed the size limits (the largest are `src/close_pipeline.py` and the tax-engine `compute_*` and `_collect_*` functions). They are baselined at today's size in `.structure-ratchet-baseline.json`.

@@ -1,6 +1,8 @@
 """Invoice Explorer — filterable table of all extracted invoices."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -32,6 +34,21 @@ def _load_invoices_df() -> pd.DataFrame:
     return df
 
 
+@dataclass
+class _Filters:
+    """The explorer's filter selections, as read from the filter widgets."""
+
+    direction: str
+    categories: list[str]
+    invoice_types: list[str]
+    vendor_query: str
+    client_query: str
+    date_from: date | None
+    date_to: date | None
+    subtotal_range: tuple[float, float] | None
+    rectificativas_only: bool
+
+
 def render() -> None:
     """Render the Invoice Explorer tab."""
     st.subheader("Invoice Explorer")
@@ -47,7 +64,20 @@ def render() -> None:
         st.info("No invoices extracted yet. Use the **Invoice OCR** tab to extract invoices first.")
         return
 
-    # ── Sidebar-style filters in an expander ─────────────────────────────────
+    filtered = _apply_filters(df, _render_filters(df))
+    _render_metrics(filtered)
+
+    st.markdown("---")
+
+    if filtered.empty:
+        st.warning("No records match the current filters.")
+        return
+
+    _render_table_and_export(filtered)
+
+
+def _render_filters(df: pd.DataFrame) -> _Filters:
+    """Filter widgets in an expander; returns the selections."""
     with st.expander("Filters", expanded=True):
         f1, f2, f3 = st.columns(3)
 
@@ -108,36 +138,52 @@ def render() -> None:
         # Rectificativas only
         show_rect_only = f9.checkbox("Rectificativas only", key="inv_explorer_rectificativas")
 
-    # ── Apply filters ─────────────────────────────────────────────────────────
+    return _Filters(
+        direction=direction_sel,
+        categories=cat_sel,
+        invoice_types=type_sel,
+        vendor_query=vendor_q,
+        client_query=client_q,
+        date_from=date_from,
+        date_to=date_to,
+        subtotal_range=sub_range,
+        rectificativas_only=show_rect_only,
+    )
+
+
+def _apply_filters(df: pd.DataFrame, f: _Filters) -> pd.DataFrame:
+    """Rows of `df` matching every active filter."""
     mask = pd.Series([True] * len(df), index=df.index)
 
-    if direction_sel != "All":
-        mask &= df["direction"] == direction_sel
+    if f.direction != "All":
+        mask &= df["direction"] == f.direction
 
-    if cat_sel:
-        mask &= df["category"].isin(cat_sel)
+    if f.categories:
+        mask &= df["category"].isin(f.categories)
 
-    if type_sel and "invoice_type" in df.columns:
-        mask &= df["invoice_type"].isin(type_sel)
+    if f.invoice_types and "invoice_type" in df.columns:
+        mask &= df["invoice_type"].isin(f.invoice_types)
 
-    if vendor_q.strip() and "vendor_name" in df.columns:
-        mask &= df["vendor_name"].str.contains(vendor_q.strip(), case=False, na=False)
+    if f.vendor_query.strip() and "vendor_name" in df.columns:
+        mask &= df["vendor_name"].str.contains(f.vendor_query.strip(), case=False, na=False)
 
-    if client_q.strip() and "client_name" in df.columns:
-        mask &= df["client_name"].str.contains(client_q.strip(), case=False, na=False)
+    if f.client_query.strip() and "client_name" in df.columns:
+        mask &= df["client_name"].str.contains(f.client_query.strip(), case=False, na=False)
 
-    if date_from and date_to and "invoice_date" in df.columns:
-        mask &= (df["invoice_date"].dt.date >= date_from) & (df["invoice_date"].dt.date <= date_to)
+    if f.date_from and f.date_to and "invoice_date" in df.columns:
+        mask &= (df["invoice_date"].dt.date >= f.date_from) & (df["invoice_date"].dt.date <= f.date_to)
 
-    if sub_range is not None and "subtotal_eur" in df.columns:
-        mask &= (df["subtotal_eur"] >= sub_range[0]) & (df["subtotal_eur"] <= sub_range[1])
+    if f.subtotal_range is not None and "subtotal_eur" in df.columns:
+        mask &= (df["subtotal_eur"] >= f.subtotal_range[0]) & (df["subtotal_eur"] <= f.subtotal_range[1])
 
-    if show_rect_only and "is_rectificativa" in df.columns:
+    if f.rectificativas_only and "is_rectificativa" in df.columns:
         mask &= df["is_rectificativa"].astype(bool)
 
-    filtered = df[mask].copy()
+    return df[mask].copy()
 
-    # ── Summary metrics ───────────────────────────────────────────────────────
+
+def _render_metrics(filtered: pd.DataFrame) -> None:
+    """Summary metrics for the filtered rows."""
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Matching records", len(filtered))
     in_f = filtered[filtered["direction"] == "in"] if "direction" in filtered.columns else pd.DataFrame()
@@ -147,13 +193,9 @@ def render() -> None:
     m4.metric("Income (out)", len(out_f))
     m5.metric("Total income", f"€{out_f['total_eur'].sum(skipna=True):,.2f}" if "total_eur" in out_f.columns and not out_f.empty else "€0.00")
 
-    st.markdown("---")
 
-    if filtered.empty:
-        st.warning("No records match the current filters.")
-        return
-
-    # ── Display columns ───────────────────────────────────────────────────────
+def _render_table_and_export(filtered: pd.DataFrame) -> None:
+    """Result table plus the filtered-CSV download."""
     display_cols = [
         "direction", "filename", "extracted_at", "invoice_date",
         "invoice_type", "vendor_name", "vendor_nif",

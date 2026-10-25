@@ -1,7 +1,5 @@
 """Tests for the rules engine (load/save/reload)."""
-import json
 
-import pytest
 
 from src.rules_engine import load_rules, reload_rules, save_rules
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 import app.year_picker as yp

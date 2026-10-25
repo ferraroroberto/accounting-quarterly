@@ -7,7 +7,6 @@ import pytest
 
 from src.database import (
     TAX_SNAPSHOT_QUARTER_ANNUAL,
-    get_connection,
     init_db,
     load_tax_snapshots_for_period,
 )

@@ -1,7 +1,7 @@
 """Currency tab - FX rate management and charts."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 import plotly.graph_objects as go

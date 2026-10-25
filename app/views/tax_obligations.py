@@ -32,7 +32,6 @@ from src.tax_models import (
     Modelo347Result,
     Modelo349Result,
     OSSReturnResult,
-    TaxDeadline,
 )
 
 _DISCLAIMER = (

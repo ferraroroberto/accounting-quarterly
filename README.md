@@ -53,7 +53,7 @@ A `launch_app.bat` shortcut is provided for Windows.
 ### Verification gate
 
 ```powershell
-# Windows: byte-compile, docs ratchet, structure ratchet, then the full pytest suite
+# Windows: byte-compile, the vendored ratchets, then the full pytest suite
 .\scripts\verify-before-ship.ps1
 ```
 
@@ -61,6 +61,8 @@ A `launch_app.bat` shortcut is provided for Windows.
 # macOS / Linux (tests only)
 .venv/bin/pytest -v
 ```
+
+The static ratchet fails on a new duplicate block (`jscpd`, Python and JS), a new unused import or variable (`ruff` F401/F841) or a new curated `ruff` bug/security hit, beyond `.static-ratchet-baseline.json`. It needs Node (`npx`) and `ruff` in `.venv` (`ruff` is in `requirements.txt`). Remove the duplication or the unused name rather than baselining it; exit 3 (a detector could not run) fails as not confirmed.
 
 The docs ratchet keeps `README.md` under 40 KiB and fails on a new history marker (an issue reference, a dated heading or a changelog heading) in `README.md` or `docs/**/*.md`; existing ones are baselined in `.docs-ratchet-baseline.json`. State the present-tense why in words instead. A check that could not run (exit 3) fails as not confirmed.
 

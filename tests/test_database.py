@@ -1,6 +1,5 @@
 """Tests for the SQLite database layer."""
 import json
-import sqlite3
 from datetime import datetime
 
 import pytest

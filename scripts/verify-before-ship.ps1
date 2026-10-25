@@ -17,30 +17,36 @@
                          file's count above .comment-ratchet-baseline.json fails.
                          Whole tree, never routed; exit 3 (a file could not be
                          scanned) is NOT CONFIRMED and fails, never a pass.
-      4. docs ratchet  - README.md within 40 KiB and no new history marker (issue
+      4. conventions ratchet - a file whose count of no-window (a subprocess spawn
+                         without creationflags), logging-not-print (print() in app/
+                         or src/ library code) or no-drive-path (a hardcoded drive
+                         path) hits rises above .conventions-ratchet-baseline.json
+                         fails. Whole tree, never routed; exit 3 (a file could not
+                         be parsed) is NOT CONFIRMED and fails, never a pass.
+      5. docs ratchet  - README.md within 40 KiB and no new history marker (issue
                          reference, dated or changelog heading) in README.md or
                          docs/**/*.md beyond .docs-ratchet-baseline.json. Whole
                          tree, never routed; exit 3 (count not established) is
                          NOT CONFIRMED and fails, never a pass or a skip.
-      5. structure ratchet - a file past 1,000 lines, a function past 100, a
+      6. structure ratchet - a file past 1,000 lines, a function past 100, a
                          directory past 40 modules or a src/ module importing app/
                          beyond .structure-ratchet-baseline.json, or a root folder
                          outside the declared shape, fails. Whole tree, never
                          routed; exit 3 (not confirmed) fails, never a pass.
-      6. instruction ratchet - a rule hit in CLAUDE.md, AGENTS.md, .claude/rules or
+      7. instruction ratchet - a rule hit in CLAUDE.md, AGENTS.md, .claude/rules or
                          a SKILL.md (or a file passing its size cap) beyond
                          .instruction-ratchet-baseline.json fails. Whole tree,
                          never routed; exit 3 (not confirmed) fails, never a pass.
-      7. doc-refs ratchet - a repo path, python -m module, relative link or loopback
+      8. doc-refs ratchet - a repo path, python -m module, relative link or loopback
                          port named in README.md, CLAUDE.md or docs/**/*.md that
                          does not exist, beyond .doc-refs-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      8. dead-code ratchet - a new Python function, class or method that nothing in
+      9. dead-code ratchet - a new Python function, class or method that nothing in
                          the repo refers to, beyond .dead-code-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      9. pytest        - the unit suite
+      10. pytest       - the unit suite
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -81,6 +87,8 @@ Invoke-Stage "byte-compile"  { & $py -m compileall -q app src scripts tests }
 Invoke-Stage "static ratchet" { & $py "scripts/static_ratchet.py" }
 # Not path-routed: a count per file needs the whole tree. Exit 3 fails here the same way.
 Invoke-Stage "comment ratchet" { & $py "scripts/comment_ratchet.py" }
+# Not path-routed: a rule added to `rules` must see the whole tree. Exit 3 fails here too.
+Invoke-Stage "conventions ratchet" { & $py "scripts/conventions_ratchet.py" }
 # The wrapper maps the script's exit 3 to NOT CONFIRMED (tests/test_docs_ratchet_gate.py
 # pins it); call it, never scripts/docs_ratchet.py directly.
 Invoke-Stage "docs ratchet"  { & $py -m scripts.docs_ratchet_gate }

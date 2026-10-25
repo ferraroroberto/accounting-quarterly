@@ -113,30 +113,8 @@ def _render_upload_panel(
         )
 
 
-def render() -> None:
-    """Render the Invoice Upload tab."""
-    show_flash("upload")
-    cfg = load_config()
-    app_cfg = cfg.get("app", {})
-    invoice_in_dir = app_cfg.get("invoice_in_dir", "data/invoices/in")
-    invoice_out_dir = app_cfg.get("invoice_out_dir", "data/invoices/out")
-
-    accounting_api = cfg.get("accounting_api", {})
-    api_enabled = accounting_api.get("enabled", False)
-    default_company_id = accounting_api.get("company_id", "") or ""
-
-    st.subheader("Invoice Upload to Accounting Partner")
-
-    if not api_enabled:
-        st.info(
-            "The accounting API integration is not yet configured. "
-            "Set `accounting_api.enabled: true` in `config.json` and provide "
-            "the API base URL to activate this feature."
-        )
-
-    st.markdown("---")
-
-    # --- API Connection Status ---
+def _render_connection_status() -> None:
+    """Show which API credentials the environment provides."""
     st.subheader("API Connection")
 
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -164,6 +142,11 @@ def render() -> None:
         else:
             st.warning("No token or user/password")
 
+
+def _render_token_controls(
+    api_enabled: bool, default_company_id: str,
+) -> tuple[str, AccountingAPIClient | None]:
+    """Company-id input and token buttons; returns the company id and the API client (if any)."""
     company_id = st.text_input(
         "Company ID (companyId/company_id)",
         value=default_company_id,
@@ -206,10 +189,13 @@ def render() -> None:
         token = st.session_state.get("inv_api_token") or None
         ok, msg = client.test_connection(token=token)
         (st.success if ok else st.error)(msg)
+    return company_id, client
 
-    st.markdown("---")
 
-    # --- Platform directory (optional) ---
+def _render_platform_directory(
+    client: "AccountingAPIClient | None", company_id: str, api_enabled: bool,
+) -> None:
+    """List the documents the accounting platform holds for a date range."""
     st.subheader("Platform State (optional)")
     col_d1, col_d2, col_d3 = st.columns([1, 1, 1])
     with col_d1:
@@ -255,9 +241,9 @@ def render() -> None:
     if dir_data is not None:
         st.write(dir_data)
 
-    st.markdown("---")
 
-    # --- Download (optional) ---
+def _render_download(client: "AccountingAPIClient | None", api_enabled: bool) -> None:
+    """Download one platform document by id."""
     st.subheader("Download by document_id (optional)")
     dl_id = st.text_input("document_id (or comma-separated list)", value="", key="inv_dl_id", disabled=not api_enabled)
     if st.button("Download", key="inv_dl_btn", disabled=not api_enabled):
@@ -285,6 +271,41 @@ def render() -> None:
             key="inv_dl_save",
             disabled=not api_enabled,
         )
+
+
+def render() -> None:
+    """Render the Invoice Upload tab."""
+    show_flash("upload")
+    cfg = load_config()
+    app_cfg = cfg.get("app", {})
+    invoice_in_dir = app_cfg.get("invoice_in_dir", "data/invoices/in")
+    invoice_out_dir = app_cfg.get("invoice_out_dir", "data/invoices/out")
+
+    accounting_api = cfg.get("accounting_api", {})
+    api_enabled = accounting_api.get("enabled", False)
+    default_company_id = accounting_api.get("company_id", "") or ""
+
+    st.subheader("Invoice Upload to Accounting Partner")
+
+    if not api_enabled:
+        st.info(
+            "The accounting API integration is not yet configured. "
+            "Set `accounting_api.enabled: true` in `config.json` and provide "
+            "the API base URL to activate this feature."
+        )
+
+    st.markdown("---")
+
+    _render_connection_status()
+    company_id, client = _render_token_controls(api_enabled, default_company_id)
+
+    st.markdown("---")
+
+    _render_platform_directory(client, company_id, api_enabled)
+
+    st.markdown("---")
+
+    _render_download(client, api_enabled)
 
     st.markdown("---")
 

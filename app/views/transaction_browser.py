@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 
 import pandas as pd
@@ -19,8 +20,21 @@ from src.models import ClassifiedPayment
 from src.rules_engine import load_rules, save_rules
 
 
-def render() -> None:
-    """Render the Transaction Browser tab."""
+@dataclass
+class _Query:
+    """The period and filters picked in the header widgets."""
+
+    year: int
+    quarter: int | None
+    start_dt: datetime
+    end_dt: datetime
+    search_desc: str
+    activity_filter: str
+    geo_filter: str
+
+
+def _select_query() -> _Query:
+    """Year / quarter / search / filter widgets; returns the query they describe."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
     year_options = year_choices()
@@ -45,36 +59,54 @@ def render() -> None:
     else:
         start_dt, end_dt = datetime(year, 1, 1), datetime(year, 12, 31, 23, 59, 59)
 
+    return _Query(
+        year=year,
+        quarter=quarter,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        search_desc=search_desc,
+        activity_filter=activity_filter,
+        geo_filter=geo_filter,
+    )
+
+
+def _load_payments(query: _Query) -> list[ClassifiedPayment]:
+    """Classified payments for the period, cached in session state until the period changes."""
     btn_col1, btn_col2 = st.columns([1, 1])
     load_db = btn_col1.button("Load (from SQLite)", type="primary", key="tb_load_db")
     refresh_api = btn_col2.button("Refresh from API", type="secondary", key="tb_refresh_api")
 
-    period_key = (year, quarter)
+    period_key = (query.year, query.quarter)
     if (load_db or refresh_api or "browser_data" not in st.session_state
             or st.session_state.get("browser_key") != period_key):
         with st.spinner("Loading..."):
             if refresh_api:
                 payments = get_classified_for_period(
-                    year,
-                    quarter,
-                    start_dt,
-                    end_dt,
+                    query.year,
+                    query.quarter,
+                    query.start_dt,
+                    query.end_dt,
                     input_mode="api",
                 )
             else:
-                payments = get_classified_for_period(year, quarter, start_dt, end_dt, input_mode="db")
+                payments = get_classified_for_period(
+                    query.year, query.quarter, query.start_dt, query.end_dt, input_mode="db",
+                )
             st.session_state["browser_data"] = payments
             st.session_state["browser_key"] = period_key
 
-    payments: list[ClassifiedPayment] = st.session_state.get("browser_data", [])
+    return st.session_state.get("browser_data", [])
 
+
+def _render_payment_table(payments: list[ClassifiedPayment], query: _Query) -> None:
+    """Filtered payment table, with the foreign-customer review warning."""
     filtered = payments
-    if search_desc:
-        filtered = [p for p in filtered if search_desc.lower() in p.description.lower()]
-    if activity_filter != "All":
-        filtered = [p for p in filtered if p.activity_type == activity_filter]
-    if geo_filter != "All":
-        filtered = [p for p in filtered if p.geo_region == geo_filter]
+    if query.search_desc:
+        filtered = [p for p in filtered if query.search_desc.lower() in p.description.lower()]
+    if query.activity_filter != "All":
+        filtered = [p for p in filtered if p.activity_type == query.activity_filter]
+    if query.geo_filter != "All":
+        filtered = [p for p in filtered if p.geo_region == query.geo_filter]
 
     if not payments:
         st.warning("No payments found via the current loader for the selected period.")
@@ -120,7 +152,11 @@ def render() -> None:
             },
         )
 
-    st.markdown("---")
+
+def _render_raw_database(query: _Query) -> None:
+    """Raw SQLite transactions search with a source-payload inspector."""
+    start_dt, end_dt = query.start_dt, query.end_dt
+    search_desc, activity_filter, geo_filter = query.search_desc, query.activity_filter, query.geo_filter
     st.subheader("Raw database (SQLite)")
     try:
         total_db = get_transaction_count_db()
@@ -190,7 +226,9 @@ def render() -> None:
             else:
                 st.dataframe(raw_df, width="stretch", hide_index=True)
 
-    st.markdown("---")
+
+def _render_override_form() -> None:
+    """Form that adds a geographic override rule."""
     st.subheader("Add Geographic Override")
 
     with st.form("add_override"):
@@ -219,3 +257,16 @@ def render() -> None:
             save_rules(rules)
             invalidate_cache()
             st.success(f"Override added: {key!r} -> {override_region}")
+
+
+def render() -> None:
+    """Render the Transaction Browser tab."""
+    query = _select_query()
+    payments = _load_payments(query)
+    _render_payment_table(payments, query)
+
+    st.markdown("---")
+    _render_raw_database(query)
+
+    st.markdown("---")
+    _render_override_form()

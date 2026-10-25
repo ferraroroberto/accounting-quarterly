@@ -190,6 +190,96 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
             st.rerun()
 
 
+def _document_column(rec: dict, k: str, changes: dict) -> None:
+    """Document fields (dates, parties, category, free text); fills `changes`."""
+    st.markdown("*Document*")
+    inv_date = st.date_input("Invoice date (accounting date)", value=_to_date(rec.get("invoice_date")),
+                             min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_invoice_date")
+    sup_date = st.date_input("Supply date (informational)", value=_to_date(rec.get("supply_date")),
+                             min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_supply_date")
+    changes.update({
+        "invoice_number": st.text_input("Number", value=rec.get("invoice_number") or "",
+                                        key=f"{k}_invoice_number"),
+        "vendor_name": st.text_input("Vendor", value=rec.get("vendor_name") or "", key=f"{k}_vendor_name"),
+        "vendor_nif": st.text_input("Vendor NIF / VAT id", value=rec.get("vendor_nif") or "",
+                                    key=f"{k}_vendor_nif"),
+        "client_name": st.text_input("Client", value=rec.get("client_name") or "", key=f"{k}_client_name"),
+        "client_nif": st.text_input("Client NIF / VAT id", value=rec.get("client_nif") or "",
+                                    key=f"{k}_client_nif"),
+        "category": st.text_input("Category", value=rec.get("category") or "", key=f"{k}_category"),
+        "description": st.text_area("Description", value=rec.get("description") or "",
+                                    key=f"{k}_description"),
+        "notes": st.text_area("Notes", value=rec.get("notes") or "", key=f"{k}_notes"),
+    })
+    changes["invoice_date"] = inv_date.isoformat() if inv_date else None
+    changes["supply_date"] = sup_date.isoformat() if sup_date else None
+
+
+def _amounts_column(rec: dict, k: str, direction: str, changes: dict) -> None:
+    """Amount, currency and FX fields; fills `changes`."""
+    st.markdown("*Amounts (EUR unless noted)*")
+    for field, label in (
+        ("subtotal_eur", "Subtotal"), ("iva_rate", "IVA rate %"), ("iva_amount", "IVA amount"),
+        ("irpf_rate", "IRPF rate %"), ("irpf_amount", "IRPF amount"), ("total_eur", "Total"),
+        ("original_amount", "Original amount"), ("fx_rate", "FX rate"),
+        ("eur_received", "EUR actually received"),
+    ):
+        changes[field] = st.number_input(label, value=rec.get(field), format="%.4f" if field == "fx_rate"
+                                         else "%.2f", key=f"{k}_{field}")
+    changes["original_currency"] = st.text_input("Original currency", value=rec.get("original_currency") or "",
+                                                 key=f"{k}_original_currency")
+    pay_date = st.date_input("Payment date", value=_to_date(rec.get("payment_date")),
+                             min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_payment_date")
+    changes["payment_date"] = pay_date.isoformat() if pay_date else None
+    if direction == "in":
+        changes["charged_eur"] = st.number_input(
+            "EUR actually charged", value=rec.get("charged_eur"), format="%.2f",
+            help="From the document, e.g. 'Charged 42.50 EUR using 1 USD = 0.8500 EUR'. Wins over the ECB rate.",
+            key=f"{k}_charged_eur",
+        )
+    if rec.get("fx_source"):
+        fx_bits = [f"FX source: {rec['fx_source']}"]
+        if rec.get("fx_rate_used"):
+            fx_bits.append(f"rate 1 EUR = {rec['fx_rate_used']:.4f} on {rec.get('fx_rate_date') or '?'}")
+        st.caption(" · ".join(fx_bits))
+        if rec.get("fx_stale"):
+            st.warning("⚠️ Stale ECB fallback rate — review before relying on this figure.")
+        diff_pct = rec.get("fx_cross_check_diff_pct")
+        if diff_pct is not None and diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
+            st.warning(f"⚠️ LLM's own EUR estimate differs from the resolved amount by {diff_pct:.1f}%.")
+
+
+def _tax_column(rec: dict, k: str, treatments: list, reasons: list, changes: dict) -> None:
+    """Tax treatment, deductibility, asset and exclusion fields; fills `changes`."""
+    st.markdown("*Tax treatment*")
+    current_tt = rec.get("tax_treatment") if rec.get("tax_treatment") in treatments else None
+    changes["tax_treatment"] = st.selectbox(
+        "Tax treatment", treatments, index=treatments.index(current_tt),
+        format_func=lambda v: v or "— (unset)", key=f"{k}_tax_treatment",
+    )
+    changes["deductible_pct_vat"] = st.number_input(
+        "Business use — VAT %", min_value=0.0, max_value=100.0,
+        value=float(rec.get("deductible_pct_vat") if rec.get("deductible_pct_vat") is not None else 100.0),
+        key=f"{k}_deductible_pct_vat",
+    )
+    changes["deductible_pct_irpf"] = st.number_input(
+        "Business use — IRPF %", min_value=0.0, max_value=100.0,
+        value=float(rec.get("deductible_pct_irpf") if rec.get("deductible_pct_irpf") is not None else 100.0),
+        key=f"{k}_deductible_pct_irpf",
+    )
+    changes["is_capital_asset"] = st.checkbox("Capital asset", value=bool(rec.get("is_capital_asset")),
+                                              key=f"{k}_is_capital_asset")
+    changes["asset_class"] = st.text_input("Asset class", value=rec.get("asset_class") or "",
+                                           key=f"{k}_asset_class")
+    changes["excluded"] = st.checkbox("Excluded from tax computations", value=bool(rec.get("excluded")),
+                                      key=f"{k}_excluded")
+    current_reason = rec.get("excluded_reason") if rec.get("excluded_reason") in reasons else None
+    changes["excluded_reason"] = st.selectbox(
+        "Exclusion reason", reasons, index=reasons.index(current_reason),
+        format_func=lambda v: v or "—", key=f"{k}_excluded_reason",
+    )
+
+
 def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: str) -> None:
     st.markdown("**Edit one invoice**")
 
@@ -218,86 +308,12 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
     with st.form(key=f"{k}_form"):
         c_doc, c_amt, c_tax = st.columns(3)
         with c_doc:
-            st.markdown("*Document*")
-            inv_date = st.date_input("Invoice date (accounting date)", value=_to_date(rec.get("invoice_date")),
-                                     min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_invoice_date")
-            sup_date = st.date_input("Supply date (informational)", value=_to_date(rec.get("supply_date")),
-                                     min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_supply_date")
-            changes: dict = {
-                "invoice_number": st.text_input("Number", value=rec.get("invoice_number") or "",
-                                                key=f"{k}_invoice_number"),
-                "vendor_name": st.text_input("Vendor", value=rec.get("vendor_name") or "", key=f"{k}_vendor_name"),
-                "vendor_nif": st.text_input("Vendor NIF / VAT id", value=rec.get("vendor_nif") or "",
-                                            key=f"{k}_vendor_nif"),
-                "client_name": st.text_input("Client", value=rec.get("client_name") or "", key=f"{k}_client_name"),
-                "client_nif": st.text_input("Client NIF / VAT id", value=rec.get("client_nif") or "",
-                                            key=f"{k}_client_nif"),
-                "category": st.text_input("Category", value=rec.get("category") or "", key=f"{k}_category"),
-                "description": st.text_area("Description", value=rec.get("description") or "",
-                                            key=f"{k}_description"),
-                "notes": st.text_area("Notes", value=rec.get("notes") or "", key=f"{k}_notes"),
-            }
-            changes["invoice_date"] = inv_date.isoformat() if inv_date else None
-            changes["supply_date"] = sup_date.isoformat() if sup_date else None
+            changes: dict = {}
+            _document_column(rec, k, changes)
         with c_amt:
-            st.markdown("*Amounts (EUR unless noted)*")
-            for field, label in (
-                ("subtotal_eur", "Subtotal"), ("iva_rate", "IVA rate %"), ("iva_amount", "IVA amount"),
-                ("irpf_rate", "IRPF rate %"), ("irpf_amount", "IRPF amount"), ("total_eur", "Total"),
-                ("original_amount", "Original amount"), ("fx_rate", "FX rate"),
-                ("eur_received", "EUR actually received"),
-            ):
-                changes[field] = st.number_input(label, value=rec.get(field), format="%.4f" if field == "fx_rate"
-                                                 else "%.2f", key=f"{k}_{field}")
-            changes["original_currency"] = st.text_input("Original currency", value=rec.get("original_currency") or "",
-                                                         key=f"{k}_original_currency")
-            pay_date = st.date_input("Payment date", value=_to_date(rec.get("payment_date")),
-                                     min_value=date(2000, 1, 1), format="YYYY-MM-DD", key=f"{k}_payment_date")
-            changes["payment_date"] = pay_date.isoformat() if pay_date else None
-            if direction == "in":
-                changes["charged_eur"] = st.number_input(
-                    "EUR actually charged", value=rec.get("charged_eur"), format="%.2f",
-                    help="From the document, e.g. 'Charged 42.50 EUR using 1 USD = 0.8500 EUR'. Wins over the ECB rate.",
-                    key=f"{k}_charged_eur",
-                )
-            if rec.get("fx_source"):
-                fx_bits = [f"FX source: {rec['fx_source']}"]
-                if rec.get("fx_rate_used"):
-                    fx_bits.append(f"rate 1 EUR = {rec['fx_rate_used']:.4f} on {rec.get('fx_rate_date') or '?'}")
-                st.caption(" · ".join(fx_bits))
-                if rec.get("fx_stale"):
-                    st.warning("⚠️ Stale ECB fallback rate — review before relying on this figure.")
-                diff_pct = rec.get("fx_cross_check_diff_pct")
-                if diff_pct is not None and diff_pct > FX_CROSS_CHECK_THRESHOLD_PCT:
-                    st.warning(f"⚠️ LLM's own EUR estimate differs from the resolved amount by {diff_pct:.1f}%.")
+            _amounts_column(rec, k, direction, changes)
         with c_tax:
-            st.markdown("*Tax treatment*")
-            current_tt = rec.get("tax_treatment") if rec.get("tax_treatment") in treatments else None
-            changes["tax_treatment"] = st.selectbox(
-                "Tax treatment", treatments, index=treatments.index(current_tt),
-                format_func=lambda v: v or "— (unset)", key=f"{k}_tax_treatment",
-            )
-            changes["deductible_pct_vat"] = st.number_input(
-                "Business use — VAT %", min_value=0.0, max_value=100.0,
-                value=float(rec.get("deductible_pct_vat") if rec.get("deductible_pct_vat") is not None else 100.0),
-                key=f"{k}_deductible_pct_vat",
-            )
-            changes["deductible_pct_irpf"] = st.number_input(
-                "Business use — IRPF %", min_value=0.0, max_value=100.0,
-                value=float(rec.get("deductible_pct_irpf") if rec.get("deductible_pct_irpf") is not None else 100.0),
-                key=f"{k}_deductible_pct_irpf",
-            )
-            changes["is_capital_asset"] = st.checkbox("Capital asset", value=bool(rec.get("is_capital_asset")),
-                                                      key=f"{k}_is_capital_asset")
-            changes["asset_class"] = st.text_input("Asset class", value=rec.get("asset_class") or "",
-                                                   key=f"{k}_asset_class")
-            changes["excluded"] = st.checkbox("Excluded from tax computations", value=bool(rec.get("excluded")),
-                                              key=f"{k}_excluded")
-            current_reason = rec.get("excluded_reason") if rec.get("excluded_reason") in reasons else None
-            changes["excluded_reason"] = st.selectbox(
-                "Exclusion reason", reasons, index=reasons.index(current_reason),
-                format_func=lambda v: v or "—", key=f"{k}_excluded_reason",
-            )
+            _tax_column(rec, k, treatments, reasons, changes)
         submitted = st.form_submit_button("Save & mark reviewed", type="primary")
 
     if submitted:

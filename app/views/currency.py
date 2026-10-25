@@ -29,7 +29,20 @@ def render() -> None:
         "equal 1 EUR (e.g., EUR/USD = 1.09 means 1 EUR = 1.09 USD)."
     )
 
-    # --- Status ---
+    count = _render_status()
+    _render_load_controls()
+
+    if count == 0:
+        st.info("No FX rates stored yet. Click **Load rates** above to fetch historical ECB data.")
+        return
+
+    _render_charts()
+    _render_rate_lookup()
+    _render_recompute_section()
+
+
+def _render_status() -> int:
+    """Show the stored-rate metrics and return the stored entry count."""
     count = get_rate_count()
     min_date, max_date = get_stored_date_range()
 
@@ -39,8 +52,11 @@ def render() -> None:
     col_s3.metric("Latest date", max_date.isoformat() if max_date else "None")
 
     st.markdown("---")
+    return count
 
-    # --- Load Controls ---
+
+def _render_load_controls() -> None:
+    """Date-range controls that fetch and store ECB rates."""
     st.subheader("Load FX Rates")
 
     col_from, col_to, col_btn = st.columns([2, 2, 1])
@@ -67,11 +83,9 @@ def render() -> None:
 
     st.markdown("---")
 
-    # --- Charts ---
-    if count == 0:
-        st.info("No FX rates stored yet. Click **Load rates** above to fetch historical ECB data.")
-        return
 
+def _render_charts() -> None:
+    """One line chart per supported currency against EUR."""
     st.subheader("Exchange Rate Charts")
 
     chart_configs = [
@@ -111,7 +125,9 @@ def render() -> None:
         )
         st.plotly_chart(fig, width="stretch")
 
-    # --- Rate lookup ---
+
+def _render_rate_lookup() -> None:
+    """Convert an amount in a foreign currency to EUR at the stored rate."""
     st.markdown("---")
     st.subheader("Rate Lookup")
 
@@ -136,8 +152,6 @@ def render() -> None:
                 f"No rate found for {lookup_currency} on {lookup_date}. "
                 f"Try loading rates for that period first."
             )
-
-    _render_recompute_section()
 
 
 def _render_recompute_section() -> None:

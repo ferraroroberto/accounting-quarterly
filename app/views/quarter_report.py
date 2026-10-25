@@ -1,6 +1,7 @@
 """Quarter Report tab content."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 import pandas as pd
@@ -20,8 +21,22 @@ from src.classifier import eur_default_foreign_warning, validate_classifications
 from src.excel_exporter import generate_report_filename
 
 
-def render() -> None:
-    """Render the Quarter Report tab."""
+@dataclass
+class _Period:
+    """The report period picked in the header widgets."""
+
+    year_selection: int | str
+    quarter_opt: str
+    year_for_filters: int | None
+    quarter: int | None
+    start_dt: datetime
+    end_dt: datetime
+    is_since_inception: bool
+    current_year: int
+
+
+def _select_period() -> _Period:
+    """Year / quarter / custom-range widgets; returns the chosen period."""
     col1, col2, col3 = st.columns([1, 1, 2])
     current_year = datetime.now().year
     first_year = first_data_year()
@@ -64,43 +79,41 @@ def render() -> None:
                 start_dt, end_dt = quarter_datetime_bounds(year_for_filters, quarter)
             else:
                 start_dt, end_dt = datetime(year_for_filters, 1, 1), datetime(year_for_filters, 12, 31, 23, 59, 59)
+    return _Period(
+        year_selection=year_selection,
+        quarter_opt=quarter_opt,
+        year_for_filters=year_for_filters,
+        quarter=quarter,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        is_since_inception=is_since_inception,
+        current_year=current_year,
+    )
 
+
+def _load_payments(period: _Period) -> list[dict]:
+    """Classified payments for the period, cached in session state until the period changes."""
     load_btn = st.button("Load Data", type="primary", key="qr_load")
-    period_key = (year_selection, quarter_opt, start_dt.isoformat(), end_dt.isoformat(), "db")
+    period_key = (period.year_selection, period.quarter_opt, period.start_dt.isoformat(), period.end_dt.isoformat(), "db")
     if load_btn or "quarter_data" not in st.session_state or st.session_state.get("quarter_key") != period_key:
         with st.spinner("Loading payments from SQLite..."):
             payments = get_classified_for_period(
-                year_for_filters or current_year,
-                quarter,
-                start_dt,
-                end_dt,
+                period.year_for_filters or period.current_year,
+                period.quarter,
+                period.start_dt,
+                period.end_dt,
                 input_mode="db",
             )
             st.session_state["quarter_data"] = payments
             st.session_state["quarter_key"] = period_key
-            st.session_state["quarter_year"] = year_selection
-            st.session_state["quarter_q"] = quarter
+            st.session_state["quarter_year"] = period.year_selection
+            st.session_state["quarter_q"] = period.quarter
 
-    payments = st.session_state.get("quarter_data", [])
+    return st.session_state.get("quarter_data", [])
 
-    if not payments:
-        st.warning("No payments found for the selected period. Check your SQLite data and date range.")
-        return
 
-    grand = calculate_grand_totals(payments)
-    regional = calculate_regional_totals(payments)
-    counts = get_transaction_count(payments)
-    val_report = validate_classifications(payments)
-
-    foreign = [p for p in payments if eur_default_foreign_warning(p)]
-    if foreign:
-        st.warning(
-            f"⚠️ {len(foreign)} EUR charge(s) in this period fell to the `eur_default` (SPAIN) rule "
-            f"for a customer that looks foreign — review them in **Transaction Browser**."
-        )
-
-    st.markdown("---")
-
+def _render_totals_and_breakdowns(grand: dict, regional: dict, counts: dict) -> None:
+    """Headline totals plus the income-type and geographic breakdowns."""
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Income", f"{grand.get('total_income', 0):,.2f} EUR")
     m2.metric("Total Fees", f"{grand.get('total_fee', 0):,.2f} EUR")
@@ -147,7 +160,9 @@ def render() -> None:
             delta_color="off",
         )
 
-    st.markdown("---")
+
+def _render_monthly_breakdown(payments: list[dict], year_for_filters: int | None, quarter: int | None) -> None:
+    """Monthly table per geographic region."""
     st.subheader("Monthly Breakdown")
 
     geo_tab_labels = ["Spain", "EU (not Spain)", "Outside EU"]
@@ -190,8 +205,9 @@ def render() -> None:
             else:
                 st.info("No data for this region in the selected period.")
 
-    st.markdown("---")
 
+def _render_validation_and_export(payments: list[dict], val_report: dict, period: _Period) -> None:
+    """Classification status next to the Excel export."""
     val_col, export_col = st.columns([1, 1])
 
     with val_col:
@@ -208,13 +224,52 @@ def render() -> None:
 
     with export_col:
         st.subheader("Export")
-        export_year = year_for_filters or current_year
-        label = f"Q{quarter}_{export_year}" if quarter else ("Since_Inception" if is_since_inception else str(export_year))
+        export_year = period.year_for_filters or period.current_year
+        label = (
+            f"Q{period.quarter}_{export_year}" if period.quarter
+            else ("Since_Inception" if period.is_since_inception else str(export_year))
+        )
         filename = (
             "Stripe_Report_Since_Inception.xlsx"
-            if is_since_inception
-            else generate_report_filename(export_year, quarter)
+            if period.is_since_inception
+            else generate_report_filename(export_year, period.quarter)
         )
 
         if st.button("Generate Excel Report", type="primary", key="qr_export"):
-            render_excel_download(payments, export_year, quarter, filename, download_key="qr_download", label=label)
+            render_excel_download(
+                payments, export_year, period.quarter, filename, download_key="qr_download", label=label,
+            )
+
+
+def render() -> None:
+    """Render the Quarter Report tab."""
+    period = _select_period()
+    payments = _load_payments(period)
+
+    if not payments:
+        st.warning("No payments found for the selected period. Check your SQLite data and date range.")
+        return
+
+    grand = calculate_grand_totals(payments)
+    regional = calculate_regional_totals(payments)
+    counts = get_transaction_count(payments)
+    val_report = validate_classifications(payments)
+
+    foreign = [p for p in payments if eur_default_foreign_warning(p)]
+    if foreign:
+        st.warning(
+            f"⚠️ {len(foreign)} EUR charge(s) in this period fell to the `eur_default` (SPAIN) rule "
+            f"for a customer that looks foreign — review them in **Transaction Browser**."
+        )
+
+    st.markdown("---")
+
+    _render_totals_and_breakdowns(grand, regional, counts)
+
+    st.markdown("---")
+
+    _render_monthly_breakdown(payments, period.year_for_filters, period.quarter)
+
+    st.markdown("---")
+
+    _render_validation_and_export(payments, val_report, period)

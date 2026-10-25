@@ -1,6 +1,7 @@
 """Social Security (Seguridad Social) tab — import bank export and view cuotas."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -33,21 +34,22 @@ def _resolve(path: str) -> Path:
     return p if p.is_absolute() else ROOT / path
 
 
-def render() -> None:
-    show_flash("ss")
-    st.header("Seguridad Social — Cuotas de autónomo")
-    st.markdown(
-        "Import Social Security (Seguridad Social) monthly quota payments from a bank "
-        "account export. Imported amounts are automatically included as deductible expenses "
-        "in **Modelo 130** (box 02 — gastos deducibles YTD)."
-    )
+@dataclass
+class _ImportSettings:
+    """Bank-export import settings as entered in the form (text columns already stripped)."""
 
-    cfg = load_config()
-    ss_cfg = cfg.get("social_security", {})
+    file_path: Path
+    date_column: str
+    amount_column: str
+    description_column: Optional[str]
+    concept_column: Optional[str]
+    concept_patterns: list[str]
+    sheet_name: int | str
+    skiprows: Optional[int]
 
-    # -------------------------------------------------------------------------
-    # Import section
-    # -------------------------------------------------------------------------
+
+def _render_import_form(ss_cfg: dict) -> _ImportSettings:
+    """Import-settings widgets, defaulted from the `social_security` config block."""
     st.subheader("Import from bank export")
 
     default_file = ss_cfg.get("bank_export_file", "tmp/social_security_bank_export.xlsx")
@@ -123,6 +125,26 @@ def render() -> None:
 
     file_path = _resolve(file_path_str)
 
+    return _ImportSettings(
+        file_path=file_path,
+        date_column=date_column,
+        amount_column=amount_column,
+        description_column=desc_col_clean,
+        concept_column=concept_col_clean,
+        concept_patterns=concept_patterns,
+        sheet_name=sheet_name,
+        skiprows=skiprows,
+    )
+
+
+def _render_preview(settings: _ImportSettings) -> None:
+    """Button that shows the raw first rows of the export and the detected header row."""
+    file_path = settings.file_path
+    sheet_name = settings.sheet_name
+    skiprows = settings.skiprows
+    date_column = settings.date_column
+    amount_column = settings.amount_column
+
     # Preview
     if st.button("Preview file columns", key="ss_preview"):
         if not file_path.exists():
@@ -142,7 +164,17 @@ def render() -> None:
             except Exception as exc:
                 st.error(f"Could not read file: {exc}")
 
-    st.markdown("---")
+
+def _render_import_buttons(settings: _ImportSettings) -> None:
+    """Import and clear buttons."""
+    file_path = settings.file_path
+    date_column = settings.date_column
+    amount_column = settings.amount_column
+    desc_col_clean = settings.description_column
+    concept_col_clean = settings.concept_column
+    concept_patterns = settings.concept_patterns
+    sheet_name = settings.sheet_name
+    skiprows = settings.skiprows
 
     col_imp, col_clear = st.columns([2, 1])
     with col_imp:
@@ -181,9 +213,9 @@ def render() -> None:
             flash("ss", "success", "All Social Security payment rows cleared.")
             st.rerun()
 
-    # -------------------------------------------------------------------------
-    # Manual entry fallback
-    # -------------------------------------------------------------------------
+
+def _render_manual_entry() -> None:
+    """Manual entry for a month the bank export does not cover."""
     with st.expander("Add a manual entry (month not covered by a bank export)"):
         st.markdown(
             "Use this for a month missing from the bank export, or to record a refund "
@@ -219,15 +251,15 @@ def render() -> None:
                 else:
                     st.warning("An identical entry (same date, amount and description) already exists.")
 
-    # -------------------------------------------------------------------------
-    # Summary by year
-    # -------------------------------------------------------------------------
+
+def _render_year_summary() -> tuple[pd.DataFrame, list] | None:
+    """Per-year totals; returns the payments frame and years, or None when nothing is stored."""
     st.subheader("Summary by year")
 
     all_rows = get_ss_payments()
     if not all_rows:
         st.info("No Social Security payments stored yet. Import a bank export above.")
-        return
+        return None
 
     df_all = pd.DataFrame(all_rows)
     df_all["payment_date"] = pd.to_datetime(df_all["payment_date"])
@@ -244,10 +276,11 @@ def render() -> None:
         summary_data.append({"Year": yr, "Payments": count, "Total (€)": round(total, 2)})
 
     st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
+    return df_all, years_available
 
-    # -------------------------------------------------------------------------
-    # Detail table with optional year filter
-    # -------------------------------------------------------------------------
+
+def _render_payment_detail(df_all: pd.DataFrame, years_available: list) -> None:
+    """Detail table with a year filter, a quarterly breakdown and a CSV download."""
     st.subheader("Payment detail")
 
     selected_year = st.selectbox("Filter by year", options=["All"] + [str(y) for y in years_available], key="ss_filter_year")
@@ -296,9 +329,9 @@ def render() -> None:
         key="ss_download_csv",
     )
 
-    # -------------------------------------------------------------------------
-    # Delete individual row
-    # -------------------------------------------------------------------------
+
+def _render_delete_row() -> None:
+    """Delete one stored payment row by id."""
     with st.expander("Delete a payment row"):
         st.markdown("Enter the **ID** of the row you want to delete (visible in the table above).")
         del_id = st.number_input("Row ID to delete", min_value=1, step=1, key="ss_del_id")
@@ -306,3 +339,32 @@ def render() -> None:
             delete_ss_payment(int(del_id))
             flash("ss", "success", f"Row {del_id} deleted.")
             st.rerun()
+
+
+def render() -> None:
+    show_flash("ss")
+    st.header("Seguridad Social — Cuotas de autónomo")
+    st.markdown(
+        "Import Social Security (Seguridad Social) monthly quota payments from a bank "
+        "account export. Imported amounts are automatically included as deductible expenses "
+        "in **Modelo 130** (box 02 — gastos deducibles YTD)."
+    )
+
+    cfg = load_config()
+    ss_cfg = cfg.get("social_security", {})
+
+    settings = _render_import_form(ss_cfg)
+    _render_preview(settings)
+
+    st.markdown("---")
+
+    _render_import_buttons(settings)
+    _render_manual_entry()
+
+    summary = _render_year_summary()
+    if summary is None:
+        return
+    df_all, years_available = summary
+
+    _render_payment_detail(df_all, years_available)
+    _render_delete_row()

@@ -95,7 +95,7 @@ from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
 log = get_logger(__name__)
 
 ROOT = Path(__file__).parent.parent
-DEFAULT_OUT_ROOT = SWEEP_ROOT  # single source: src/invoice_dedupe.py (#189)
+DEFAULT_OUT_ROOT = SWEEP_ROOT  # single source: src/invoice_dedupe.py
 GESTOR_NOTES_PATH = ROOT / "gestor_notes.md"  # git-ignored free-text notes for the accountant
 PACK_INVOICES_DIR = "invoices"  # gestor-pack's copy of the quarter's ledger invoices, under the quarter folder
 
@@ -669,7 +669,7 @@ def _stored_results(year: int, quarter: int, conn: sqlite3.Connection) -> dict[s
             if r["model"] in QUARTERLY_MODELS}
 
 
-# The real filing sheet (#101): AEAT form order, credit chain, deadlines,
+# The real filing sheet: AEAT form order, credit chain, deadlines,
 # filed-version diff. Swappable (tests and callers may plug in another).
 filing_sheet_renderer: FilingSheetRenderer = render_filing_sheet
 

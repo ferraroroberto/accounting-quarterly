@@ -23,7 +23,7 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "billing_country": "TEXT",
     "amount_original": "REAL",
     "fx_rate": "REAL",
-    # Fee split from balance_transaction.fee_details (EUR); NULL = unknown (#135).
+    # Fee split from balance_transaction.fee_details (EUR); NULL = unknown.
     "fee_stripe": "REAL",
     "fee_application": "REAL",
     "activity_type": "TEXT",
@@ -111,7 +111,7 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "vat_treatment": "TEXT",     # IVA_ES_21 | IVA_EU_B2B | IVA_EXPORT | IVA_EXEMPT | OSS_EU
         "activity_type": "TEXT",     # IAE activity: COACHING | NEWSLETTER | ILLUSTRATIONS (NULL until set)
         "supply_country": "TEXT",    # ISO-2 country code of the vendor / client
-        # Invoice ledger (#90). The accounting date is `invoice_date`;
+        # Invoice ledger. The accounting date is `invoice_date`;
         # `supply_date` is informational only.
         "tax_treatment": "TEXT",           # TAX_TREATMENTS_IN / TAX_TREATMENTS_OUT
         "deductible_pct_vat": "REAL",      # backfilled from deductible_pct
@@ -125,7 +125,7 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
         "vendor_vat_id_norm": "TEXT",      # normalize_vat_id(vendor_nif)
         "locked_fields": "TEXT",           # JSON list of user-edited field names
         "reviewed_at": "TEXT",
-        # FX resolution (#93): the LLM's own subtotal_eur/iva_amount/total_eur are
+        # FX resolution: the LLM's own subtotal_eur/iva_amount/total_eur are
         # only a cross-check — the authoritative EUR figure is resolved by
         # src.fx_rates.resolve_invoice_amounts (ECB rate on invoice_date, or the
         # EUR actually charged when the document states it) and written here.
@@ -265,7 +265,7 @@ def _ensure_audit_schema(conn: sqlite3.Connection) -> None:
 SNAPSHOT_COMPUTED = "COMPUTED"
 SNAPSHOT_FILED = "FILED"
 
-# Versioned tax snapshots (#101): one row per (year, quarter, model, version).
+# Versioned tax snapshots: one row per (year, quarter, model, version).
 # The latest COMPUTED version is the working draft, rewritten by every
 # recompute; a FILED version is born FILED ("Mark filed") and is immutable.
 _TAX_SNAPSHOTS_TABLE_SQL = """

@@ -36,7 +36,7 @@ from src.vat_rules import IVA_ES_RATE, SPANISH_21_TREATMENTS
 log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Modelo 303 — AEAT box model, pro-rata and credit chain (#97)
+# Modelo 303 — AEAT box model, pro-rata and credit chain
 # ---------------------------------------------------------------------------
 # Box layout and formulas follow the AEAT Modelo 303 form as reproduced in the
 # "Manual práctico IVA 2025", cap. 9 (anexo, Modelo 303):
@@ -63,7 +63,7 @@ _RATE_ROWS: dict[float, tuple[str, str]] = {
 }
 _SPANISH_RATES_PCT: tuple[float, ...] = tuple(_RATE_ROWS)
 Q4_NEGATIVE_OPTIONS: tuple[str, ...] = ("compensate", "refund")
-# tax.platform_fee_vat_treatment (#147): self-assess the Stripe application fees
+# tax.platform_fee_vat_treatment: self-assess the Stripe application fees
 # as a non-EU reverse charge (default), or leave them out of the 303.
 PLATFORM_FEE_VAT_TREATMENTS: tuple[str, ...] = ("NON_EU_RC", "NONE")
 # Safety bound for the app-computed credit chain when no filed return stops it.
@@ -77,7 +77,7 @@ class _Collected303:
     records: dict[str, list[dict]] = field(default_factory=lambda: defaultdict(list))
     notes: list[str] = field(default_factory=list)
     platform_fee_treatment: str = "NON_EU_RC"
-    platform_fees: float = 0.0          # quarter's fee_application total self-assessed in 12/13 (#147)
+    platform_fees: float = 0.0          # quarter's fee_application total self-assessed in 12/13
     platform_fees_cuota: float = 0.0
     fee_split_unknown: int = 0
 
@@ -285,7 +285,7 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
                "description": str(inv.get("description") or "")[:50],
                "subtotal_eur": round(base, 2), "iva_amount": round(iva, 2),
                "deductible_pct_vat": inv["deductible_pct_vat"], "tax_treatment": tt,
-               # The invoice's own stored rate (#137) — the 390 prefers this over
+               # The invoice's own stored rate — the 390 prefers this over
                # inferring the rate from VAT ÷ base, which a blended-rate bill or
                # rounding can misroute into the wrong rate row.
                "iva_rate": _rate_pct(inv.get("iva_rate"))}
@@ -325,7 +325,7 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             else:
                 base_rest, iva_rest = base, iva
             # Only a zero-VAT remainder adds nothing; a negative one is a received
-            # rectificativa and must net off the quarter's 28/29 (#161).
+            # rectificativa and must net off the quarter's 28/29.
             if iva_rest != 0:
                 col.acc["c28_base"] += base_rest * pct
                 col.acc["c29_cuota"] += iva_rest * pct

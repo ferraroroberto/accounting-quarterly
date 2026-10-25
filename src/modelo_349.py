@@ -69,7 +69,7 @@ def compute_modelo_349(
              {"source": "invoice_out", "id": inv["id"], "date": str(inv["tx_date"])[:10]})
 
     registry = load_registry()
-    # tax.activity_start_date (issue #133): purchases dated before it don't
+    # tax.activity_start_date: purchases dated before it don't
     # belong to this business either, so the same lower bound applies here.
     start, end = quarter_iso_bounds(year, quarter)
     start = clamp_start(start, config)

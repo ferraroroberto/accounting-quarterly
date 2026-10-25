@@ -23,7 +23,7 @@ FRANKFURTER_BASES = [
 SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF", "AUD"]
 
 # A fallback rate older than this many days than the date it was requested for
-# is flagged `is_stale` (issue #93) — the exact date is missing (weekend/holiday
+# is flagged `is_stale` — the exact date is missing (weekend/holiday
 # gaps are normal and stay unflagged), but a week-plus-old rate usually means
 # nobody has loaded fresh data and the figure should be reviewed.
 STALE_TOLERANCE_DAYS = 5
@@ -356,7 +356,7 @@ def get_latest_fx_sync_at(db_path: Optional[str | Path] = None) -> Optional[date
 
 
 # ---------------------------------------------------------------------------
-# Backfill (issue #93): keep rates current for every currency actually in use,
+# Backfill: keep rates current for every currency actually in use,
 # not just the hard-coded SUPPORTED_CURRENCIES list.
 # ---------------------------------------------------------------------------
 
@@ -418,11 +418,10 @@ def backfill_to_today(
 
 
 # ---------------------------------------------------------------------------
-# Invoice FX resolution (issue #93): EUR for a foreign-currency invoice comes
+# Invoice FX resolution: EUR for a foreign-currency invoice comes
 # from the ECB rate on the invoice date — not the LLM's own guess — unless the
 # document states the EUR actually charged, or (income) EUR was actually
-# received. See docs/tax-conventions.md-equivalent guidance in issue #93 /
-# private decision D5.
+# received. See docs/tax-conventions.md-equivalent guidance on private decision D5.
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -569,7 +568,7 @@ def resolve_invoice_amounts(
 
 
 # ---------------------------------------------------------------------------
-# Recompute stored invoice FX (issue #93 follow-up): resolve_invoice_amounts
+# Recompute stored invoice FX: resolve_invoice_amounts
 # only ran at OCR-extraction time, so invoices already stored before this
 # feature shipped keep whatever EUR figure the LLM guessed. This re-runs the
 # resolver over stored non-EUR invoices and writes the corrected figures.
@@ -756,7 +755,7 @@ def recompute_stored_invoice_fx(
 
 
 # ---------------------------------------------------------------------------
-# Exchange differences (issue #93 / private decision D5): a later conversion
+# Exchange differences (private decision D5): a later conversion
 # of a foreign-currency balance from activity income into EUR realises a
 # gain or loss against the EUR figure originally booked. Recorded here and
 # fed into Modelo 130 box 01 (c01_ingresos) in the period of conversion.

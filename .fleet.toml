@@ -20,6 +20,7 @@ doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "23dbefa46635c95
 instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "60fdd0350f18d28838428b2e773f7868f6381fbf", dest = "scripts/instruction_ratchet.py" }
 structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "84d2b12ab416551762e4a615e4a706df91cea69f", dest = "scripts/structure_ratchet.py" }
 static_ratchet = { src = "scripts/static_ratchet.py", sha = "537cf3931b57e7453ed251850c0dbeac042b03bf", dest = "scripts/static_ratchet.py" }
+comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "e56308e1c099712cf5a006557c94e3f9ae4fe8aa", dest = "scripts/comment_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
 # runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when
@@ -89,3 +90,14 @@ baseline = ".dead-code-ratchet-baseline.json"
 [static_ratchet]
 enabled  = true
 baseline = ".static-ratchet-baseline.json"
+
+# [comment_ratchet] -- the scaffold's history-in-comments ratchet. The gate
+# (scripts/verify-before-ship.ps1) runs scripts/comment_ratchet.py, which counts #NNN
+# issue references inside product-code comments (py, js, css, ps1) per file and fails
+# when a file's count rises above .comment-ratchet-baseline.json. Tests and vendored
+# destinations are left out by the script. Exit 3 (git unusable, a file that cannot be
+# scanned) is NOT CONFIRMED; the gate stage fails on any non-zero exit. Procedure:
+# project-scaffolding docs/comment-ratchet.md.
+[comment_ratchet]
+enabled  = true
+baseline = ".comment-ratchet-baseline.json"

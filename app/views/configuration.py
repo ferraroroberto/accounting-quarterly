@@ -405,7 +405,7 @@ def _render_tax_settings(cfg: dict) -> None:
         configured = tax.get(config_key, "EU_B2C_ES21")
         options = EU_B2C_OPTIONS
         if configured not in options:
-            # Stale config (e.g. a legacy IVA_EU_B2B default from before #113) —
+            # Stale config (e.g. a legacy IVA_EU_B2B default from before B2B depended on the VAT id) —
             # keep it selectable so the page doesn't crash, but it no longer has
             # any effect: B2B now depends solely on the customer's VAT id.
             options = options + [configured]
@@ -422,7 +422,7 @@ def _render_tax_settings(cfg: dict) -> None:
     st.divider()
     if st.button("Save Tax Settings", type="primary", key="save_tax_settings"):
         # Update only the keys this form edits: the tax section also holds
-        # settings it doesn't show (prorrata, activity_start_date, …) (#187).
+        # settings it doesn't show (prorrata, activity_start_date, …).
         cfg.setdefault("tax", {}).update({
             "regime": regime,
             "vat_registered": vat_registered,

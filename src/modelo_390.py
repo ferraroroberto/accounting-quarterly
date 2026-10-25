@@ -203,13 +203,13 @@ def _f(v: Any) -> float:
 
 # (rate, base weight, cuota weight, ratio fallback used?, raw rate % if any) of
 # one audit record, per section. The last two elements are read by add_quarter
-# to count fallbacks and off-rate (non 4/10/21 %) records for the audit (#137);
+# to count fallbacks and off-rate (non 4/10/21 %) records for the audit;
 # sections whose rate is always explicit (rate_pct/manual) omit them.
 def _weights_interiores(rec: dict) -> tuple:
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
     if rec.get("source") == "manual_entry":
         return _nearest_rate(rec.get("vat_rate")), _f(rec.get("base")), _f(rec.get("cuota"))
-    if rec.get("source") == "platform_fee":   # Stripe application fee, NON_EU_RC deducted at 100% (#147)
+    if rec.get("source") == "platform_fee":   # Stripe application fee, NON_EU_RC deducted at 100%
         fee, rate = _f(rec.get("fee_application")), _f(rec.get("rate_pct"))
         return _nearest_rate(rate), fee, fee * rate / 100.0
     if "rate_pct" in rec:   # NON_EU_RC self-assessed, deducted with the current domestic operations
@@ -245,7 +245,7 @@ class _RateSplit:
     total_base: float = 0.0
     total_cuota: float = 0.0
     fallback_quarters: list[int] = field(default_factory=list)
-    rate_fallback_count: int = 0                             # records with no stored iva_rate (#137)
+    rate_fallback_count: int = 0                             # records with no stored iva_rate
     off_rate_values: set[float] = field(default_factory=set)  # stored rates not in RATES, reported not forced
 
     def add_quarter(self, quarter: int, weights: Iterable[tuple],

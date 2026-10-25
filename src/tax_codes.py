@@ -75,7 +75,7 @@ def derive_vat_treatment_for_invoice(
 
 
 # ---------------------------------------------------------------------------
-# Invoice ledger: tax treatment, exclusion reasons, locks (issue #90)
+# Invoice ledger: tax treatment, exclusion reasons, locks
 # ---------------------------------------------------------------------------
 
 # Per-invoice tax treatment. Expense (direction='in') and income ('out') use
@@ -123,7 +123,7 @@ _LEGACY_TO_TAX_TREATMENT: dict[tuple[str, str], str] = {
 }
 
 # Reverse direction: keeps the legacy `vat_treatment` column (still read by the
-# engine until the #97 box model lands) consistent when `tax_treatment` is edited.
+# engine until the box model lands) consistent when `tax_treatment` is edited.
 _TAX_TREATMENT_TO_LEGACY: dict[str, str] = {
     "DOMESTIC": "IVA_ES_21",
     "DOMESTIC_CAPITAL": "IVA_ES_21",

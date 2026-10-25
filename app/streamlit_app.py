@@ -30,7 +30,7 @@ st.set_page_config(
 def _init_app() -> None:
     init_db()
     init_fx_table()
-    # FX rates auto-backfill to today (#93) — cheap, idempotent, and never
+    # FX rates auto-backfill to today — cheap, idempotent, and never
     # raises (network failures are caught and logged inside the function), so
     # it can't break app startup when offline.
     backfill_to_today()

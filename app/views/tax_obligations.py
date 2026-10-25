@@ -131,7 +131,7 @@ def _render_tax_calendar(year: int) -> None:
 # ---------------------------------------------------------------------------
 
 # Box grouping/order for this tab's display only — labels are the single
-# canonical MODELO303_BOX_LABELS table (src/tax_models.py, #189), shared with
+# canonical MODELO303_BOX_LABELS table (src/tax_models.py), shared with
 # the reconciliation view and the filing sheet.
 _M303_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("IVA devengado", ("01", "03", "04", "06", "07", "09", "10", "11", "12", "13", "27")),
@@ -208,7 +208,7 @@ def _render_modelo_303(year: int, quarter: int, bundle: dict[str, tuple[Any, str
 # ---------------------------------------------------------------------------
 
 # Box grouping/order for this tab's display only — labels are the single
-# canonical MODELO130_BOX_LABELS table (src/tax_models.py, #189), shared with
+# canonical MODELO130_BOX_LABELS table (src/tax_models.py), shared with
 # the reconciliation view and the filing sheet.
 _M130_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("I. Actividades económicas en estimación directa (año acumulado)",

@@ -21,8 +21,8 @@ log = get_logger(__name__)
 
 # Legacy Modelo303Result field names -> current AEAT-box field names. Two
 # generations are mapped straight to the current name:
-# - pre-e08a3ff9 (#42): box_28_iva_soportado / box_29_base_soportado (swapped);
-# - pre-#97: box_NN_* names, where "box_01" was really the 21% row (07/09),
+# - pre-e08a3ff9: box_28_iva_soportado / box_29_base_soportado (swapped);
+# - the first box model: box_NN_* names, where "box_01" was really the 21% row (07/09),
 #   "export_base" held non-EU sales (now box 120, not-subject by location) and
 #   "box_48_resultado" was 46 with no carry-forward (= 66 at 100% attribution).
 # Snapshots persisted before a rename still carry these keys in
@@ -41,7 +41,7 @@ _MODELO303_LEGACY_RENAMES: dict[str, str] = {
 }
 
 
-# Pre-#98 Modelo130Result field names -> current AEAT-box fields. The legacy
+# Pre-box-model Modelo130Result field names -> current AEAT-box fields. The legacy
 # "box_02_gastos" excluded the 5 % allowance (now inside 02) so it becomes the
 # ``gastos_reales`` context field; "rendimiento_neto" was 01 − 02 after the
 # allowance = box 03; "box_05_base" was box 04, "box_14_pagos_anteriores" was
@@ -154,7 +154,7 @@ def _decode_347_row(r: dict[str, Any]) -> Modelo347Row:
 
 def _decode_349_row(r: dict[str, Any]) -> Modelo349Row:
     if "buyer_vat_id" in r:
-        # Pre-#99 row: EU B2B sales only (key S), VAT id stored as entered.
+        # Row stored before the buyer VAT id split: EU B2B sales only (key S), VAT id stored as entered.
         vat = "".join(ch for ch in str(r.get("buyer_vat_id") or "").upper() if ch.isalnum())
         vat = "" if vat == "UNKNOWN" else vat
         return Modelo349Row(key="S", country=vat[:2] if vat[:2].isalpha() else "", vat_id=vat,

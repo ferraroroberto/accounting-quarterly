@@ -349,39 +349,10 @@ def _round_to_total(parts: dict[float, float], total: float) -> dict[float, floa
 # Engine
 # ---------------------------------------------------------------------------
 
-def compute_modelo_390(
-    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None,
-    *, quarters: Optional[list[Modelo303Result]] = None,
-) -> Modelo390Result:
-    """Compute the Modelo 390 of ``year`` from its four Modelo 303 results.
-
-    ``quarters`` may pass the four already-computed 303 results (Q1..Q4) to
-    avoid recomputing them; otherwise they are computed with ``config``
-    (the app config when ``None``).
-    """
-    if config is None:
-        config = load_app_config()
-    qs = quarters if quarters is not None else [compute_modelo_303(year, q, db_conn, config) for q in range(1, 5)]
-    if [r.quarter for r in qs] != [1, 2, 3, 4] or any(r.year != year for r in qs):
-        raise ValueError(f"Modelo 390 {year} needs the four 303 results of {year}, Q1..Q4")
-
-    result = Modelo390Result(year=year, quarters=list(qs))
-    b: dict[str, float] = {}
-    notes: list[str] = []
-    per_q: dict[str, list[float]] = {}   # audit: quarterly contributions per box
-
-    def _qsum(box: str, getter) -> float:
-        vals = [round(float(getter(r)), 2) for r in qs]
-        per_q[box] = vals
-        return round(sum(vals), 2)
-
-    # --- IVA devengado ------------------------------------------------------
-    for rate, (fb, fc) in DEVENGADO_ORDINARIO.items():
-        base_f, cuota_f = {4.0: ("c01_base", "c03_cuota"), 10.0: ("c04_base", "c06_cuota"),
-                           21.0: ("c07_base", "c09_cuota")}[rate]
-        b[fb] = _qsum(fb, lambda r, n=base_f: getattr(r, n))
-        b[fc] = _qsum(fc, lambda r, n=cuota_f: getattr(r, n))
-
+def _split_by_rate(
+    qs: list[Modelo303Result], b: dict[str, float], notes: list[str],
+) -> tuple[dict[str, tuple[float, float]], dict[str, tuple[_RateSplit, dict]]]:
+    """Fill the per-rate base/cuota boxes from the 303 audit records; returns the section totals and splits."""
     sections = {key: (_RateSplit(), rows) for key, (_, rows) in _SECTIONS.items()}
     for r in qs:
         c10 = _audit_inputs(r, "c10_base").get("records", [])
@@ -417,23 +388,13 @@ def compute_modelo_390(
             rates_str = ", ".join(f"{r:g} %" for r in sorted(split.off_rate_values))
             notes.append(f"{_SECTIONS[key][0]}: record(s) at {rates_str} (not 4/10/21 %) were placed "
                          "in the nearest modelled row.")
+    return totals, sections
 
-    b["27"] = _qsum("27", lambda r: r.c12_base)
-    b["28"] = _qsum("28", lambda r: r.c13_cuota)
-    b["33"] = round(b["01"] + b["03"] + b["05"] + b["545"] + b["547"] + b["551"] + b["27"], 2)
-    b["34"] = round(b["02"] + b["04"] + b["06"] + b["546"] + b["548"] + b["552"] + b["28"], 2)
-    b["47"] = b["34"]   # no recargo de equivalencia
 
-    # --- IVA deducible --------------------------------------------------------
-    b["48"], b["49"] = totals["interiores"]
-    b["50"], b["51"] = totals["inversion"]
-    b["597"], b["598"] = totals["aic_ded"]
-    b["63"] = _qsum("63", lambda r: r.c43_regularizacion_bienes_inversion)
-    b["522"] = _qsum("522", lambda r: r.c44_regularizacion_prorrata)
-    b["64"] = round(b["49"] + b["51"] + b["598"] + b["63"] + b["522"], 2)
-    b["65"] = round(b["47"] - b["64"], 2)
-
-    # --- Resultado de la liquidación -----------------------------------------
+def _fill_liquidation(
+    b: dict[str, float], qs: list[Modelo303Result], notes: list[str], year: int,
+) -> _CreditWalk:
+    """Boxes 84-98 and 662 (result of the liquidation); returns the credit walk for the audit."""
     # 85: credit of earlier years applied this year; 662: credit generated in the year still
     # pending after Q4 (FIFO walk over the quarters, see _walk_credit).
     walk = _walk_credit(qs)
@@ -451,20 +412,17 @@ def compute_modelo_390(
     # 662: credit generated in an earlier period of the year and still pending after the last
     # period — Q4's 87 minus what is left of the credit carried in from earlier years.
     b["662"] = round(max(0.0, q4.c87_pendiente_posteriores - walk.pending_earlier_years), 2)
+    return walk
 
-    # --- Volumen de operaciones ---------------------------------------------
-    b["99"] = round(b["01"] + b["03"] + b["05"], 2)
-    b["103"] = _qsum("103", lambda r: r.c59_entregas_intracom)
-    b["104"] = _qsum("104", lambda r: r.c60_exportaciones)
-    b["105"] = _qsum("105", lambda r: r.exempt_base)
-    b["110"] = _qsum("110", lambda r: r.c120_no_sujetas_localizacion)
-    b["126"] = _qsum("126", lambda r: r.oss_base)
-    b["108"] = round(b["99"] + b["103"] + b["104"] + b["105"] + b["110"] + b["126"], 2)
 
-    # --- Prorratas -------------------------------------------------------------
+def _fill_prorrata(
+    result: Modelo390Result, b: dict[str, float], qs: list[Modelo303Result], notes: list[str], year: int,
+) -> None:
+    """Section 12 (general pro-rata) when exempt operations exist and the pro-rata is enabled."""
     with_right = sum(r.c01_base + r.c04_base + r.c07_base + r.c59_entregas_intracom + r.c60_exportaciones
                      + r.c120_no_sujetas_localizacion + r.oss_base for r in qs)
     exempt = sum(r.exempt_base for r in qs)
+    q4 = qs[3]
     if exempt > 0 and q4.prorrata_enabled:
         definitive = q4.prorrata_definitive_pct
         if definitive is None:
@@ -480,6 +438,70 @@ def compute_modelo_390(
     elif exempt > 0:
         notes.append("Exempt operations without right to deduct exist but the pro-rata is disabled "
                      "(tax.prorrata.enabled = false): section 12 left blank.")
+
+
+def compute_modelo_390(
+    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None,
+    *, quarters: Optional[list[Modelo303Result]] = None,
+) -> Modelo390Result:
+    """Compute the Modelo 390 of ``year`` from its four Modelo 303 results.
+
+    ``quarters`` may pass the four already-computed 303 results (Q1..Q4) to
+    avoid recomputing them; otherwise they are computed with ``config``
+    (the app config when ``None``).
+    """
+    if config is None:
+        config = load_app_config()
+    qs = quarters if quarters is not None else [compute_modelo_303(year, q, db_conn, config) for q in range(1, 5)]
+    if [r.quarter for r in qs] != [1, 2, 3, 4] or any(r.year != year for r in qs):
+        raise ValueError(f"Modelo 390 {year} needs the four 303 results of {year}, Q1..Q4")
+
+    result = Modelo390Result(year=year, quarters=list(qs))
+    b: dict[str, float] = {}
+    notes: list[str] = []
+    per_q: dict[str, list[float]] = {}   # audit: quarterly contributions per box
+
+    def _qsum(box: str, getter) -> float:
+        vals = [round(float(getter(r)), 2) for r in qs]
+        per_q[box] = vals
+        return round(sum(vals), 2)
+
+    # --- IVA devengado ------------------------------------------------------
+    for rate, (fb, fc) in DEVENGADO_ORDINARIO.items():
+        base_f, cuota_f = {4.0: ("c01_base", "c03_cuota"), 10.0: ("c04_base", "c06_cuota"),
+                           21.0: ("c07_base", "c09_cuota")}[rate]
+        b[fb] = _qsum(fb, lambda r, n=base_f: getattr(r, n))
+        b[fc] = _qsum(fc, lambda r, n=cuota_f: getattr(r, n))
+
+    totals, sections = _split_by_rate(qs, b, notes)
+
+    b["27"] = _qsum("27", lambda r: r.c12_base)
+    b["28"] = _qsum("28", lambda r: r.c13_cuota)
+    b["33"] = round(b["01"] + b["03"] + b["05"] + b["545"] + b["547"] + b["551"] + b["27"], 2)
+    b["34"] = round(b["02"] + b["04"] + b["06"] + b["546"] + b["548"] + b["552"] + b["28"], 2)
+    b["47"] = b["34"]   # no recargo de equivalencia
+
+    # --- IVA deducible --------------------------------------------------------
+    b["48"], b["49"] = totals["interiores"]
+    b["50"], b["51"] = totals["inversion"]
+    b["597"], b["598"] = totals["aic_ded"]
+    b["63"] = _qsum("63", lambda r: r.c43_regularizacion_bienes_inversion)
+    b["522"] = _qsum("522", lambda r: r.c44_regularizacion_prorrata)
+    b["64"] = round(b["49"] + b["51"] + b["598"] + b["63"] + b["522"], 2)
+    b["65"] = round(b["47"] - b["64"], 2)
+
+    walk = _fill_liquidation(b, qs, notes, year)
+
+    # --- Volumen de operaciones ---------------------------------------------
+    b["99"] = round(b["01"] + b["03"] + b["05"], 2)
+    b["103"] = _qsum("103", lambda r: r.c59_entregas_intracom)
+    b["104"] = _qsum("104", lambda r: r.c60_exportaciones)
+    b["105"] = _qsum("105", lambda r: r.exempt_base)
+    b["110"] = _qsum("110", lambda r: r.c120_no_sujetas_localizacion)
+    b["126"] = _qsum("126", lambda r: r.oss_base)
+    b["108"] = round(b["99"] + b["103"] + b["104"] + b["105"] + b["110"] + b["126"], 2)
+
+    _fill_prorrata(result, b, qs, notes, year)
 
     if b["110"]:
         notes.append("Box 110 holds services to non-EU customers not subject by location rules "

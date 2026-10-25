@@ -21,30 +21,13 @@ from src.tax_data import (
 from src.tax_models import AuditEntry, Modelo349Result, Modelo349Row
 
 
-def compute_modelo_349(
-    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
-) -> Modelo349Result:
-    """Compute Modelo 349 (intra-EU operations) for the given quarter (#99).
-
-    - Key ``I``: ``INTRA_EU_RC`` expense invoices (services acquired from EU
-      businesses), grouped by the vendor VAT id — the invoice's normalised id,
-      else the vendor registry's ``vat_id``; the name is the registry's
-      ``legal_entity``, else the invoice vendor name.
-    - Key ``S``: EU B2B sales — Stripe charges treated ``IVA_EU_B2B`` (customer
-      ``buyer_vat_id``) plus issued invoices with ``tax_treatment`` ``EU_B2B``
-      (``client_nif``), grouped by the normalised VAT id.
-
-    Invoices are keyed by invoice date, bases are the stored EUR values (ECB
-    rate resolved at OCR time; ``eur_received`` for income), ``excluded``
-    invoices are skipped. An operator whose quarter total is zero or negative
-    is left out with a warning (rectification lines are out of scope); lines
-    without a VAT id cannot be declared and are listed in ``unidentified``.
-    ``config`` drives the Stripe VAT-treatment derivation.
-    """
-    from src.tax_codes import EU_VAT_PREFIXES, normalize_vat_id
+def _collect_349_operators(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict],
+) -> dict[tuple[str, str], dict]:
+    """Per-operator buckets (key I acquisitions, key S sales) keyed by (key, VAT id or ?name)."""
+    from src.tax_codes import normalize_vat_id
     from src.vendor_registry import load_registry
 
-    result = Modelo349Result(year=year, quarter=quarter)
     ops: dict[tuple[str, str], dict] = {}   # (key, VAT id or "?name") -> bucket
 
     def _add(key: str, vat: Optional[str], name: str, base: float, rec: dict) -> None:
@@ -94,6 +77,60 @@ def compute_modelo_349(
         _add("I", vat, name, inv.get("subtotal_eur") or 0.0,
              {"source": "invoice_in", "id": inv["id"], "date": str(inv["tx_date"])[:10],
               "vendor": str(inv.get("vendor_name") or "")[:40]})
+    return ops
+
+
+def _audit_349(
+    year: int, quarter: int, buckets: list, result: Modelo349Result,
+) -> list[AuditEntry]:
+    """Audit trail: one cell per operator line (named after its VAT id), then boxes 01/02."""
+    _a = partial(AuditEntry.of, "349", year, quarter)
+    labels = {"I": "Adquisiciones intracomunitarias de servicios",
+              "S": "Prestaciones intracomunitarias de servicios"}
+    audit = []
+    for n, (_, b) in enumerate(buckets, 1):
+        row = b["row"]
+        state = ("unidentified" if not row.vat_id else "excluded" if row.base <= 0 else "op")
+        audit.append(_a(
+            f"{state}_{row.key}_{row.vat_id or n}",
+            f"{labels[row.key]} (clave {row.key}) — {row.name or '?'} {row.vat_id}".rstrip(),
+            "SUM(base EUR) of the quarter's records for this VAT id and key"
+            + ("" if state == "op" else f" — not declared ({state})"),
+            row.base, records=b["records"],
+        ))
+    audit.append(_a("c01_operadores", "Número total de operadores",
+                    "COUNT(operator lines with a VAT id and a positive total)", float(len(result.rows)),
+                    excluded=[r.vat_id for r in result.excluded],
+                    unidentified=[r.name for r in result.unidentified]))
+    audit.append(_a("c02_importe", "Importe de las operaciones intracomunitarias",
+                    "SUM(base) of the declared operator lines", result.total))
+    return audit
+
+
+def compute_modelo_349(
+    year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo349Result:
+    """Compute Modelo 349 (intra-EU operations) for the given quarter (#99).
+
+    - Key ``I``: ``INTRA_EU_RC`` expense invoices (services acquired from EU
+      businesses), grouped by the vendor VAT id — the invoice's normalised id,
+      else the vendor registry's ``vat_id``; the name is the registry's
+      ``legal_entity``, else the invoice vendor name.
+    - Key ``S``: EU B2B sales — Stripe charges treated ``IVA_EU_B2B`` (customer
+      ``buyer_vat_id``) plus issued invoices with ``tax_treatment`` ``EU_B2B``
+      (``client_nif``), grouped by the normalised VAT id.
+
+    Invoices are keyed by invoice date, bases are the stored EUR values (ECB
+    rate resolved at OCR time; ``eur_received`` for income), ``excluded``
+    invoices are skipped. An operator whose quarter total is zero or negative
+    is left out with a warning (rectification lines are out of scope); lines
+    without a VAT id cannot be declared and are listed in ``unidentified``.
+    ``config`` drives the Stripe VAT-treatment derivation.
+    """
+    from src.tax_codes import EU_VAT_PREFIXES
+
+    result = Modelo349Result(year=year, quarter=quarter)
+    ops = _collect_349_operators(year, quarter, db_conn, config)
 
     warnings: list[str] = []
     buckets = sorted(ops.items(), key=lambda kv: (kv[0][0], kv[1]["name"].lower(), kv[1]["vat"]))
@@ -118,28 +155,7 @@ def compute_modelo_349(
     result.total = round(sum((r.base for r in result.rows), 0.0), 2)
     result.notes = " ".join(warnings)
 
-    # --- Audit trail: one cell per operator line (named after its VAT id), then 01/02 ---
-    _a = partial(AuditEntry.of, "349", year, quarter)
-    labels = {"I": "Adquisiciones intracomunitarias de servicios",
-              "S": "Prestaciones intracomunitarias de servicios"}
-    audit = []
-    for n, (_, b) in enumerate(buckets, 1):
-        row = b["row"]
-        state = ("unidentified" if not row.vat_id else "excluded" if row.base <= 0 else "op")
-        audit.append(_a(
-            f"{state}_{row.key}_{row.vat_id or n}",
-            f"{labels[row.key]} (clave {row.key}) — {row.name or '?'} {row.vat_id}".rstrip(),
-            "SUM(base EUR) of the quarter's records for this VAT id and key"
-            + ("" if state == "op" else f" — not declared ({state})"),
-            row.base, records=b["records"],
-        ))
-    audit.append(_a("c01_operadores", "Número total de operadores",
-                    "COUNT(operator lines with a VAT id and a positive total)", float(len(result.rows)),
-                    excluded=[r.vat_id for r in result.excluded],
-                    unidentified=[r.name for r in result.unidentified]))
-    audit.append(_a("c02_importe", "Importe de las operaciones intracomunitarias",
-                    "SUM(base) of the declared operator lines", result.total))
-    result.audit = audit
+    result.audit = _audit_349(year, quarter, buckets, result)
     return result
 
 

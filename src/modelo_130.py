@@ -106,6 +106,90 @@ class _Collected130:
         return round(self.inv_retenciones + self.manual_retenciones, 2)
 
 
+def _130_audit_records(
+    config: Optional[dict], *, rows: list, income_invs: list, exch_rows: list, expense_invs: list,
+    irpf: dict, ss_rows: list, fee_rows: list, capital_invs: list, registered_ids: set,
+) -> dict[str, list[dict]]:
+    """Audit records per box group, built from the rows `_collect_130_ytd` summed."""
+    stripe_agg: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r.get("geo_region") or "UNKNOWN", r.get("activity_type") or "UNKNOWN",
+               get_vat_treatment(r, config))
+        agg = stripe_agg.setdefault(key, {"n": 0, "gross_eur": 0.0, "base_eur": 0.0})
+        agg["n"] += 1
+        agg["gross_eur"] = round(agg["gross_eur"] + net_amount(r), 2)
+        agg["base_eur"] = round(agg["base_eur"] + get_vat_base(r, config), 2)
+
+    def _client(inv: dict) -> str:
+        return str(inv.get("client_name") or inv.get("client_nif") or "")[:40]
+
+    def _vendor(inv: dict) -> str:
+        return str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40]
+
+    return {
+        "income": [
+            {"source": "stripe_agregado", "geo_region": k[0], "activity": k[1], "vat_treatment": k[2],
+             "n_transactions": v["n"], "gross_eur": v["gross_eur"], "base_eur_irpf": v["base_eur"]}
+            for k, v in stripe_agg.items()
+        ] + [
+            {"source": "invoice_out", "date": inv.get("tx_date", "")[:10], "client": _client(inv),
+             "description": str(inv.get("description") or "")[:50],
+             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+             "eur_received": (round(inv["eur_received"], 2) if inv.get("eur_received") is not None else None),
+             "eur_used": round(income_invoice_eur(inv), 2),
+             "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
+             "vat_treatment": inv.get("vat_treatment") or ""}
+            for inv in income_invs
+        ] + [
+            {"source": "fx_exchange_difference", "date": r["conversion_date"], "currency": r["currency"],
+             "foreign_amount": round(float(r["foreign_amount"]), 2),
+             "eur_obtained": round(float(r["eur_obtained"]), 2),
+             "booked_eur": round(float(r["booked_eur"]), 2),
+             "gain_loss_eur": round(float(r["gain_loss_eur"]), 2), "notes": r["notes"] or ""}
+            for r in exch_rows
+        ],
+        "expenses": [
+            {"source": "invoice_in", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
+             "description": str(inv.get("description") or "")[:50],
+             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+             "iva_amount": round(inv.get("iva_amount") or 0.0, 2),
+             "deductible_pct": inv["deductible_pct_irpf"],
+             "vat_deducted_pct": irpf[inv["id"]].vat_deducted_pct,
+             "base_expensed": round(irpf[inv["id"]].base_eur, 2),
+             "vat_expensed": round(irpf[inv["id"]].vat_eur, 2),
+             "deductible_amount": round(irpf[inv["id"]].total_eur, 2),
+             "geo_region": inv.get("geo_region") or ""}
+            for inv in expense_invs
+        ],
+        "social_security": [
+            {"source": "social_security", "date": r["payment_date"],
+             "description": r["description"] or "Cuota Seguridad Social",
+             "amount_eur": round(float(r["amount_eur"]), 2)}
+            for r in ss_rows
+        ],
+        "platform_fees": [
+            {"source": "stripe_platform_fee", "date": str(r.get("created_date") or "")[:10],
+             "charge_id": r["id"], "fee_application": round(float(r["fee_application"]), 2),
+             "refunded_eur": round(r.get("converted_amount_refunded") or 0.0, 2)}
+            for r in fee_rows
+        ],
+        "capital": [
+            {"source": "invoice_in_capital", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
+             "description": str(inv.get("description") or "")[:50],
+             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+             "fixed_asset_registered": inv["id"] in registered_ids}
+            for inv in capital_invs
+        ],
+        "withholdings": [
+            {"source": "invoice_out", "date": inv.get("tx_date", "")[:10], "client": _client(inv),
+             "description": str(inv.get("description") or "")[:50],
+             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
+             "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2)}
+            for inv in income_invs if inv.get("irpf_amount")
+        ],
+    }
+
+
 def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
                      config: Optional[dict]) -> _Collected130:
     """Gather income, real expenses and withholdings from 1 January to the quarter end."""
@@ -188,84 +272,11 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     col.activity_start_note = activity_start_note(
         conn, config, ytd_start, {"stripe": ytd_end, "income": ytd_end, "expense": ytd_end}, "130")
 
-    # --- Audit records ------------------------------------------------------
-    stripe_agg: dict[tuple, dict] = {}
-    for r in rows:
-        key = (r.get("geo_region") or "UNKNOWN", r.get("activity_type") or "UNKNOWN",
-               get_vat_treatment(r, config))
-        agg = stripe_agg.setdefault(key, {"n": 0, "gross_eur": 0.0, "base_eur": 0.0})
-        agg["n"] += 1
-        agg["gross_eur"] = round(agg["gross_eur"] + net_amount(r), 2)
-        agg["base_eur"] = round(agg["base_eur"] + get_vat_base(r, config), 2)
-
-    def _client(inv: dict) -> str:
-        return str(inv.get("client_name") or inv.get("client_nif") or "")[:40]
-
-    def _vendor(inv: dict) -> str:
-        return str(inv.get("vendor_name") or inv.get("vendor_nif") or "")[:40]
-
-    col.records = {
-        "income": [
-            {"source": "stripe_agregado", "geo_region": k[0], "activity": k[1], "vat_treatment": k[2],
-             "n_transactions": v["n"], "gross_eur": v["gross_eur"], "base_eur_irpf": v["base_eur"]}
-            for k, v in stripe_agg.items()
-        ] + [
-            {"source": "invoice_out", "date": inv.get("tx_date", "")[:10], "client": _client(inv),
-             "description": str(inv.get("description") or "")[:50],
-             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-             "eur_received": (round(inv["eur_received"], 2) if inv.get("eur_received") is not None else None),
-             "eur_used": round(income_invoice_eur(inv), 2),
-             "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2),
-             "vat_treatment": inv.get("vat_treatment") or ""}
-            for inv in income_invs
-        ] + [
-            {"source": "fx_exchange_difference", "date": r["conversion_date"], "currency": r["currency"],
-             "foreign_amount": round(float(r["foreign_amount"]), 2),
-             "eur_obtained": round(float(r["eur_obtained"]), 2),
-             "booked_eur": round(float(r["booked_eur"]), 2),
-             "gain_loss_eur": round(float(r["gain_loss_eur"]), 2), "notes": r["notes"] or ""}
-            for r in exch_rows
-        ],
-        "expenses": [
-            {"source": "invoice_in", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
-             "description": str(inv.get("description") or "")[:50],
-             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-             "iva_amount": round(inv.get("iva_amount") or 0.0, 2),
-             "deductible_pct": inv["deductible_pct_irpf"],
-             "vat_deducted_pct": irpf[inv["id"]].vat_deducted_pct,
-             "base_expensed": round(irpf[inv["id"]].base_eur, 2),
-             "vat_expensed": round(irpf[inv["id"]].vat_eur, 2),
-             "deductible_amount": round(irpf[inv["id"]].total_eur, 2),
-             "geo_region": inv.get("geo_region") or ""}
-            for inv in expense_invs
-        ],
-        "social_security": [
-            {"source": "social_security", "date": r["payment_date"],
-             "description": r["description"] or "Cuota Seguridad Social",
-             "amount_eur": round(float(r["amount_eur"]), 2)}
-            for r in ss_rows
-        ],
-        "platform_fees": [
-            {"source": "stripe_platform_fee", "date": str(r.get("created_date") or "")[:10],
-             "charge_id": r["id"], "fee_application": round(float(r["fee_application"]), 2),
-             "refunded_eur": round(r.get("converted_amount_refunded") or 0.0, 2)}
-            for r in fee_rows
-        ],
-        "capital": [
-            {"source": "invoice_in_capital", "date": inv.get("tx_date", "")[:10], "vendor": _vendor(inv),
-             "description": str(inv.get("description") or "")[:50],
-             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-             "fixed_asset_registered": inv["id"] in registered_ids}
-            for inv in capital_invs
-        ],
-        "withholdings": [
-            {"source": "invoice_out", "date": inv.get("tx_date", "")[:10], "client": _client(inv),
-             "description": str(inv.get("description") or "")[:50],
-             "subtotal_eur": round(inv.get("subtotal_eur") or 0.0, 2),
-             "irpf_amount": round(inv.get("irpf_amount") or 0.0, 2)}
-            for inv in income_invs if inv.get("irpf_amount")
-        ],
-    }
+    col.records = _130_audit_records(
+        config, rows=rows, income_invs=income_invs, exch_rows=exch_rows, expense_invs=expense_invs,
+        irpf=irpf, ss_rows=ss_rows, fee_rows=fee_rows, capital_invs=capital_invs,
+        registered_ids=registered_ids,
+    )
     return col
 
 

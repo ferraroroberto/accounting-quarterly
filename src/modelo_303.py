@@ -261,10 +261,10 @@ def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection
         )
 
 
-def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
-                           config: Optional[dict], col: _Collected303) -> None:
-    """Reverse-charge accruals and deductible VAT (at 100%, before pro-rata)."""
-    from src.fixed_assets import capital_goods_vat_for_period, load_fixed_assets
+def _collect_303_expense_invoices(year: int, quarter: int, conn: sqlite3.Connection,
+                                  config: Optional[dict], col: _Collected303) -> None:
+    """Deductible VAT and reverse-charge accruals from the quarter's expense invoices."""
+    from src.fixed_assets import load_fixed_assets
 
     capital_by_invoice: dict[str, list] = defaultdict(list)
     registered_by_invoice: dict[str, list] = defaultdict(list)
@@ -349,13 +349,10 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             col.records[ded_b].append(rc)
         # NO_VAT and NOT_DEDUCTIBLE carry no deductible VAT.
 
-    _collect_303_platform_fees(year, quarter, conn, config, col)
 
-    cg = capital_goods_vat_for_period(year, quarter, conn)
-    col.acc["c30_base"] += cg.box_30_base
-    col.acc["c31_cuota"] += cg.box_31_cuota
-    col.records["c30_base"].extend({"source": "fixed_asset", **line} for line in cg.lines)
-
+def _collect_303_manual_iva(year: int, quarter: int, conn: sqlite3.Connection,
+                            col: _Collected303) -> None:
+    """Manual IVA_SOPORTADO entries: their cuota goes in box 29, the base in 28 when a rate is set."""
     # Manual IVA_SOPORTADO entries carry the cuota; the base needs their explicit
     # rate (no more assumed 21%). Entries without a rate keep counting in 29 but
     # add nothing to 28 and are flagged.
@@ -389,6 +386,23 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
             f"Manual IVA_SOPORTADO entries {no_rate} have no VAT rate: their cuota is in box 29 "
             "but their base is missing from box 28 — re-enter them with the rate."
         )
+
+
+def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
+                           config: Optional[dict], col: _Collected303) -> None:
+    """Reverse-charge accruals and deductible VAT (at 100%, before pro-rata)."""
+    from src.fixed_assets import capital_goods_vat_for_period
+
+    _collect_303_expense_invoices(year, quarter, conn, config, col)
+
+    _collect_303_platform_fees(year, quarter, conn, config, col)
+
+    cg = capital_goods_vat_for_period(year, quarter, conn)
+    col.acc["c30_base"] += cg.box_30_base
+    col.acc["c31_cuota"] += cg.box_31_cuota
+    col.records["c30_base"].extend({"source": "fixed_asset", **line} for line in cg.lines)
+
+    _collect_303_manual_iva(year, quarter, conn, col)
 
     natural_start, end = quarter_iso_bounds(year, quarter)
     note = activity_start_note(conn, config, natural_start, {"expense": end}, "303")
@@ -513,6 +527,82 @@ def _previous_303_credit(year: int, quarter: int, conn: sqlite3.Connection,
     }
 
 
+def _fill_accrued_boxes(result: Modelo303Result, acc: dict[str, float]) -> None:
+    """Accrued (devengado) and informational boxes, rounded from the unrounded sums."""
+    for name in ("c01_base", "c03_cuota", "c04_base", "c06_cuota", "c07_base", "c09_cuota",
+                 "c10_base", "c11_cuota", "c12_base", "c13_cuota", "c59_entregas_intracom",
+                 "c60_exportaciones", "c120_no_sujetas_localizacion", "oss_base", "oss_vat",
+                 "exempt_base"):
+        setattr(result, name, round(acc[name], 2))
+    result.c27_total_devengado = round(
+        result.c03_cuota + result.c06_cuota + result.c09_cuota + result.c11_cuota + result.c13_cuota, 2)
+
+
+def _fill_deductible_boxes(result: Modelo303Result, acc: dict[str, float], p: float) -> None:
+    """Deductible base / cuota boxes at the provisional pro-rata fraction `p`."""
+    for base_f, cuota_f in (("c28_base", "c29_cuota"), ("c30_base", "c31_cuota"),
+                            ("c36_base", "c37_cuota")):
+        setattr(result, base_f, round(acc[base_f] * p, 2))
+        setattr(result, cuota_f, round(acc[cuota_f] * p, 2))
+
+
+def _q4_regularisations(
+    result: Modelo303Result, year: int, db_conn: sqlite3.Connection, config: Optional[dict],
+    col: _Collected303, prorrata_enabled: bool, provisional: float,
+) -> tuple[float, list[dict]]:
+    """Q4 boxes 43 (capital-goods regularisation) and 44 (pro-rata); returns the year's full
+    deductible VAT and the regularisation rows for the audit."""
+    from src.fixed_assets import vat_regularisation_for_year
+
+    year_full_deductible = 0.0
+    # Box 43: arts. 107-109 LIVA capital-goods regularisation (years 2-5).
+    regularisation_rows = [r for r in vat_regularisation_for_year(db_conn, year) if r["applies"]]
+    result.c43_regularizacion_bienes_inversion = round(
+        sum(r["adjustment_eur"] for r in regularisation_rows), 2)
+    if prorrata_enabled:
+        earlier = [_collect_303_quarter(year, q, db_conn, config) for q in (1, 2, 3)]
+        year_cols = earlier + [col]
+        with_right = sum(c.with_right_to_deduct for c in year_cols)
+        exempt = sum(c.acc["exempt_base"] for c in year_cols)
+        definitive = prorrata_pct(with_right, exempt)
+        result.prorrata_definitive_pct = definitive if definitive is not None else 100.0
+        year_full_deductible = sum(c.full_deductible_vat for c in year_cols)
+        # Box 44 (art. 105 LIVA): (definitive − provisional) × the year's deductible VAT.
+        result.c44_regularizacion_prorrata = round(
+            year_full_deductible * (result.prorrata_definitive_pct - provisional) / 100.0, 2)
+    return year_full_deductible, regularisation_rows
+
+
+def _fill_result_and_credit(
+    result: Modelo303Result, year: int, quarter: int, db_conn: sqlite3.Connection,
+    config: Optional[dict], chain_depth: int, option: str,
+) -> tuple[float, str, dict]:
+    """Boxes 64-110 (result and credit chain); returns the carried-in credit, its source and detail."""
+    result.c64_suma_resultados = result.c46_resultado_regimen_general   # 58 and 76 do not apply
+    result.c65_pct_atribuible_estado = 100.0                            # territorio común
+    result.c66_atribuible_estado = round(
+        result.c64_suma_resultados * result.c65_pct_atribuible_estado / 100.0, 2)
+    c110, c110_source, c110_detail = _previous_303_credit(year, quarter, db_conn, config, chain_depth)
+    result.c110_pendiente_anteriores = c110
+    result.c110_source = c110_source
+    q4_refund = quarter == 4 and option == "refund"
+    if q4_refund:
+        # Last period with a refund request: the whole pending credit is applied.
+        result.c78_aplicadas_periodo = c110
+    else:
+        result.c78_aplicadas_periodo = round(min(c110, max(0.0, result.c66_atribuible_estado)), 2)
+    result.c87_pendiente_posteriores = round(c110 - result.c78_aplicadas_periodo, 2)
+    result.c69_resultado_autoliquidacion = round(
+        result.c66_atribuible_estado - result.c78_aplicadas_periodo, 2)    # 77, 68, 108 = 0
+    result.c71_resultado_liquidacion = result.c69_resultado_autoliquidacion  # 70, 109 = 0
+    if result.c71_resultado_liquidacion < 0:
+        if q4_refund:
+            result.c73_a_devolver = -result.c71_resultado_liquidacion
+        else:
+            result.c72_a_compensar = -result.c71_resultado_liquidacion
+    return c110, c110_source, c110_detail
+
+
 def compute_modelo_303(
     year: int,
     quarter: int,
@@ -546,14 +636,7 @@ def compute_modelo_303(
     acc = col.acc
     notes = list(col.notes)
 
-    # --- Accrued + informational boxes ------------------------------------
-    for name in ("c01_base", "c03_cuota", "c04_base", "c06_cuota", "c07_base", "c09_cuota",
-                 "c10_base", "c11_cuota", "c12_base", "c13_cuota", "c59_entregas_intracom",
-                 "c60_exportaciones", "c120_no_sujetas_localizacion", "oss_base", "oss_vat",
-                 "exempt_base"):
-        setattr(result, name, round(acc[name], 2))
-    result.c27_total_devengado = round(
-        result.c03_cuota + result.c06_cuota + result.c09_cuota + result.c11_cuota + result.c13_cuota, 2)
+    _fill_accrued_boxes(result, acc)
 
     # --- Pro-rata ----------------------------------------------------------
     if prorrata_enabled:
@@ -566,32 +649,13 @@ def compute_modelo_303(
     if not vat_registered:
         notes.append("Not IVA-registered (tax.vat_registered = false): no deductible VAT.")
 
-    # --- Deductible boxes (provisional % applied to cuota and base) ---------
-    for base_f, cuota_f in (("c28_base", "c29_cuota"), ("c30_base", "c31_cuota"),
-                            ("c36_base", "c37_cuota")):
-        setattr(result, base_f, round(acc[base_f] * p, 2))
-        setattr(result, cuota_f, round(acc[cuota_f] * p, 2))
+    _fill_deductible_boxes(result, acc, p)
 
     year_full_deductible = 0.0
     regularisation_rows: list[dict] = []
     if quarter == 4 and vat_registered:
-        from src.fixed_assets import vat_regularisation_for_year
-
-        # Box 43: arts. 107-109 LIVA capital-goods regularisation (years 2-5).
-        regularisation_rows = [r for r in vat_regularisation_for_year(db_conn, year) if r["applies"]]
-        result.c43_regularizacion_bienes_inversion = round(
-            sum(r["adjustment_eur"] for r in regularisation_rows), 2)
-        if prorrata_enabled:
-            earlier = [_collect_303_quarter(year, q, db_conn, config) for q in (1, 2, 3)]
-            year_cols = earlier + [col]
-            with_right = sum(c.with_right_to_deduct for c in year_cols)
-            exempt = sum(c.acc["exempt_base"] for c in year_cols)
-            definitive = prorrata_pct(with_right, exempt)
-            result.prorrata_definitive_pct = definitive if definitive is not None else 100.0
-            year_full_deductible = sum(c.full_deductible_vat for c in year_cols)
-            # Box 44 (art. 105 LIVA): (definitive − provisional) × the year's deductible VAT.
-            result.c44_regularizacion_prorrata = round(
-                year_full_deductible * (result.prorrata_definitive_pct - provisional) / 100.0, 2)
+        year_full_deductible, regularisation_rows = _q4_regularisations(
+            result, year, db_conn, config, col, prorrata_enabled, provisional)
 
     result.c45_total_deducir = round(
         result.c29_cuota + result.c31_cuota + result.c37_cuota
@@ -601,29 +665,8 @@ def compute_modelo_303(
     result.c46_sin_prorrata = round(
         result.c27_total_devengado - full_deductible_q - result.c43_regularizacion_bienes_inversion, 2)
 
-    # --- Result and credit chain --------------------------------------------
-    result.c64_suma_resultados = result.c46_resultado_regimen_general   # 58 and 76 do not apply
-    result.c65_pct_atribuible_estado = 100.0                            # territorio común
-    result.c66_atribuible_estado = round(
-        result.c64_suma_resultados * result.c65_pct_atribuible_estado / 100.0, 2)
-    c110, c110_source, c110_detail = _previous_303_credit(year, quarter, db_conn, config, _chain_depth)
-    result.c110_pendiente_anteriores = c110
-    result.c110_source = c110_source
-    q4_refund = quarter == 4 and option == "refund"
-    if q4_refund:
-        # Last period with a refund request: the whole pending credit is applied.
-        result.c78_aplicadas_periodo = c110
-    else:
-        result.c78_aplicadas_periodo = round(min(c110, max(0.0, result.c66_atribuible_estado)), 2)
-    result.c87_pendiente_posteriores = round(c110 - result.c78_aplicadas_periodo, 2)
-    result.c69_resultado_autoliquidacion = round(
-        result.c66_atribuible_estado - result.c78_aplicadas_periodo, 2)    # 77, 68, 108 = 0
-    result.c71_resultado_liquidacion = result.c69_resultado_autoliquidacion  # 70, 109 = 0
-    if result.c71_resultado_liquidacion < 0:
-        if q4_refund:
-            result.c73_a_devolver = -result.c71_resultado_liquidacion
-        else:
-            result.c72_a_compensar = -result.c71_resultado_liquidacion
+    c110, c110_source, c110_detail = _fill_result_and_credit(
+        result, year, quarter, db_conn, config, _chain_depth, option)
 
     if result.c120_no_sujetas_localizacion:
         notes.append("Box 120 holds non-EU sales not subject by location rules (D11); "
@@ -641,16 +684,23 @@ def compute_modelo_303(
     return result
 
 
+def _audit_context(col: _Collected303, provisional: float, prov_source: str,
+                   vat_registered: bool) -> tuple[dict, dict]:
+    """The pro-rata and platform-fee details attached to the audit entries that depend on them."""
+    pro = {"prorrata_provisional_pct": provisional, "prorrata_source": prov_source,
+           "vat_registered": vat_registered}
+    fees = {"platform_fee_vat_treatment": col.platform_fee_treatment, "platform_fees": col.platform_fees,
+            "platform_fees_cuota": col.platform_fees_cuota, "fee_split_unknown": col.fee_split_unknown}
+    return pro, fees
+
+
 def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float, prov_source: str,
                      vat_registered: bool, year_full_deductible: float,
                      regularisation_rows: list[dict], c110_detail: dict) -> list[AuditEntry]:
     """One audit entry per box (records attached to the base / informational boxes)."""
     _a = partial(AuditEntry.of, "303", r.year, r.quarter)
     rec = col.records
-    pro = {"prorrata_provisional_pct": provisional, "prorrata_source": prov_source,
-           "vat_registered": vat_registered}
-    fees = {"platform_fee_vat_treatment": col.platform_fee_treatment, "platform_fees": col.platform_fees,
-            "platform_fees_cuota": col.platform_fees_cuota, "fee_split_unknown": col.fee_split_unknown}
+    pro, fees = _audit_context(col, provisional, prov_source, vat_registered)
     return [
         _a("c01_base", "01 Base imponible 4%", "SUM(base) income invoices ES_21 at 4%", r.c01_base,
            records=rec["c01_base"]),

@@ -59,6 +59,111 @@ def fee_split_eur(balance_transaction: object) -> tuple[Optional[float], Optiona
     return stripe_cents / 100.0, application_cents / 100.0
 
 
+def _list_charges_page(stripe, params: dict):
+    """One page of charges; retries once with a reduced expansion when a restricted key lacks access."""
+    expand = params["expand"]
+    try:
+        return stripe.Charge.list(**params)
+    except stripe.error.PermissionError as exc:
+        # Restricted keys may not have access to expand customer / balance transaction.
+        # Retry with reduced expansions so we can still load core charge data.
+        msg = str(exc)
+        if "customer" in msg.lower() and "data.customer" in expand:
+            log.warning("⚠️ Stripe key lacks customer read permission; retrying without customer expand.")
+            expand = [e for e in expand if e != "data.customer"]
+            params["expand"] = expand
+            return stripe.Charge.list(**params)
+        elif "balance" in msg.lower() and "data.balance_transaction" in expand:
+            log.warning("⚠️ Stripe key lacks balance transaction permission; retrying without balance_transaction expand.")
+            expand = [e for e in expand if e != "data.balance_transaction"]
+            params["expand"] = expand
+            return stripe.Charge.list(**params)
+        else:
+            raise StripeAPIError(f"Stripe permission error: {exc}") from exc
+    except stripe.error.AuthenticationError as exc:
+        raise StripeAPIError(f"Stripe authentication failed: {exc}") from exc
+    except stripe.error.StripeError as exc:
+        raise StripeAPIError(f"Stripe API error: {exc}") from exc
+
+
+def _payment_from_charge(charge, currency: str, description: str) -> Payment:
+    """Map a Stripe charge (with its expanded customer / balance transaction) to a Payment."""
+    amount_eur = charge.amount / 100.0
+    amount_refunded_eur = charge.amount_refunded / 100.0
+
+    fee_eur = 0.0
+    if charge.balance_transaction and hasattr(charge.balance_transaction, "fee"):
+        fee_eur = charge.balance_transaction.fee / 100.0
+    fee_stripe_eur, fee_application_eur = fee_split_eur(charge.balance_transaction)
+
+    email_meta = None
+    if charge.customer and hasattr(charge.customer, "email"):
+        email_meta = charge.customer.email
+
+    billing_details = getattr(charge, "billing_details", None)
+    billing_email = getattr(billing_details, "email", None) if billing_details else None
+    billing_address = getattr(billing_details, "address", None) if billing_details else None
+    billing_country = getattr(billing_address, "country", None) if billing_address else None
+
+    # Customer email is often blank on a raw charge; the charge's own
+    # billing_details.email is filled in by Stripe Checkout/Payment
+    # Element even without a Customer object.
+    if not email_meta and billing_email:
+        email_meta = billing_email
+
+    card_country = None
+    pmd = getattr(charge, "payment_method_details", None)
+    if pmd:
+        card = getattr(pmd, "card", None)
+        if card:
+            card_country = getattr(card, "country", None)
+
+    # Traceability: keep important IDs and a raw charge snapshot.
+    customer_id = getattr(charge, "customer", None)
+    if hasattr(customer_id, "id"):
+        customer_id = customer_id.id
+    payment_intent_id = getattr(charge, "payment_intent", None)
+    if hasattr(payment_intent_id, "id"):
+        payment_intent_id = payment_intent_id.id
+    balance_txn_id = getattr(charge, "balance_transaction", None)
+    if hasattr(balance_txn_id, "id"):
+        balance_txn_id = balance_txn_id.id
+    invoice_id = getattr(charge, "invoice", None)
+    if hasattr(invoice_id, "id"):
+        invoice_id = invoice_id.id
+
+    raw_charge = None
+    try:
+        raw_charge = charge.to_dict_recursive()
+    except Exception:
+        try:
+            raw_charge = json.loads(str(charge))
+        except Exception:
+            raw_charge = {"id": charge.id}
+
+    p = Payment(
+        id=charge.id,
+        created_date=datetime.fromtimestamp(charge.created),
+        converted_amount=amount_eur,
+        converted_amount_refunded=amount_refunded_eur,
+        description=description,
+        fee=fee_eur,
+        fee_stripe=fee_stripe_eur,
+        fee_application=fee_application_eur,
+        currency=currency,
+        email_meta=email_meta,
+        card_country=card_country,
+        billing_country=billing_country,
+        stripe_customer_id=customer_id,
+        stripe_payment_intent_id=payment_intent_id,
+        stripe_balance_transaction_id=balance_txn_id,
+        stripe_invoice_id=invoice_id,
+        raw_source=raw_charge,
+        raw_source_type="stripe_api",
+    )
+    return p
+
+
 def fetch_charges(
     start_date: datetime,
     end_date: datetime,
@@ -94,28 +199,7 @@ def fetch_charges(
         if starting_after:
             params["starting_after"] = starting_after
 
-        try:
-            response = stripe.Charge.list(**params)
-        except stripe.error.PermissionError as exc:
-            # Restricted keys may not have access to expand customer / balance transaction.
-            # Retry with reduced expansions so we can still load core charge data.
-            msg = str(exc)
-            if "customer" in msg.lower() and "data.customer" in expand:
-                log.warning("⚠️ Stripe key lacks customer read permission; retrying without customer expand.")
-                expand = [e for e in expand if e != "data.customer"]
-                params["expand"] = expand
-                response = stripe.Charge.list(**params)
-            elif "balance" in msg.lower() and "data.balance_transaction" in expand:
-                log.warning("⚠️ Stripe key lacks balance transaction permission; retrying without balance_transaction expand.")
-                expand = [e for e in expand if e != "data.balance_transaction"]
-                params["expand"] = expand
-                response = stripe.Charge.list(**params)
-            else:
-                raise StripeAPIError(f"Stripe permission error: {exc}") from exc
-        except stripe.error.AuthenticationError as exc:
-            raise StripeAPIError(f"Stripe authentication failed: {exc}") from exc
-        except stripe.error.StripeError as exc:
-            raise StripeAPIError(f"Stripe API error: {exc}") from exc
+        response = _list_charges_page(stripe, params)
 
         for charge in response.data:
             if not charge.paid:
@@ -125,80 +209,7 @@ def fetch_charges(
             description = charge.description or ""
 
             try:
-                amount_eur = charge.amount / 100.0
-                amount_refunded_eur = charge.amount_refunded / 100.0
-
-                fee_eur = 0.0
-                if charge.balance_transaction and hasattr(charge.balance_transaction, "fee"):
-                    fee_eur = charge.balance_transaction.fee / 100.0
-                fee_stripe_eur, fee_application_eur = fee_split_eur(charge.balance_transaction)
-
-                email_meta = None
-                if charge.customer and hasattr(charge.customer, "email"):
-                    email_meta = charge.customer.email
-
-                billing_details = getattr(charge, "billing_details", None)
-                billing_email = getattr(billing_details, "email", None) if billing_details else None
-                billing_address = getattr(billing_details, "address", None) if billing_details else None
-                billing_country = getattr(billing_address, "country", None) if billing_address else None
-
-                # Customer email is often blank on a raw charge; the charge's own
-                # billing_details.email is filled in by Stripe Checkout/Payment
-                # Element even without a Customer object.
-                if not email_meta and billing_email:
-                    email_meta = billing_email
-
-                card_country = None
-                pmd = getattr(charge, "payment_method_details", None)
-                if pmd:
-                    card = getattr(pmd, "card", None)
-                    if card:
-                        card_country = getattr(card, "country", None)
-
-                # Traceability: keep important IDs and a raw charge snapshot.
-                customer_id = getattr(charge, "customer", None)
-                if hasattr(customer_id, "id"):
-                    customer_id = customer_id.id
-                payment_intent_id = getattr(charge, "payment_intent", None)
-                if hasattr(payment_intent_id, "id"):
-                    payment_intent_id = payment_intent_id.id
-                balance_txn_id = getattr(charge, "balance_transaction", None)
-                if hasattr(balance_txn_id, "id"):
-                    balance_txn_id = balance_txn_id.id
-                invoice_id = getattr(charge, "invoice", None)
-                if hasattr(invoice_id, "id"):
-                    invoice_id = invoice_id.id
-
-                raw_charge = None
-                try:
-                    raw_charge = charge.to_dict_recursive()
-                except Exception:
-                    try:
-                        raw_charge = json.loads(str(charge))
-                    except Exception:
-                        raw_charge = {"id": charge.id}
-
-                p = Payment(
-                    id=charge.id,
-                    created_date=datetime.fromtimestamp(charge.created),
-                    converted_amount=amount_eur,
-                    converted_amount_refunded=amount_refunded_eur,
-                    description=description,
-                    fee=fee_eur,
-                    fee_stripe=fee_stripe_eur,
-                    fee_application=fee_application_eur,
-                    currency=currency,
-                    email_meta=email_meta,
-                    card_country=card_country,
-                    billing_country=billing_country,
-                    stripe_customer_id=customer_id,
-                    stripe_payment_intent_id=payment_intent_id,
-                    stripe_balance_transaction_id=balance_txn_id,
-                    stripe_invoice_id=invoice_id,
-                    raw_source=raw_charge,
-                    raw_source_type="stripe_api",
-                )
-                payments.append(p)
+                payments.append(_payment_from_charge(charge, currency, description))
             except Exception as exc:
                 log.warning("⚠️ Skipping charge %s: %s", charge.id, exc)
 

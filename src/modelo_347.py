@@ -188,18 +188,8 @@ def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
     return result
 
 
-def compute_modelo_347(
-    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
-) -> Modelo347Result:
-    """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties).
-
-    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
-    than 1 January, excludes transactions and invoices dated before it.
-    """
-    result = Modelo347Result(year=year)
-    start = clamp_start(f"{year}-01-01", config)
-
-    # Stripe transactions from Spanish counterparties
+def _load_347_stripe_rows(year: int, start: str, db_conn: sqlite3.Connection) -> list[dict]:
+    """Stripe transactions from Spanish counterparties, with frozen declared amounts applied."""
     rows = db_conn.execute(
         """SELECT id, email_meta, buyer_vat_id, converted_amount, converted_amount_refunded,
                   geo_region, strftime('%m', created_date) as month
@@ -211,12 +201,14 @@ def compute_modelo_347(
            ORDER BY created_date""",
         (str(year), start),
     ).fetchall()
-    rows = apply_frozen_amounts([dict(r) for r in rows], db_conn)
+    return apply_frozen_amounts([dict(r) for r in rows], db_conn)
 
-    # Income invoices issued to Spanish clients.
+
+def _load_347_invoice_rows(year: int, start: str, db_conn: sqlite3.Connection) -> list:
+    """Income invoices issued to Spanish clients."""
     # `iva_amount` is selected alongside the base because Modelo 347 reports the
     # importe *IVA incluido* — see the gross-basis note on the accumulation loop.
-    inv_rows = db_conn.execute(
+    return db_conn.execute(
         """SELECT COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
                   client_nif,
                   subtotal_eur,
@@ -232,6 +224,9 @@ def compute_modelo_347(
         (start, f"{year}-12-31"),
     ).fetchall()
 
+
+def _accumulate_347(rows: list[dict], inv_rows: list) -> dict[str, dict]:
+    """Per-counterparty totals and quarterly breakdown over Stripe rows and invoices."""
     # Both loops key by a normalised identity — NIF/VAT-ID first (the actual tax
     # ID AEAT uses to identify a counterparty), falling back to a
     # source-appropriate secondary identifier (email for Stripe, name for
@@ -280,24 +275,13 @@ def compute_modelo_347(
             by_counterparty[key]["nif"] = nif
         if by_counterparty[key]["name"] in ("", "UNKNOWN") and name not in ("", "UNKNOWN"):
             by_counterparty[key]["name"] = name
+    return by_counterparty
 
-    total_counterparties = len(by_counterparty)
-    below_threshold = 0
-    for key, info in by_counterparty.items():
-        total = round(info["total"], 2)
-        if total > result.threshold:  # art. 33.1 RD 1065/2007: "hayan superado"
-            result.rows.append(Modelo347Row(
-                counterparty_name=info["name"] or key,
-                counterparty_nif=info.get("nif", ""),
-                total_operations=total,
-                quarter_breakdown={q: round(v, 2) for q, v in info["quarters"].items()},
-            ))
-        else:
-            below_threshold += 1
 
-    result.rows.sort(key=lambda r: r.total_operations, reverse=True)
-
-    # --- Audit trail ---
+def _audit_347(
+    year: int, result: Modelo347Result, total_counterparties: int, below_threshold: int,
+) -> list[AuditEntry]:
+    """Audit trail: one cell per declared counterparty, then a summary."""
     _a = partial(AuditEntry.of, "347", year, 0)
     audit = []
     for r in result.rows:
@@ -324,5 +308,40 @@ def compute_modelo_347(
         below_threshold=below_threshold,
         threshold_eur=result.threshold,
     ))
-    result.audit = audit
+    return audit
+
+
+def compute_modelo_347(
+    year: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
+) -> Modelo347Result:
+    """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties).
+
+    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
+    than 1 January, excludes transactions and invoices dated before it.
+    """
+    result = Modelo347Result(year=year)
+    start = clamp_start(f"{year}-01-01", config)
+
+    rows = _load_347_stripe_rows(year, start, db_conn)
+    inv_rows = _load_347_invoice_rows(year, start, db_conn)
+
+    by_counterparty = _accumulate_347(rows, inv_rows)
+
+    total_counterparties = len(by_counterparty)
+    below_threshold = 0
+    for key, info in by_counterparty.items():
+        total = round(info["total"], 2)
+        if total > result.threshold:  # art. 33.1 RD 1065/2007: "hayan superado"
+            result.rows.append(Modelo347Row(
+                counterparty_name=info["name"] or key,
+                counterparty_nif=info.get("nif", ""),
+                total_operations=total,
+                quarter_breakdown={q: round(v, 2) for q, v in info["quarters"].items()},
+            ))
+        else:
+            below_threshold += 1
+
+    result.rows.sort(key=lambda r: r.total_operations, reverse=True)
+
+    result.audit = _audit_347(year, result, total_counterparties, below_threshold)
     return result

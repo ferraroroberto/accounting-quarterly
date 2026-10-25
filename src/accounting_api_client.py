@@ -121,19 +121,6 @@ class AccountingAPIClient:
         except Exception as exc:
             return False, str(exc)
 
-    def get_companies(self, *, token: str, company_id: Optional[str] = None, cif: Optional[str] = None) -> Any:
-        params: dict[str, str] = {}
-        if company_id:
-            params["company_id"] = company_id
-        if cif:
-            params["cif"] = cif
-        return self._request(
-            "GET",
-            "/api-global/v1/getCompanies",
-            headers=self._headers(token),
-            params=params if params else None,
-        )
-
     def upload_document(
         self,
         *,

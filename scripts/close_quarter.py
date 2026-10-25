@@ -302,7 +302,7 @@ def _backfill_fee_split(args: argparse.Namespace, q_start: datetime, q_end: date
 
 def _print_eu_b2c_threshold(year: int, quarter: int) -> None:
     from src.database import get_connection
-    from src.oss_return import compute_eu_b2c_threshold
+    from src.returns.oss_return import compute_eu_b2c_threshold
     from src.tax_data import load_app_config
 
     conn = get_connection()

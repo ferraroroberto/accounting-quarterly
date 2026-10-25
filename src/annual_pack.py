@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Optional
 
 from src.logger import get_logger
-from src.modelo_347 import Modelo347PurchasesResult, compute_modelo_347, compute_modelo_347_purchases
-from src.modelo_390 import MODELO390_LABELS, Modelo390Result, compute_modelo_390
+from src.returns.modelo_347 import Modelo347PurchasesResult, compute_modelo_347, compute_modelo_347_purchases
+from src.returns.modelo_390 import MODELO390_LABELS, Modelo390Result, compute_modelo_390
 from src.pl_by_activity import ACTIVITY_LABELS, PLByActivity, compute_pl_by_activity
 from src.tax_data import load_app_config
 from src.tax_models import Modelo347Result

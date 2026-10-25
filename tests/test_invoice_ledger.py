@@ -24,9 +24,9 @@ from src.tax_codes import (
     derive_tax_treatment_for_invoice,
     normalize_vat_id,
 )
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
-from src.modelo_347 import compute_modelo_347
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
+from src.returns.modelo_347 import compute_modelo_347
 
 # Synthetic, structurally valid ids — not real taxpayers.
 ES_CIF = "B00000000"
@@ -48,27 +48,25 @@ def _columns(db_path) -> set[str]:
         conn.close()
 
 
+# Frozen pre-ledger `invoices` columns; the live schema in src/database/schema.py moves on.
+_LEGACY_INVOICE_COLUMNS = (
+    "id TEXT PRIMARY KEY", "filename TEXT NOT NULL",
+    "direction TEXT NOT NULL CHECK(direction IN ('in', 'out'))",
+    "invoice_number TEXT", "invoice_date TEXT", "vendor_name TEXT", "vendor_nif TEXT",
+    "vendor_address TEXT", "client_name TEXT", "client_nif TEXT", "client_address TEXT",
+    "description TEXT", "subtotal_eur REAL", "iva_rate REAL", "iva_amount REAL",
+    "irpf_rate REAL", "irpf_amount REAL", "total_eur REAL", "currency TEXT DEFAULT 'EUR'",
+    "original_currency TEXT", "original_amount REAL", "fx_rate REAL", "payment_method TEXT",
+    "category TEXT", "notes TEXT", "raw_json TEXT", "file_hash TEXT", "supply_date TEXT",
+    "deductible_pct REAL DEFAULT 100", "geo_region TEXT", "vat_treatment TEXT",
+    "extracted_at TEXT NOT NULL DEFAULT (datetime('now'))", "UNIQUE(filename, direction)",
+)
+
+
 def _make_legacy_db(db_path) -> None:
     """An `invoices` table as it existed before #90, with legacy-classified rows."""
     conn = sqlite3.connect(str(db_path))
-    conn.executescript("""
-        CREATE TABLE invoices (
-            id TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
-            invoice_number TEXT, invoice_date TEXT,
-            vendor_name TEXT, vendor_nif TEXT, vendor_address TEXT,
-            client_name TEXT, client_nif TEXT, client_address TEXT,
-            description TEXT, subtotal_eur REAL, iva_rate REAL, iva_amount REAL,
-            irpf_rate REAL, irpf_amount REAL, total_eur REAL,
-            currency TEXT DEFAULT 'EUR', original_currency TEXT, original_amount REAL,
-            fx_rate REAL, payment_method TEXT, category TEXT, notes TEXT, raw_json TEXT,
-            file_hash TEXT, supply_date TEXT, deductible_pct REAL DEFAULT 100,
-            geo_region TEXT, vat_treatment TEXT,
-            extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(filename, direction)
-        );
-    """)
+    conn.execute(f"CREATE TABLE invoices ({', '.join(_LEGACY_INVOICE_COLUMNS)})")
     rows = [
         # id, direction, vendor_nif, client_nif, iva, geo, vat_treatment, deductible_pct
         ("a", "in", ES_CIF, None, 21.0, "SPAIN", "IVA_ES_21", 50.0),

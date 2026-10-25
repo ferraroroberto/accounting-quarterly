@@ -38,11 +38,11 @@
 │   ├── stripe_client.py           # Stripe API wrapper (charges, fees, card country)
 │   ├── fx_rates.py                # FX rate fetching (ECB/Frankfurter), storage, conversion
 │   ├── database/                  # SQLite operations; __init__ re-exports every name, so `from src.database import ...` works
-│   │   ├── connection.py          # get_connection and the default database path
-│   │   ├── schema.py              # Table definitions, migrations, backfills, init_db
-│   │   ├── transactions.py        # Stripe transactions: upsert, load, search
-│   │   ├── invoices.py            # Upload log and invoices: upsert, edit, lock, delete, stats
-│   │   └── tax.py                 # Tax entries, filing status, versioned snapshots, audit log
+│   │   ├── connection.py        # get_connection and the default database path
+│   │   ├── schema.py            # Table definitions, migrations, backfills, init_db
+│   │   ├── transactions.py      # Stripe transactions: upsert, load, search
+│   │   ├── invoices.py          # Upload log and invoices: upsert, edit, lock, delete, stats
+│   │   └── tax.py               # Tax entries, filing status, versioned snapshots, audit log
 │   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── invoice_dedupe.py          # Duplicate/receipt/out-of-period detection + exclusion
 │   ├── periods.py                 # Quarter start/end bounds (date, ISO string, datetime) shared by the engine, dedupe, close and UI
@@ -50,16 +50,17 @@
 │   ├── tax_codes.py               # EU country / VAT prefixes, Spanish NIF → geography, tax_treatment values and legacy mapping
 │   ├── tax_data.py                # Shared by every tax model: config plumbing, record loaders, activity-start floor, per-row VAT figures
 │   ├── vat_rules.py               # Single source of truth: activity×geo VAT matrix, OSS rates, base extraction
-│   ├── modelo_303.py              # Modelo 303 (AEAT boxes, pro-rata, credit chain)
-│   ├── modelo_130.py              # Modelo 130 (AEAT boxes, box 13 reduction, negative carry)
-│   ├── modelo_349.py              # Modelo 349 (intra-EU operations, per operator and key)
-│   ├── oss_return.py              # OSS quarterly return and the EU B2C distance-selling threshold watch
+│   ├── returns/                   # Tax-return engines, one module per model
+│   │   ├── modelo_303.py          # Modelo 303 (AEAT boxes, pro-rata, credit chain)
+│   │   ├── modelo_130.py          # Modelo 130 (AEAT boxes, box 13 reduction, negative carry)
+│   │   ├── modelo_349.py          # Modelo 349 (intra-EU operations, per operator and key)
+│   │   ├── oss_return.py          # OSS quarterly return and the EU B2C distance-selling threshold watch
+│   │   ├── modelo_390.py          # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
+│   │   └── modelo_347.py          # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── tax_engine.py              # Tax calendar and snapshot persistence; re-exports each model's compute_* function
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
 │   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
-│   ├── modelo_390.py              # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
-│   ├── modelo_347.py              # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── pl_by_activity.py          # P&L per IAE activity (826/861/751) tied to the Q4 Modelo 130
 │   ├── annual_pack.py             # Annual pack: 390 + 347 + P&L, markdown/CSV export + CLI
 │   ├── filed_returns.py           # Import filed AEAT receipt PDFs (303/130/349/390) as reference data + CLI
@@ -67,7 +68,10 @@
 │   ├── accounting_api_client.py   # IntegraLOOP/BILOOP Accounting API client
 │   ├── invoice_ocr.py             # PDF extraction for Spanish accounting (local-llm-hub only)
 │   ├── invoice_ingest.py          # OCR → FX → vendor registry → DB save path (OCR tab + close_quarter.py ocr)
-│   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent
+│   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent, and run_all
+│   ├── close/                     # Quarter-close building blocks behind close_pipeline.py
+│   │   ├── context.py             # StepResult, CloseContext and the shared file/quarter helpers
+│   │   └── gestor_pack.py         # Stripe report (+ freeze, freeze-sent) and the gestor pack
 │   ├── relink.py                  # Re-point invoice records after PDFs move/rename (move record, then content hash)
 │   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"
 │   ├── tax_deadlines.py           # Filing / direct-debit deadlines + business-day rules, shared by the filing sheet and the Obligations calendar
@@ -104,12 +108,12 @@
 │   ├── conftest.py                # Shared fixtures
 │   ├── ratchets/                  # Pins the gate's vendored-ratchet stages (a new finding and a not-confirmed run both fail)
 │   ├── tax/                       # The tax engine's tests: Modelo 303/130/349/347/390, deadlines, the P&L
-│   │   ├── test_tax_deadlines.py      # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
-│   │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
-│   │   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
-│   │   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
-│   │   ├── test_modelo_130.py         # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
-│   │   ├── test_annual_pack.py        # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
+│   │   ├── test_tax_deadlines.py    # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
+│   │   ├── test_tax_engine.py       # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   │   ├── test_modelo_303.py       # Modelo 303 box model: golden quarter, pro-rata, credit chain
+│   │   ├── test_modelo_349.py       # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
+│   │   ├── test_modelo_130.py       # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
+│   │   ├── test_annual_pack.py      # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
 │   ├── test_classifier.py
 │   ├── test_models.py
 │   ├── test_database.py

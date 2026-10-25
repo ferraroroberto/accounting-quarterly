@@ -1,8 +1,5 @@
 {
   "version": 1,
   "tools": {"jscpd": "5.4.0", "ruff": "0.17.2"},
-  "entries": [
-    {"key": "dup:a07052689432:src/database/schema.py|tests/test_invoice_ledger.py", "files": ["src/database/schema.py", "tests/test_invoice_ledger.py"]},
-    {"key": "unused:F841:src/accounting_api_client.py:api_cfg", "files": ["src/accounting_api_client.py"]}
-  ]
+  "entries": []
 }

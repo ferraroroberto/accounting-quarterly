@@ -312,7 +312,7 @@ MODELO349_BOX_LABELS: dict[str, str] = {
 
 # Nested model -> box -> label, the shape the reconciliation view and the
 # filing sheet look up by model. Reconciliation.py extends this with "390"
-# (whose labels live in src/modelo_390.py, out of scope here).
+# (whose labels live in src/returns/modelo_390.py, out of scope here).
 BOX_LABELS: dict[str, dict[str, str]] = {
     "303": MODELO303_BOX_LABELS,
     "130": MODELO130_BOX_LABELS,
@@ -441,7 +441,7 @@ class AuditEntry:
         """Build an entry, JSON-serialising ``inputs`` into ``inputs_json``.
 
         Single construction site for every ``compute_modelo_*`` function in
-        the per-model modules (``src/modelo_303.py`` …) — they all built the same shape by hand before.
+        the per-model modules (``src/returns/modelo_303.py`` …) — they all built the same shape by hand before.
         """
         return cls(
             model=model, year=year, quarter=quarter,

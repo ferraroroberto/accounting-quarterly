@@ -13,11 +13,11 @@ from src.annual_pack import build_annual_pack, csv_347, csv_390, csv_pl, main, t
 from src.database import add_tax_entry, init_db
 from src.filed_returns import FiledReturn, store_filed_return
 from src.fixed_assets import FixedAsset, add_fixed_asset
-from src.modelo_347 import EXCLUDED_349, EXCLUDED_WITHHOLDING, THRESHOLD_EUR, compute_modelo_347_purchases
-from src.modelo_390 import compute_modelo_390
+from src.returns.modelo_347 import EXCLUDED_349, EXCLUDED_WITHHOLDING, THRESHOLD_EUR, compute_modelo_347_purchases
+from src.returns.modelo_390 import compute_modelo_390
 from src.pl_by_activity import compute_pl_by_activity
-from src.modelo_130 import compute_modelo_130
-from src.modelo_303 import compute_modelo_303
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
 from src.tax_models import Modelo303Result
 from src.vendor_registry import Vendor, VendorRegistry
 

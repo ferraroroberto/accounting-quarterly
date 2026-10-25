@@ -103,18 +103,19 @@
 ├── tests/                         # Pytest test suite
 │   ├── conftest.py                # Shared fixtures
 │   ├── ratchets/                  # Pins the gate's vendored-ratchet stages (a new finding and a not-confirmed run both fail)
+│   ├── tax/                       # The tax engine's tests: Modelo 303/130/349/347/390, deadlines, the P&L
+│   │   ├── test_tax_deadlines.py      # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
+│   │   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
+│   │   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
+│   │   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
+│   │   ├── test_modelo_130.py         # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
+│   │   ├── test_annual_pack.py        # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
 │   ├── test_classifier.py
 │   ├── test_models.py
 │   ├── test_database.py
 │   ├── test_fx_rates.py
 │   ├── test_rules_engine.py
 │   ├── test_aggregator.py
-│   ├── test_tax_deadlines.py      # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
-│   ├── test_tax_engine.py         # VAT classification, Modelo 303/130, OSS, Modelo 349
-│   ├── test_modelo_303.py         # Modelo 303 box model: golden quarter, pro-rata, credit chain
-│   ├── test_modelo_349.py         # Modelo 349 keys I/S: grouping, excluded/unidentified lines, snapshots
-│   ├── test_modelo_130.py         # Modelo 130 box model: golden two quarters, box 13 scale, 05/15 chain
-│   ├── test_annual_pack.py        # 390 from four synthetic quarters, 347 purchases threshold, P&L = 130 Q4
 │   ├── test_invoice_ledger.py     # Ledger migration/backfill, edit locks, excluded rows, invoice-date keying
 │   ├── test_invoice_ledger_view.py # Invoice Ledger tab (AppTest)
 │   ├── test_stripe_eu_b2c_reclassify.py  # EU B2C at 21%, reclassify, frozen reports, threshold

@@ -14,7 +14,7 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 
 ## Subpackages
 
-`app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `src/` holds 45 modules and `tests/` 42, both past the 40-module limit, so they are baselined as `dir:src` and `dir:tests` and take no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
+`app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `tests/tax/` holds the tax engine's tests, which leaves `tests/` at 36 modules. `src/` holds 45 modules, past the 40-module limit, so it is baselined as `dir:src` and takes no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
 
 ## Declared exceptions
 

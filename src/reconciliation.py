@@ -84,7 +84,7 @@ CATALOGUE_FIELDS = (
 
 OPERATOR_PREFIX = "op:"
 
-# Canonical table: src/tax_models.BOX_LABELS (#189) — shared with the filing
+# Canonical table: src/tax_models.BOX_LABELS — shared with the filing
 # sheet and the Tax Obligations tab. 390's labels live in src/modelo_390.py
 # (that model has no filing-sheet/obligations-tab view to share with).
 BOX_LABELS: dict[str, dict[str, str]] = {

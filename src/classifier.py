@@ -136,7 +136,7 @@ def classify_geography(
 # EU member states that don't use the euro. A charge in one of these
 # currencies with no known country is still probably an EU B2C sale, not
 # outside the EU — but currency is a weaker signal than country, so it is
-# flagged for review rather than trusted outright (#111).
+# flagged for review rather than trusted outright.
 _EU_NON_EURO_CURRENCIES: frozenset[str] = frozenset({
     "dkk", "sek", "pln", "czk", "huf", "ron", "bgn",
 })

@@ -55,7 +55,7 @@ _RECEIPT_PAIR_MAX_DAYS = 3
 
 ROOT = Path(__file__).parent.parent
 
-# Single source for the swept-file naming scheme and its output root (#189):
+# Single source for the swept-file naming scheme and its output root:
 # ``close_pipeline.step_sweep``/``_pack_invoices`` encode with ``flat_sweep_name``;
 # ``load_sweep_rows`` below decodes with ``_parse_sweep_name``. Keeping both ends
 # in one module means a change to one can't silently desync the other.

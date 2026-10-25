@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any, Literal, Optional
 
 
-# COMPUTED / FILED are also the ``tax_computation_snapshots.status`` values (#101).
+# COMPUTED / FILED are also the ``tax_computation_snapshots.status`` values.
 FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "COMPUTED", "FILED"]
 
 TaxModel = Literal["303", "390", "130", "100", "347", "349", "OSS"]
@@ -63,8 +63,8 @@ MODELO303_BOX_FIELDS: dict[str, str] = {
 }
 
 # Box -> concept, as printed on the AEAT form. Single source for the
-# reconciliation view (#100), the filing sheet (#101) and the Tax Obligations
-# tab — a box missing here shows with no description everywhere (#189).
+# reconciliation view, the filing sheet and the Tax Obligations
+# tab — a box missing here shows with no description everywhere.
 MODELO303_BOX_LABELS: dict[str, str] = {
     "01": "Régimen general 4 % — base imponible", "03": "Régimen general 4 % — cuota",
     "04": "Régimen general 10 % — base imponible", "06": "Régimen general 10 % — cuota",

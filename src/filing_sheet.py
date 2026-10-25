@@ -46,8 +46,8 @@ MODEL_TITLES = {
     "349": "Modelo 349 — operaciones intracomunitarias",
 }
 
-# Box -> concept, as printed on the forms. Canonical table: src/tax_models.BOX_LABELS
-# (#189) — shared with the reconciliation view and the Tax Obligations tab.
+# Box -> concept, as printed on the forms. Canonical table: src/tax_models.BOX_LABELS,
+# shared with the reconciliation view and the Tax Obligations tab.
 
 # Modelo 303 box -> form section, following the form order of MODELO303_BOX_FIELDS
 # (page 1 liquidación; page 3 información adicional + resultado).

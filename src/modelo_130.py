@@ -30,7 +30,7 @@ from src.tax_models import AuditEntry, MODELO130_BOX_FIELDS, Modelo130Result
 log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Modelo 130 — AEAT box model, box 13 reduction and negative carry (#98)
+# Modelo 130 — AEAT box model, box 13 reduction and negative carry
 # ---------------------------------------------------------------------------
 # Box layout and formulas follow the AEAT Sede "Modelo 130 — Instrucciones"
 # (sede.agenciatributaria.gob.es, IRPF > Modelo 130 > Instrucciones):
@@ -75,7 +75,7 @@ class _Collected130:
     inv_income: float = 0.0
     exch_diff_total: float = 0.0
     inv_gastos_base: float = 0.0
-    inv_gastos_vat: float = 0.0     # input VAT not deducted in the 303, IRPF business share (#205)
+    inv_gastos_vat: float = 0.0     # input VAT not deducted in the 303, IRPF business share
     ss_gastos: float = 0.0
     platform_fees: float = 0.0
     fee_split_unknown: int = 0
@@ -116,10 +116,10 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     # 01 — Stripe VAT bases (frozen declared amounts win, see _load_classified_range).
     rows = load_classified_ytd(year, quarter, conn, config)
     col.stripe_income = sum(get_vat_base(r, config) for r in rows)
-    # 01 — issued invoices, gross of the IRPF withheld (D12); eur_received wins (#93).
+    # 01 — issued invoices, gross of the IRPF withheld (D12); eur_received wins.
     income_invs = load_income_invoices_ytd(year, quarter, conn, config)
     col.inv_income = sum(income_invoice_eur(inv) for inv in income_invs)
-    # 01 — exchange differences (#93 / D5): converting a foreign-currency balance
+    # 01 — exchange differences (D5): converting a foreign-currency balance
     # realises a gain/loss against the EUR booked; income of the conversion period.
     exch_rows = conn.execute(
         """SELECT id, invoice_id, conversion_date, currency, foreign_amount,
@@ -132,9 +132,9 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     col.exch_diff_total = round(sum(float(r["gain_loss_eur"]) for r in exch_rows), 2)
 
     # 02 — expense invoices: base × deductible_pct_irpf + the input VAT the 303 does
-    # not deduct, in the same business share (#205, see tax_data.irpf_expense);
+    # not deduct, in the same business share (see tax_data.irpf_expense);
     # excluded rows are filtered by the loader, capital assets enter through
-    # depreciation instead (#96).
+    # depreciation instead.
     expense_invs = load_expense_invoices_ytd(year, quarter, conn, config)
     capital_ids = capital_asset_invoice_ids(conn)
     capital_invs = [inv for inv in expense_invs if inv["id"] in capital_ids]
@@ -154,7 +154,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
         log.info("ℹ️ 130 %dQ%d: %.2f of input VAT not deducted in the 303 expensed in box 02 (%d invoice(s))",
                  year, quarter, col.inv_gastos_vat, sum(1 for e in irpf.values() if e.vat_eur))
     # Informative only: depreciation stays on the base (non-deducted VAT in the
-    # depreciable base is a known limitation, #205).
+    # depreciable base is a known limitation).
     col.capital_excluded = round(sum(irpf_expense(inv).base_eur for inv in capital_invs), 2)
     # 02 — RETA cuotas as paid, net of refunds (stored negative), art. 30 LIRPF.
     ss_rows = conn.execute(
@@ -166,7 +166,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     ).fetchall()
     col.ss_gastos = round(sum(float(r["amount_eur"]) for r in ss_rows), 2)
     # 02 — application fees a connected platform kept from the same Stripe charges
-    # as box 01 (#135). Stripe's own fee is already expensed from its invoices, so
+    # as box 01. Stripe's own fee is already expensed from its invoices, so
     # only the application part counts; it follows the charge's balance transaction
     # (a fee the platform did not return on a refund stays an expense). Rows with
     # an unknown split (fetched before the split was stored) are counted, not guessed.
@@ -184,7 +184,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     col.manual_retenciones = get_tax_entries_total(year, quarter, "RETENCIONES_SOPORTADAS", conn, ytd=True)
 
     # Audit note: records dated before tax.activity_start_date that the YTD loaders
-    # above left out of boxes 01/02 (issue #133).
+    # above left out of boxes 01/02.
     col.activity_start_note = activity_start_note(
         conn, config, ytd_start, {"stripe": ytd_end, "income": ytd_end, "expense": ytd_end}, "130")
 

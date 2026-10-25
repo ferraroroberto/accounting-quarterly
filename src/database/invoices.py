@@ -34,7 +34,7 @@ INVOICE_EDITABLE_FIELDS: tuple[str, ...] = (
     "tax_treatment", "deductible_pct_vat", "deductible_pct_irpf",
     "is_capital_asset", "asset_class", "excluded", "excluded_reason",
     "eur_received", "payment_date",
-    # FX (#93) — charged_eur is the one FX field a user may correct by hand;
+    # FX — charged_eur is the one FX field a user may correct by hand;
     # the rest (fx_rate_used, fx_source, ...) are derived and re-resolved on
     # the next OCR extraction, not directly editable.
     "charged_eur",

@@ -109,7 +109,7 @@ def vat_treatment(
         if has_vat_id:
             return "IVA_EU_B2B"
         # No VAT id on file → B2C. The config default only chooses between
-        # the B2C sub-treatments; it can no longer force B2B (#113).
+        # the B2C sub-treatments; it can no longer force B2B.
         configured = tax_cfg.get(f"default_vat_treatment_eu_{activity.lower()}")
         treatment = configured if configured in (EU_B2C_ES21, "OSS_EU") else eu_b2c
         if treatment == "OSS_EU" and not oss_registered:

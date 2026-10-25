@@ -189,7 +189,7 @@ def compute_pl_by_activity(
         if act is None and registry is not None:
             match = registry.match_invoice(m or inv)
             act = _norm_activity(match.vendor.activity) if match else None
-        amount = irpf_expense(inv).total_eur    # base + non-deducted VAT, as in the 130 (#205)
+        amount = irpf_expense(inv).total_eur    # base + non-deducted VAT, as in the 130
         _line("expense", "invoice_in", amount, act, "unallocated", id=inv["id"],
               date=str(inv.get("tx_date", ""))[:10],
               description=str(inv.get("vendor_name") or inv.get("description") or "")[:50])

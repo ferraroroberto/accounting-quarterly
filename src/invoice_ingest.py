@@ -77,7 +77,7 @@ def extract_and_save(
     pdf_path = resolve_invoice_dir(direction, config) / filename
     data = extract_invoice(pdf_path, model=model)
 
-    # FX (#93): the LLM's own subtotal_eur/iva_amount/total_eur are only a
+    # FX: the LLM's own subtotal_eur/iva_amount/total_eur are only a
     # cross-check for a foreign-currency document — the authoritative EUR
     # figures come from the ECB rate on invoice_date, or the EUR actually
     # charged when the document states it (charged_eur wins for expenses).

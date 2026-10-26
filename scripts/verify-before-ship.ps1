@@ -69,6 +69,8 @@ if (-not (Test-Path $py)) {
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
+. (Join-Path $PSScriptRoot "box_lock_gate.ps1"); Enter-BoxLockGate
+
 function Invoke-Stage {
     param([string]$Name, [scriptblock]$Body)
     Write-Host ""

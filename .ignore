@@ -1,0 +1,11 @@
+# BEGIN vendored-copies (generated from .fleet.toml [vendored]; edit the manifest, not this block)
+/scripts/box_lock_gate.ps1
+/scripts/comment_ratchet.py
+/scripts/conventions_ratchet.py
+/scripts/dead_code_ratchet.py
+/scripts/doc_refs_ratchet.py
+/scripts/docs_ratchet.py
+/scripts/instruction_ratchet.py
+/scripts/static_ratchet.py
+/scripts/structure_ratchet.py
+# END vendored-copies

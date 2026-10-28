@@ -14,15 +14,15 @@ extra_roots = ["logs"]
 # Vendored byte-for-byte from project-scaffolding. sha = the source repo commit
 # the copy was taken from; /propagate-vendored hash-verifies + bumps.
 [vendored]
-docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "f9300a05540313bb26f442e1daa491c9308541d2", dest = "scripts/docs_ratchet.py" }
-dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "0eb0da42298e391fc614b3fe550bd6cf2d07c693", dest = "scripts/dead_code_ratchet.py" }
-doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "23dbefa46635c952d3c871bda4e80b740e7f2859", dest = "scripts/doc_refs_ratchet.py" }
-instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "60fdd0350f18d28838428b2e773f7868f6381fbf", dest = "scripts/instruction_ratchet.py" }
-structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "98cdb1b7727d12a5c233580478e6fae40d98e6f3", dest = "scripts/structure_ratchet.py" }
+docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/docs_ratchet.py" }
+dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/dead_code_ratchet.py" }
+doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/doc_refs_ratchet.py" }
+instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/instruction_ratchet.py" }
+structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/structure_ratchet.py" }
 box_lock_gate = { src = "scripts/box_lock_gate.ps1", sha = "98cdb1b7727d12a5c233580478e6fae40d98e6f3", dest = "scripts/box_lock_gate.ps1" }
 static_ratchet = { src = "scripts/static_ratchet.py", sha = "537cf3931b57e7453ed251850c0dbeac042b03bf", dest = "scripts/static_ratchet.py" }
-comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "e56308e1c099712cf5a006557c94e3f9ae4fe8aa", dest = "scripts/comment_ratchet.py" }
-conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "0eb0da42298e391fc614b3fe550bd6cf2d07c693", dest = "scripts/conventions_ratchet.py" }
+comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/comment_ratchet.py" }
+conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "baac1ed97388a3545bd1e52544821ec20f1dc77a", dest = "scripts/conventions_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
 # runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when

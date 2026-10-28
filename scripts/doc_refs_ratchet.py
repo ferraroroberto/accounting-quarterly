@@ -471,8 +471,8 @@ def _git_failed(args: list[str], proc: subprocess.CompletedProcess[bytes]) -> No
 
 
 def tracked_files(root: Path) -> list[str]:
-    """Repo-relative, forward-slash paths of every tracked file."""
-    args = ["ls-files", "-z"]
+    """Repo-relative, forward-slash paths of every tracked or untracked-but-not-ignored file."""
+    args = ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
     proc = _git(root, args)
     if proc.returncode != 0:
         raise _git_failed(args, proc)

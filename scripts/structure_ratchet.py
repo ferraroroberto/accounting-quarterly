@@ -302,11 +302,11 @@ def count_lines(raw: bytes) -> int:
 
 
 def tracked_files(root: Path) -> list[str]:
-    """Repo-relative, forward-slash paths of every tracked file."""
+    """Repo-relative, forward-slash paths of every tracked or untracked-but-not-ignored file."""
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")  # a read-only sweep must not leave index locks
     try:
         proc = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True, env=env,
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, env=env,
             stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW, timeout=GIT_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired as exc:

@@ -38,7 +38,7 @@ repo that has not opted in:
     include  = ["app/", "src/"]                    # path prefixes; default: whole tree
     exclude  = ["**/generated/**"]                 # globs, added to the built-in set
 
-Product code only: `git ls-files` (ignored and generated folders never appear)
+Product code only: `git ls-files --cached --others --exclude-standard` (ignored and generated folders never appear)
 minus tests (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.js`),
 `*.min.*`, `node_modules`, venvs, files whose first lines say `DO NOT EDIT` or
 `@generated`, and every `dest` in the adopter's own `[vendored]` table.
@@ -571,11 +571,11 @@ def scan_text(text: str, language: str) -> list[Ref]:
 # ------------------------------------------------------------------- files
 
 def tracked_files(root: Path) -> list[str]:
-    """Repo-relative, forward-slash paths of every tracked file."""
+    """Repo-relative, forward-slash paths of every tracked or untracked-but-not-ignored file."""
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")  # a read-only sweep must not leave index locks
     try:
         proc = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True, env=env,
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, env=env,
             stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW, timeout=GIT_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired as exc:

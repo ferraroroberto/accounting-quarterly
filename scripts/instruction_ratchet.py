@@ -8,7 +8,7 @@ per rule, against a committed baseline: it fails only when a count *rises*.
 It counts the audit's lint-tier rules (`RULES`; rule text and fix shapes in
 fleet-config's `.claude/skills/prompt-audit/rules.md`) over the root `CLAUDE.md` and
 `AGENTS.md`, `.claude/rules/*.md`, `<skill_dir>/*/SKILL.md`, `extra_files` and the
-`.md` files a skill references (scope is `git ls-files`). Only hits that reach
+`.md` files a skill references (scope is `git ls-files --cached --others --exclude-standard`). Only hits that reach
 *violation* for the file's reader count: a single-vendor rule is advisory in an
 agent-neutral file. R-14 is the size cap (`SIZE_CAPS`); an over-cap file is baselined
 at its size and may only shrink. `NOT_ENFORCED` names the rules left to the audit.
@@ -723,11 +723,11 @@ def lint_doc(doc: Doc, root: Path) -> tuple[list[Hit], int | None]:
 # ---------------------------------------------------------------- the tree
 
 def tracked_files(root: Path) -> list[str]:
-    """Repo-relative, forward-slash paths of every tracked file."""
+    """Repo-relative, forward-slash paths of every tracked or untracked-but-not-ignored file."""
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")  # a read-only sweep must not leave index locks
     try:
         proc = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True, env=env,
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, env=env,
             stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW, timeout=GIT_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -765,7 +765,7 @@ def inventory(root: Path, cfg: Config) -> list[Doc]:
     present = {p for p in tracked if (root / p).is_file()}  # tracked but deleted: nothing to lint
     missing = [p for p in cfg.extra_files if p not in present]
     if missing:
-        raise ConfigError(f"[instruction_ratchet] extra_files not tracked in this tree: {', '.join(missing)}")
+        raise ConfigError(f"[instruction_ratchet] extra_files not found in this tree: {', '.join(missing)}")
     wanted = [*cfg.extra_files, "CLAUDE.md", "AGENTS.md"]
     wanted += [p for p in tracked if PurePosixPath(p).parent.as_posix() == ".claude/rules" and p.endswith(".md")]
     for skill_dir in cfg.skill_dirs:

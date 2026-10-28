@@ -43,7 +43,7 @@ repo that has not opted in:
     readme_max_bytes = 40960                           # default: 40 KiB
     allow_refs      = ["owner/repo#178"]               # exact text as written; default none
 
-Scope is `git ls-files` minus files whose first lines say `DO NOT EDIT` or
+Scope is `git ls-files --cached --others --exclude-standard` minus files whose first lines say `DO NOT EDIT` or
 `@generated`, and every `dest` in the adopter's own `[vendored]` table.
 
 Exit codes (a state is never folded into a pass):
@@ -372,11 +372,11 @@ def scan_text(text: str, allow_refs: tuple[str, ...] = ()) -> list[Marker]:
 # ------------------------------------------------------------------- files
 
 def tracked_files(root: Path) -> list[str]:
-    """Repo-relative, forward-slash paths of every tracked file."""
+    """Repo-relative, forward-slash paths of every tracked or untracked-but-not-ignored file."""
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")  # a read-only sweep must not leave index locks
     try:
         proc = subprocess.run(
-            ["git", "ls-files", "-z"], cwd=root, capture_output=True, env=env,
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root, capture_output=True, env=env,
             stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW, timeout=GIT_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired as exc:

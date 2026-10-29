@@ -1,4 +1,4 @@
-"""Duplicate / receipt / out-of-period invoice detection (issue #92).
+"""Duplicate / receipt / out-of-period invoice detection.
 
 Five detectors, each a pure function over invoice-row dicts (as returned by
 ``src.database.get_invoices``), proposing a group of losing rows to exclude
@@ -139,7 +139,7 @@ def _is_receipt(row: dict) -> bool:
 
 def _pick_keeper(rows: list[dict]) -> dict:
     """An active row always beats an excluded one, so the current exclusion state
-    is respected and the group keeps a live row (#156). Then an invoice beats a
+    is respected and the group keeps a live row. Then an invoice beats a
     receipt; among the rest, non-``email``-path and earliest-ingested wins (S5's
     tie-break rule). Applies to every detector that groups more than a strict
     invoice/receipt pair (1, 2, 4) so a receipt sharing a
@@ -416,7 +416,7 @@ def apply_groups(groups: list[DuplicateGroup], db_path: Optional[str | Path] = N
     "skipped_groups": [(group, why), ...]}``. Never overrides a row the user
     already locked — ``set_invoice_exclusion`` enforces that per row. A group
     whose keeper is excluded (or gone) by the time it is applied is skipped
-    whole: excluding its losers would leave no active row (#156).
+    whole: excluding its losers would leave no active row.
     """
     applied = 0
     skipped = 0

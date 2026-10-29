@@ -72,7 +72,7 @@ def vat_treatment(
       IVA-registered, i.e. ``tax.vat_registered`` is false — franquicia/no
       domestic IVA charged).
     - ``EU_NOT_SPAIN`` → the B2B/B2C split follows the **customer's status**,
-      not the activity (accounting-quarterly#113 — art. 69/70 LIVA): a sale
+      not the activity (art. 69/70 LIVA): a sale
       to a customer with a known ``buyer_vat_id`` is ``IVA_EU_B2B`` (reverse
       charge, regardless of activity or config); a sale with no known VAT id
       is EU B2C — ``OSS_EU`` when ``tax.oss_registered`` is true, otherwise

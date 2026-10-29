@@ -158,8 +158,8 @@ class Modelo303Result:
     def aeat_boxes(self) -> dict[str, float]:
         """Every modelled box keyed by its AEAT number ("01", "110", …), in form order.
 
-        Interface consumed by the reconciliation view (#100) and the filing
-        sheet (#101). Box 123 is the OSS base; it is 0 unless OSS-registered.
+        Interface consumed by the reconciliation view and the filing
+        sheet. Box 123 is the OSS base; it is 0 unless OSS-registered.
         """
         return {box: float(getattr(self, name)) for box, name in MODELO303_BOX_FIELDS.items()}
 
@@ -258,8 +258,8 @@ class Modelo130Result:
     def aeat_boxes(self) -> dict[str, float]:
         """Boxes "01".."19" keyed as printed on the AEAT form, in form order.
 
-        Interface consumed by the reconciliation view (#100) and the filing
-        sheet (#101). Boxes 08–11, 16 and 18 are always 0 for this taxpayer.
+        Interface consumed by the reconciliation view and the filing
+        sheet. Boxes 08–11, 16 and 18 are always 0 for this taxpayer.
         """
         return {box: float(getattr(self, name)) for box, name in MODELO130_BOX_FIELDS.items()}
 

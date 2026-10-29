@@ -1,7 +1,7 @@
 """Modelo 347: both sides of the annual operations declaration with Spanish counterparties.
 
 ``compute_modelo_347`` is the sales side. ``compute_modelo_347_purchases`` is the purchases side
-(acquisitions from Spanish vendors above €3,005.06 a year, #103), which applies these rules
+(acquisitions from Spanish vendors above €3,005.06 a year), which applies these rules
 (Reglamento General de gestión e inspección tributaria, RD 1065/2007):
 
 - art. 33.1: declare every person or entity with whom the operations of the
@@ -99,7 +99,7 @@ def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
 
     ``registry`` is the vendor registry used to fill a missing NIF / name
     (``src.vendor_registry.load_registry()`` when ``None``). ``config``'s
-    ``tax.activity_start_date`` (issue #133), when set and later than 1 January,
+    ``tax.activity_start_date``, when set and later than 1 January,
     excludes invoices dated before it — this business had no purchases yet.
     """
     if registry is None:
@@ -316,7 +316,7 @@ def compute_modelo_347(
 ) -> Modelo347Result:
     """Compute Modelo 347 (annual operations > €3,005.06 with Spain counterparties).
 
-    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
+    ``config``'s ``tax.activity_start_date``, when set and later
     than 1 January, excludes transactions and invoices dated before it.
     """
     result = Modelo347Result(year=year)

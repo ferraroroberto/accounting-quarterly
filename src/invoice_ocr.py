@@ -7,9 +7,8 @@ in the `invoices` table.
 Extraction routes through the local-llm-hub (http://127.0.0.1:8000) using the
 Anthropic SDK and a ``document`` content block, mapped to the ``gemini_pro``
 alias — no Google credentials are needed on this machine, since the hub holds
-the Google session. The legacy direct ``google-genai`` path was removed
-(#166) once the hub's PDF-attachment reliability bug (local-llm-hub#63) was
-fixed.
+the Google session and its PDF-attachment handling, rather than a direct
+``google-genai`` call from this process.
 """
 from __future__ import annotations
 
@@ -170,7 +169,7 @@ QUALITY RULES:
 def _parse_number_string(val: str) -> float:
     """Parse a number the model returned as a string, in either locale.
 
-    Thin wrapper over the shared ``parse_locale_number`` (#189) kept under its
+    Thin wrapper over the shared ``parse_locale_number`` kept under its
     original name — invoice-OCR callers (and tests) reach it as a module
     function here.
     """

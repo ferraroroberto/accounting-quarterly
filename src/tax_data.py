@@ -52,7 +52,7 @@ def activity_start_date(config: Optional[dict]) -> Optional[str]:
     ``None`` when the key is absent — every date-range query then keeps its
     natural lower bound (documented default, unchanged behaviour). Set, it
     floors every quarter/YTD range the tax models query: a transaction or
-    invoice dated before it never feeds a return (issue #133).
+    invoice dated before it never feeds a return.
     """
     raw = tax_settings(config).get("activity_start_date")
     return str(raw)[:10] if raw else None
@@ -69,7 +69,7 @@ def _excluded_by_activity_start(
     table: str, date_col: str, amount_sql: str, where_extra: str = "",
 ) -> Optional[tuple[int, float]]:
     """(count, total EUR) of ``table`` rows in ``[natural_start, end]`` left out of this
-    period by ``tax.activity_start_date`` — feeds the models' audit notes (issue #133).
+    period by ``tax.activity_start_date`` — feeds the models' audit notes.
 
     ``None`` when no floor is set, or it does not reach into this period (nothing excluded).
     """
@@ -167,7 +167,7 @@ def load_classified_for_quarter(
 ) -> list[dict]:
     """Load classified transactions for a specific quarter from an open connection.
 
-    ``config``'s ``tax.activity_start_date`` (issue #133), when set and later
+    ``config``'s ``tax.activity_start_date``, when set and later
     than the quarter start, raises the lower bound — a charge before it is left out.
     """
     month_start = (quarter - 1) * 3 + 1
@@ -181,7 +181,7 @@ def load_classified_ytd(
 ) -> list[dict]:
     """Load classified transactions from Q1 through the given quarter.
 
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
+    ``config``'s ``tax.activity_start_date`` raises the lower bound
     from 1 January when set and later, same as the quarter-scoped loader.
     """
     end = classified_quarter_end(year, quarter)
@@ -223,7 +223,7 @@ def load_expense_invoices_for_quarter(
 ) -> list[dict]:
     """Expense invoices (direction='in') for the quarter, keyed by invoice_date.
 
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
+    ``config``'s ``tax.activity_start_date`` raises the lower bound
     when set and later than the quarter start.
     """
     start, end = quarter_iso_bounds(year, quarter)
@@ -235,7 +235,7 @@ def load_expense_invoices_ytd(
 ) -> list[dict]:
     """Expense invoices (direction='in') from Q1 through the given quarter (YTD).
 
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
+    ``config``'s ``tax.activity_start_date`` raises the lower bound
     from 1 January when set and later.
     """
     _, end = quarter_iso_bounds(year, quarter)
@@ -277,7 +277,7 @@ def load_income_invoices_ytd(
 ) -> list[dict]:
     """Income invoices (direction='out') from Q1 through the given quarter (YTD).
 
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
+    ``config``'s ``tax.activity_start_date`` raises the lower bound
     from 1 January when set and later.
     """
     _, end = quarter_iso_bounds(year, quarter)
@@ -289,7 +289,7 @@ def load_income_invoices_for_quarter(
 ) -> list[dict]:
     """Income invoices (direction='out') for the quarter only.
 
-    ``config``'s ``tax.activity_start_date`` (issue #133) raises the lower bound
+    ``config``'s ``tax.activity_start_date`` raises the lower bound
     when set and later than the quarter start.
     """
     start, end = quarter_iso_bounds(year, quarter)
@@ -297,7 +297,7 @@ def load_income_invoices_for_quarter(
 
 
 def income_invoice_eur(inv: dict) -> float:
-    """Effective EUR value of an income (direction='out') invoice (issue #93).
+    """Effective EUR value of an income (direction='out') invoice.
 
     ``eur_received`` wins when set — the money was actually converted on
     receipt. Otherwise the stored ``subtotal_eur`` already holds the ECB rate
@@ -365,7 +365,7 @@ def irpf_expense(inv: dict) -> IrpfExpense:
     for ``DOMESTIC`` / ``DOMESTIC_CAPITAL`` (boxes 28/29, 30/31) and 0 for
     ``NOT_DEDUCTIBLE`` / ``NO_VAT``. The reverse charges are VAT-neutral and add
     nothing; so does an unrecognised treatment, rather than guessing. The 303's
-    pro-rata share is not added here (a year-end matter, #205).
+    pro-rata share is not added here (a year-end matter).
     """
     pct_irpf = inv["deductible_pct_irpf"]
     base = (inv.get("subtotal_eur") or 0.0) * pct_irpf / 100.0

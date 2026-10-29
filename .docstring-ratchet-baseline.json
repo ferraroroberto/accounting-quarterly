@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "entries": [
+    {"path": "scripts/clean_invoice_activity_type.py", "count": 2},
+    {"path": "scripts/close_quarter.py", "count": 6}
+  ]
+}

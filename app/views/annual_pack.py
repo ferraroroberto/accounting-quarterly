@@ -1,4 +1,4 @@
-"""Annual Pack sub-tab (Tax Obligations): Modelo 390, Modelo 347 and the P&L per IAE activity (#103)."""
+"""Annual Pack sub-tab (Tax Obligations): Modelo 390, Modelo 347 and the P&L per IAE activity."""
 from __future__ import annotations
 
 import pandas as pd

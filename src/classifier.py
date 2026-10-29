@@ -87,7 +87,7 @@ def classify_geography(
     Non-EUR charges are classified by the charge country first — card
     issuing country, then billing address, then customer address (see
     :func:`_charge_country`) — since currency alone says nothing about EU
-    membership (#111: DKK/SEK/PLN/... are EU currencies). Only when no
+    membership (DKK/SEK/PLN/... are EU currencies). Only when no
     country is known does currency act as a fallback: an EU non-euro
     currency (:data:`_EU_NON_EURO_CURRENCIES`) maps to ``EU_NOT_SPAIN`` and
     is flagged for review (``non_eur_currency_eu_review:*``), anything else
@@ -154,7 +154,7 @@ def _billing_country(payment: Payment) -> str:
 
     Read from the raw Stripe charge when it is present, else from the stored
     ``billing_country`` column — a row loaded back from SQLite or one with no
-    raw charge JSON still carries it there (#187).
+    raw charge JSON still carries it there.
     """
     billing_cc = _address_country((payment.raw_source or {}).get("billing_details"))
     return billing_cc or (payment.billing_country or "").strip().upper()
@@ -163,7 +163,7 @@ def _billing_country(payment: Payment) -> str:
 def _charge_country(payment: Payment) -> Optional[str]:
     """Best-known charge country: card issuing country -> billing -> customer address.
 
-    Same Stripe fields :func:`foreign_customer_hint` (#94) inspects, read in
+    Same Stripe fields :func:`foreign_customer_hint` inspects, read in
     priority order so the first known country wins. Returns ``None`` when
     none of them is set.
     """
@@ -300,8 +300,8 @@ def _vat_id_from_raw_customer(payment: Payment) -> Optional[str]:
 def customer_vat_id(payment: Payment, rules: Optional[dict] = None) -> Optional[str]:
     """Return the buyer's EU VAT id for a payment, or ``None`` when unknown.
 
-    Determines B2B vs. B2C for EU (non-Spain) sales (accounting-quarterly#113):
-    a sale to a customer with a known VAT id is business-to-business
+    Determines B2B vs. B2C for EU (non-Spain) sales: a sale to a
+    customer with a known VAT id is business-to-business
     (reverse charge, Modelo 349 key S); otherwise it is treated as a
     consumer sale. Looked up in order:
 
@@ -312,7 +312,7 @@ def customer_vat_id(payment: Payment, rules: Optional[dict] = None) -> Optional[
        charge JSON (:func:`_vat_id_from_raw_customer`) — a read-only
        fallback, since the id is not requested by the Stripe fetch today.
 
-    VIES validity of the id is not checked — out of scope for #113.
+    VIES validity of the id is not checked — out of scope here.
     """
     rules = rules or load_rules()
     override = _match_vat_id_override(

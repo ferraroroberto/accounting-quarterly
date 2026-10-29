@@ -110,7 +110,7 @@ def _audit_349(
 def compute_modelo_349(
     year: int, quarter: int, db_conn: sqlite3.Connection, config: Optional[dict] = None
 ) -> Modelo349Result:
-    """Compute Modelo 349 (intra-EU operations) for the given quarter (#99).
+    """Compute Modelo 349 (intra-EU operations) for the given quarter.
 
     - Key ``I``: ``INTRA_EU_RC`` expense invoices (services acquired from EU
       businesses), grouped by the vendor VAT id — the invoice's normalised id,

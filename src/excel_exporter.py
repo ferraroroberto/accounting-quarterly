@@ -184,7 +184,7 @@ def assert_currency_geo_consistent(payments: list[ClassifiedPayment]) -> None:
     The classifier decides non-EUR charges currency-agnostically — by charge
     country (``country:*``) or, when no country is known, by currency
     (``non_eur_currency:*`` / ``non_eur_currency_eu_review:*``, see
-    ``src.classifier.classify_geography``, #111) — so a non-EUR row with any
+    ``src.classifier.classify_geography``) — so a non-EUR row with any
     other geo rule (``eur_default``, ``eur_newsletter_default``, an override
     matched only on the EUR path, …) was classified while its currency was
     still recorded as EUR (e.g. before a re-fetch corrected it) and never

@@ -90,7 +90,7 @@ def upsert_filing_status_conn(conn: sqlite3.Connection, year: int, model: str, q
     """``upsert_filing_status`` on an open connection (the caller commits).
 
     A FILED row is never downgraded: a non-FILED status for a period already
-    marked filed leaves the row untouched and returns ``False`` (#187).
+    marked filed leaves the row untouched and returns ``False``.
     """
     cur = conn.execute(
         """INSERT INTO tax_filing_status (year, model, quarter, status, amount_eur, notes, filed_at)

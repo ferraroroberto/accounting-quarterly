@@ -146,7 +146,7 @@ def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:
 
 
 def backfill_invoice_ledger_fields(conn: sqlite3.Connection) -> dict[str, int]:
-    """Fill the #90 ledger columns on rows that predate them (idempotent).
+    """Fill the invoice ledger columns on rows that predate them (idempotent).
 
     Only NULL targets are touched, so user edits and earlier backfills are never
     overwritten:
@@ -228,7 +228,7 @@ def backfill_invoice_classifications(conn: sqlite3.Connection) -> int:
 
 
 def _ensure_tax_entries_schema(conn: sqlite3.Connection) -> None:
-    """Add ``quarterly_tax_entries.vat_rate`` (percent) on DBs that predate it (#97).
+    """Add ``quarterly_tax_entries.vat_rate`` (percent) on DBs that predate it.
 
     Manual ``IVA_SOPORTADO`` entries carry the VAT cuota; the rate lets the
     engine derive the matching base for Modelo 303 box 28 instead of assuming
@@ -302,7 +302,7 @@ _TAX_SNAPSHOTS_TRIGGERS_SQL = """
 def _ensure_tax_snapshots_schema(conn: sqlite3.Connection) -> None:
     """Create the versioned ``tax_computation_snapshots`` table, migrating the old one.
 
-    Before #101 the table was keyed (year, quarter, model) and every recompute
+    The table was previously keyed (year, quarter, model) and every recompute
     overwrote the row. The key now includes ``snapshot_version``; SQLite cannot
     change a primary key in place, so an old table is rebuilt once, each
     existing row becoming version 1, status COMPUTED.

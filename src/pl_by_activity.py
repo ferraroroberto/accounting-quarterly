@@ -1,4 +1,4 @@
-"""P&L per IAE activity for the annual income-tax return (Renta), #103.
+"""P&L per IAE activity for the annual income-tax return (Renta).
 
 Income and expenses are the year's Modelo 130 inputs (Q4 year-to-date) — the
 same loaders and the same rules — split by economic activity:

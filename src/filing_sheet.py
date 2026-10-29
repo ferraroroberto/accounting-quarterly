@@ -1,4 +1,4 @@
-"""Filing sheet and immutable filed snapshots (#101).
+"""Filing sheet and immutable filed snapshots.
 
 The filing sheet lists, per quarter, exactly what to type into each AEAT form
 — Modelo 303 boxes in form order, Modelo 130 boxes 01–19, the Modelo 349

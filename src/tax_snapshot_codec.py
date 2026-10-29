@@ -104,7 +104,7 @@ def _tolerant_construct(
 
 
 def _derive_legacy_303_totals(result: Modelo303Result) -> None:
-    """Fill the total boxes a pre-#97 snapshot never stored, from the boxes it did.
+    """Fill the total boxes an older snapshot never stored, from the boxes it did.
 
     Legacy payloads only carried 01/03 (→ 07/09), 28/29 and 46, so 27, 45 and the
     result boxes would otherwise decode as 0 next to non-zero components. No
@@ -122,7 +122,7 @@ def _derive_legacy_303_totals(result: Modelo303Result) -> None:
 
 
 def _derive_legacy_130_boxes(result: Modelo130Result) -> None:
-    """Fill the boxes a pre-#98 snapshot never stored, from the ones it did.
+    """Fill the boxes an older snapshot never stored, from the ones it did.
 
     Legacy results had no 13/15 and clamped the result at 0, so 12 = 14 = 17
     = 19 = max(0, 07) and there is no negative carry.

@@ -1,7 +1,7 @@
 """Shared data-loading utilities for Streamlit tabs (with caching).
 
 Thin UI wrapper — the actual period loading, FX conversion and classification
-logic lives in ``src/payments_loader.py`` (#166) so the CLI and close pipeline
+logic lives in ``src/payments_loader.py`` so the CLI and close pipeline
 can use it without importing Streamlit. This module only adds the
 ``@st.cache_data`` layer.
 """

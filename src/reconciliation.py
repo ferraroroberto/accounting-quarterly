@@ -26,8 +26,8 @@ within ``tolerance``) or a ``rule`` (``app_gte_filed``, ``app_lte_filed``,
 ``app_choice``) and an ``explanation``.
 
 **App side** — ``reconcile`` computes the period's engine result and reads its
-``aeat_boxes()``: the 303 (#97), 130 (#98) and 349 (#99)
-quarterly engines and the Modelo 390 engine (``src/returns/modelo_390.py``, #103),
+``aeat_boxes()``: the 303, 130 and 349
+quarterly engines and the Modelo 390 engine (``src/returns/modelo_390.py``),
 which is built from the year's four 303 results.
 
 No Streamlit here: the UI lives in ``app/views/tax_validation.py``.

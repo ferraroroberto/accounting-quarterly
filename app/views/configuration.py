@@ -388,7 +388,7 @@ def _render_tax_settings(cfg: dict) -> None:
 
     st.markdown("##### EU VAT defaults")
     st.caption(
-        "B2B vs. B2C is decided by the customer's VAT id (accounting-quarterly#113): a sale "
+        "B2B vs. B2C is decided by the customer's VAT id: a sale "
         "to a customer with a known VAT id (Geographic Rules → Customer VAT IDs) is always "
         "`IVA_EU_B2B` (reverse charge), for every activity. The selector below only picks "
         "the treatment for a sale **without** a known VAT id — `EU_B2C_ES21` (Spanish 21%) "

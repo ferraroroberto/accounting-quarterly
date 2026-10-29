@@ -1,6 +1,6 @@
 ---
 name: close-quarter
-description: Guided quarterly close for the accounting dashboard — sweep and OCR invoice PDFs, vendor/dedupe/FX review, Stripe fetch with interactive geo overrides, RETA import, compute 303/130/349, reconcile against filed returns, filing sheet and the accountant's pack (Stripe report, notes, draft email). Outputs land in git-ignored tmp/close_quarter/<year>_Q<quarter>/; nothing is sent or uploaded. Use for "/close-quarter", "close the quarter", "run the quarterly sweep", "prepare invoices for the accountant", "rerun the sweep".
+description: Guided quarterly close for the accounting dashboard — sweep and OCR invoice PDFs, vendor/dedupe/FX review, Stripe fetch with geo overrides, RETA import, compute 303/130/349, reconcile against filed returns, filing sheet, accountant's pack. Outputs land in git-ignored tmp/close_quarter/<year>_Q<quarter>/; nothing is sent or uploaded. Use for "/close-quarter", "close the quarter", "run the quarterly sweep", "prepare invoices for the accountant", "rerun the sweep".
 ---
 
 # close-quarter

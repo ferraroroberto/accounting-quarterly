@@ -115,6 +115,11 @@ Layout: `src/` holds the business logic (no Streamlit), `app/` the Streamlit tab
 
 Each feature has one reference file under `docs/`.
 
+**Dashboard**
+- [`docs/dashboard-tabs.md`](docs/dashboard-tabs.md) — Quarter Report: income summary for a selected quarter, year or custom range (breakdowns, monthly tables, classification status, Excel export).
+- [`docs/dashboard-tabs.md`](docs/dashboard-tabs.md) — Transaction Browser: per-transaction search and filtering, the raw-database inspector, and adding geographic overrides.
+- [`docs/dashboard-tabs.md`](docs/dashboard-tabs.md) — History & Charts: every quarter at once, with a summary table and stacked-area income charts by activity type and region.
+
 **Setup and data**
 - [`docs/project-structure.md`](docs/project-structure.md) — every file and module, what it does and which git-ignored files hold local data.
 - [`docs/architecture.mmd`](docs/architecture.mmd) — the repo's internal structure (Mermaid).

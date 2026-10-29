@@ -67,7 +67,7 @@ def _load_raw_source(pid: str, raw_json: Optional[str]) -> Optional[dict]:
     """Parse a stored ``raw_source_json`` back into the ``raw_source`` dict.
 
     The classifier reads the charge's billing / customer address from it, so
-    a reclassify of a loaded row must see it (#187). Unparseable JSON is logged
+    a reclassify of a loaded row must see it. Unparseable JSON is logged
     and treated as absent rather than failing the whole load.
     """
     if not raw_json:
@@ -115,7 +115,7 @@ def upsert_classified(payments: list[ClassifiedPayment],
     """Update classification columns for already-stored transactions.
 
     Also writes ``buyer_vat_id`` (the customer's EU VAT id, resolved by
-    ``src.classifier.customer_vat_id`` — accounting-quarterly#113) so the
+    ``src.classifier.customer_vat_id``) so the
     tax engine's on-the-fly ``vat_treatment`` derivation and Modelo 349 key S
     grouping (``src.tax_data.load_classified_for_quarter``) can read it
     straight from the ``transactions`` table.

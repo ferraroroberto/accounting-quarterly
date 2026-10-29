@@ -1,4 +1,4 @@
-"""Quarter-close pipeline (issue #102): idempotent steps that each report what they changed.
+"""Quarter-close pipeline: idempotent steps that each report what they changed.
 
 ``scripts/close_quarter.py`` is the thin CLI over this module and the
 ``/close-quarter`` skill drives the CLI. Steps, in pipeline order

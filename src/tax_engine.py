@@ -99,7 +99,7 @@ def compute_tax_results(
 ) -> dict[str, Any]:
     """Run every obligation engine for the selected period, keyed by snapshot model.
 
-    The single place the model list lives (#189) — ``compute_and_persist_tax_snapshots``
+    The single place the model list lives — ``compute_and_persist_tax_snapshots``
     persists exactly these results instead of recomputing them, and callers that need
     the results *and* a change check (e.g. ``close_pipeline.step_compute``) call this
     once and pass the results on to persist.

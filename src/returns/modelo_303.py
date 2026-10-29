@@ -214,7 +214,7 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
 
 
 def _platform_fee_vat_treatment(config: Optional[dict]) -> str:
-    """``tax.platform_fee_vat_treatment``: ``NON_EU_RC`` (default) or ``NONE`` (#147)."""
+    """``tax.platform_fee_vat_treatment``: ``NON_EU_RC`` (default) or ``NONE``."""
     option = tax_settings(config).get("platform_fee_vat_treatment", "NON_EU_RC")
     if option not in PLATFORM_FEE_VAT_TREATMENTS:
         raise ValueError(
@@ -224,7 +224,7 @@ def _platform_fee_vat_treatment(config: Optional[dict]) -> str:
 
 def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection,
                                config: Optional[dict], col: _Collected303) -> None:
-    """Stripe application fees as a non-EU reverse charge (#147, art. 84.Uno.2º LIVA).
+    """Stripe application fees as a non-EU reverse charge (art. 84.Uno.2º LIVA).
 
     The platforms that keep them are established outside the EU and charge no
     VAT, so the quarter's ``fee_application`` total — same classified charges as
@@ -478,7 +478,7 @@ def _previous_period(year: int, quarter: int) -> tuple[int, int]:
 def _earliest_303_activity(conn: sqlite3.Connection, config: Optional[dict] = None) -> Optional[str]:
     """ISO date of the first row that can feed a 303 (None on an empty DB).
 
-    Clamped up to ``tax.activity_start_date`` (issue #133) when set: a period
+    Clamped up to ``tax.activity_start_date`` when set: a period
     ending before the activity start has no data to chain from, even if a stray
     row in the DB predates it.
     """

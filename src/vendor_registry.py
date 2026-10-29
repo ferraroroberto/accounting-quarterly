@@ -1,4 +1,4 @@
-"""Vendor registry: per-vendor tax defaults applied to expense invoices (issue #91).
+"""Vendor registry: per-vendor tax defaults applied to expense invoices.
 
 Most expense invoices carry no vendor VAT id after OCR, so their tax treatment
 falls back to heuristics. Vendors repeat every month, so a small registry makes

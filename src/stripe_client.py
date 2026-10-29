@@ -355,7 +355,7 @@ def backfill_fee_split(
     db_path: Optional[str | Path] = None,
     api_key: Optional[str] = None,
 ) -> FeeSplitBackfillResult:
-    """Re-fetch ``[start_date, end_date]`` from Stripe and fill the stored fee split (#135).
+    """Re-fetch ``[start_date, end_date]`` from Stripe and fill the stored fee split.
 
     Only ``fee_stripe`` / ``fee_application`` of rows already in ``transactions``
     are written — no insert, no reclassification, no other column touched, so

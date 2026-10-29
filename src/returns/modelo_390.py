@@ -1,4 +1,4 @@
-"""Modelo 390 (annual VAT summary) built from the four quarterly Modelo 303 results (#103).
+"""Modelo 390 (annual VAT summary) built from the four quarterly Modelo 303 results.
 
 The 390 is not a sum of four forms: it re-states the year's operations with a
 per-rate breakdown, the "sin prorratear" bases, the annual result, the
@@ -171,7 +171,7 @@ def _rate_of(amount_vat: Any, amount_base: Any) -> float:
 def _rate_of_record(rec: dict) -> tuple[float, bool, Optional[float]]:
     """(modelled rate, used the VAT ÷ base ratio as a fallback, raw invoice rate %).
 
-    Prefers the invoice's own stored ``iva_rate`` (#137) over inferring the rate
+    Prefers the invoice's own stored ``iva_rate`` over inferring the rate
     from VAT ÷ base — a blended-rate bill or OCR/rounding mismatch between
     ``iva_amount`` and ``subtotal_eur`` can point the ratio at the wrong row.
     The ratio is only a fallback for records without a stored rate (older rows,
@@ -291,7 +291,7 @@ class _CreditWalk:
 
 
 def _walk_credit(qs: list[Modelo303Result]) -> _CreditWalk:
-    """FIFO walk of the credit to compensate over the year's quarters (#136).
+    """FIFO walk of the credit to compensate over the year's quarters.
 
     The credit carried in from earlier years (Q1 box 110) is consumed first by
     each quarter's box 78; credit generated inside the year (a quarter's box 72)

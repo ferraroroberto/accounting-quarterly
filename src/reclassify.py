@@ -33,7 +33,7 @@ _PAYMENT_FIELDS = frozenset(Payment.model_fields)
 class ClassificationChange:
     """One stored row whose classification differs from the current rules.
 
-    ``buyer_vat_id`` (the customer's EU VAT id, accounting-quarterly#113) is
+    ``buyer_vat_id`` (the customer's EU VAT id) is
     included: a newly-matched or removed VAT-id override changes the derived
     ``vat_treatment`` (B2B vs. B2C) even when activity/geo don't change, so it
     must count as a classification change too.

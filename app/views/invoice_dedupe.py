@@ -1,4 +1,4 @@
-"""Duplicate Review tab — proposes and applies invoice exclusions (issue #92).
+"""Duplicate Review tab — proposes and applies invoice exclusions.
 
 Runs the five detectors in `src.invoice_dedupe` over the current invoice
 ledger and lets the user confirm (or reassign) the keeper per group before

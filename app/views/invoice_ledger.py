@@ -155,7 +155,7 @@ def _render_bulk_editor(view: pd.DataFrame, direction: str, filter_sig: str) -> 
             "vendor": st.column_config.TextColumn(
                 "vendor", help="Vendor-registry match; ⚠ unknown → add it in the Vendors tab",
             ),
-            "fx_source": st.column_config.TextColumn("FX source", help="How the EUR figure was resolved (#93)"),
+            "fx_source": st.column_config.TextColumn("FX source", help="How the EUR figure was resolved"),
             "fx_stale": st.column_config.CheckboxColumn("FX stale", help="ECB rate fell back to an old date"),
             "fx_cross_check_diff_pct": st.column_config.NumberColumn(
                 "FX diff %", format="%.1f", help=f"LLM estimate vs resolved EUR — flagged above {FX_CROSS_CHECK_THRESHOLD_PCT:g}%",
@@ -338,7 +338,7 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
 
 
 def _render_exchange_differences(income_records: list[dict]) -> None:
-    """Record a later conversion of a foreign-currency income balance to EUR (#93 / D5).
+    """Record a later conversion of a foreign-currency income balance to EUR (D5).
 
     The gain or loss vs. the EUR originally booked (ECB rate at accrual, or an
     earlier `eur_received`) feeds Modelo 130 box 01 (`c01_ingresos`) in the quarter of

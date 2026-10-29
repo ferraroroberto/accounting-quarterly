@@ -1,4 +1,4 @@
-"""Vendors tab — the vendor registry (#91): edit, import, apply, review unknown vendors.
+"""Vendors tab — the vendor registry: edit, import, apply, review unknown vendors.
 
 The registry file (``vendors.json``, git-ignored) is the source of truth; all logic
 lives in ``src.vendor_registry``.

@@ -1,6 +1,6 @@
 """Period-based Stripe payment loading, FX conversion, and classification.
 
-Moved out of ``app/data_loader.py`` (#166) — the CLI (``scripts/close_quarter.py``)
+Lives outside ``app/data_loader.py`` because the CLI (``scripts/close_quarter.py``)
 and ``src/close_pipeline.py``'s stripe step need this data-layer logic without
 importing Streamlit via the UI package. ``app/data_loader.py`` keeps a thin
 ``@st.cache_data``-wrapped version of ``get_classified_for_period`` for the

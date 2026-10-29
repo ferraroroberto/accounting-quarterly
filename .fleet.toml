@@ -104,6 +104,18 @@ baseline = ".static-ratchet-baseline.json"
 enabled  = true
 baseline = ".comment-ratchet-baseline.json"
 
+# [docstring_ratchet] -- repo-local, NOT vendored (there is no project-scaffolding
+# source for it). The gate (scripts/verify-before-ship.ps1) runs
+# scripts/docstring_ratchet.py, which counts #NNN issue references inside Python
+# module/class/function docstrings -- the vendored comment ratchet's own documented
+# blind spot ("Docstrings ... are out of scope") -- per tracked file, and fails when a
+# file's count rises above .docstring-ratchet-baseline.json. Tests and vendored
+# destinations are left out by the script. Exit 3 (git unusable, a file that cannot be
+# read or parsed) is NOT CONFIRMED; the gate stage fails on any non-zero exit.
+[docstring_ratchet]
+enabled  = true
+baseline = ".docstring-ratchet-baseline.json"
+
 # [conventions_ratchet] -- the scaffold's fleet-convention ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/conventions_ratchet.py, which counts
 # per file the hits of each enabled rule (stdlib ast) and fails when a count rises above

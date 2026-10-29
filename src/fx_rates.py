@@ -39,7 +39,7 @@ _BACKFILL_DEFAULT_START = date(2023, 7, 1)
 
 @dataclass
 class FxRateInfo:
-    """Result of an FX rate lookup, with the staleness/provenance issue #93 needs."""
+    """Result of an FX rate lookup, carrying the staleness and provenance callers need."""
 
     rate: Optional[float]          # 1 EUR = `rate` units of the currency; None if unavailable
     rate_date: Optional[date]      # the date the rate actually comes from (may differ from requested)
@@ -207,7 +207,7 @@ def get_rate_with_fallback_info(
     db_path: Optional[str | Path] = None,
     tolerance_days: int = STALE_TOLERANCE_DAYS,
 ) -> FxRateInfo:
-    """Get the FX rate for a date, with full provenance (issue #93).
+    """Get the FX rate for a date, with full provenance.
 
     First tries the exact date, then searches backwards for the closest
     available, then tries a live fetch for the exact date. Unlike the legacy
@@ -263,7 +263,7 @@ def get_rate_with_fallback(
 
     Thin backward-compatible wrapper around `get_rate_with_fallback_info` —
     kept for existing callers that only need the number. New code that must
-    surface staleness (invoice FX, issue #93) should call the `_info` variant.
+    surface staleness (invoice FX) should call the `_info` variant.
     """
     return get_rate_with_fallback_info(rate_date, currency, db_path).rate
 
@@ -393,9 +393,8 @@ def backfill_to_today(
     """Fetch and store ECB rates from the last stored date up to today.
 
     Cheap and idempotent (`store_rates` upserts) — meant to be called once at
-    app start and again at quarter close, so the table never goes stale the
-    way it did before #93 (data only up to 2026-03-30 despite the app running
-    daily). Currencies default to `get_currencies_in_use`, so a new currency
+    app start and again at quarter close, so the table never goes stale
+    despite the app running daily. Currencies default to `get_currencies_in_use`, so a new currency
     in ingested data is backfilled without a code change. Network failures are
     caught and logged, never raised, so this can't break app startup.
     """
@@ -499,7 +498,7 @@ def resolve_invoice_amounts(
     data: dict,
     db_path: Optional[str | Path] = None,
 ) -> InvoiceFxResolution:
-    """Resolve the authoritative EUR amounts for an OCR-extracted invoice (#93).
+    """Resolve the authoritative EUR amounts for an OCR-extracted invoice.
 
     ``data`` is the dict returned by ``invoice_ocr.extract_invoice`` (or the
     merged row from the Invoice Ledger edit form): read for ``currency`` /
@@ -695,11 +694,9 @@ def recompute_stored_invoice_fx(
 ) -> InvoiceFxRecomputeResult:
     """Re-run `resolve_invoice_amounts` over every stored non-EUR invoice.
 
-    Corrects invoices that were extracted before this feature shipped (or
-    whose stored figure otherwise drifted from the ECB rate) — the dry run
-    against the real DB (issue #93) found 134/135 foreign-currency invoices
-    needed a new figure. Idempotent: a second run over already-correct rows
-    reports zero changes.
+    Corrects invoices that were extracted before this feature shipped, or
+    whose stored figure otherwise drifted from the ECB rate. Idempotent: a
+    second run over already-correct rows reports zero changes.
 
     Never overwrites a row with any of `subtotal_eur` / `iva_amount` /
     `total_eur` in its `locked_fields` (a user's manual correction always

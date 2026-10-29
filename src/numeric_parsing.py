@@ -3,8 +3,8 @@
 Single source for interpreting a number written in either the Spanish
 (``"1.234,56"``) or the US/international (``"1,234.56"``) locale — shared by
 the invoice-OCR field parser (``src/invoice_ocr.py``) and the Social Security
-bank-export importer (``src/social_security.py``), which previously each had
-their own, disagreeing implementation (#189).
+bank-export importer (``src/social_security.py``), which would otherwise each
+need their own, disagreeing implementation.
 """
 from __future__ import annotations
 

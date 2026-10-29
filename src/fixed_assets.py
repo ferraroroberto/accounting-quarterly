@@ -1,4 +1,4 @@
-"""Fixed assets: IRPF depreciation and VAT capital goods (#96).
+"""Fixed assets: IRPF depreciation and VAT capital goods.
 
 Durable purchases are not expensed in the quarter they are bought:
 

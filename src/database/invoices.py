@@ -201,7 +201,7 @@ def _invoice_row_values(data: dict, record_id: str, filename: str, direction: st
 def upsert_invoice(data: dict, db_path: Optional[str | Path] = None) -> str:
     """Insert or update a parsed invoice record keyed on (filename, direction). Returns its id.
 
-    Re-extraction rules (#90):
+    Re-extraction rules:
 
     - Every field named in the stored row's ``locked_fields`` keeps its stored
       value — a user correction always survives a re-OCR. Derived columns
@@ -380,11 +380,11 @@ def set_invoice_exclusion(
     reason: Optional[str],
     db_path: Optional[str | Path] = None,
 ) -> bool:
-    """Set ``excluded``/``excluded_reason`` directly, without locking (issue #92).
+    """Set ``excluded``/``excluded_reason`` directly, without locking.
 
     Unlike ``update_invoice_fields``, this never adds to ``locked_fields`` or
     stamps ``reviewed_at`` — an automated dedupe proposal stays overridable by a
-    plain re-extract or a later manual edit, per #90's rule that only a user
+    plain re-extract or a later manual edit, per the rule that only a user
     edit locks a field. Refuses (returns ``False``, no write) when the row
     already has ``excluded`` in its ``locked_fields`` — a user decision on that
     row's exclusion always wins over an automated one.

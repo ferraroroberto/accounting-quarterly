@@ -1,4 +1,4 @@
-"""Annual pack (#103): Modelo 390, Modelo 347 (sales + purchases) and the P&L per IAE activity.
+"""Annual pack: Modelo 390, Modelo 347 (sales + purchases) and the P&L per IAE activity.
 
 Everything the January/February annual filings and the Renta need, computed
 live from the database (nothing is persisted), with markdown and CSV exports.

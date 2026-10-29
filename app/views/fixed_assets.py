@@ -1,4 +1,4 @@
-"""Fixed Assets tab — register, edit and review depreciable assets (#96).
+"""Fixed Assets tab — register, edit and review depreciable assets.
 
 Lists every asset (editable grid), adds one by hand, shows the per-year
 depreciation schedule and the period charge the Modelo 130 uses, and keeps the

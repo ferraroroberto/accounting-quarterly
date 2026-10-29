@@ -1,4 +1,4 @@
-"""Re-point invoice records at their PDFs after the invoice archive is reorganised (#151).
+"""Re-point invoice records at their PDFs after the invoice archive is reorganised.
 
 An invoice row is keyed on ``(filename, direction)``. ``filename`` is the PDF's path
 relative to the configured ``invoice_in_dir`` / ``invoice_out_dir``. Moving or

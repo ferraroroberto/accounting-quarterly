@@ -155,7 +155,7 @@ def _render_rate_lookup() -> None:
 
 
 def _render_recompute_section() -> None:
-    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate (#93 follow-up).
+    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate.
 
     Invoices extracted before the FX resolver shipped (or before a later fix
     to it) keep whatever EUR figure the LLM guessed at the time. This always

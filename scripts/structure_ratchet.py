@@ -8,16 +8,18 @@ instead is the canonical layout in project-scaffolding's docs/repo-layout.md;
 every failure message points at the section it breaks.
 
 Baseline keys (`KINDS`): file size, function length (Python from `ast`, JS from a brace
-matcher), flat directory, layer contract, and unmeasured JS functions. The near-limit band
-(`BANDS`) is two shrink-only counts, files and functions at or above `near_limit_ratio` of
-their limit, so a split that stops just under the limit fails like a new offender; a
-baseline from before the band loads unchanged and `--update-baseline` records it. The root
-layout (`shape`, `extra_roots`, ids in `SHAPES`) is never baselined.
+matcher), flat directory, layer contract, unmeasured JS functions, extra root folders and
+misplaced files. The near-limit band (`BANDS`) is two shrink-only counts, files and functions
+at or above `near_limit_ratio` of their limit, so a split that stops just under the limit fails
+like a new offender; a baseline from before the band loads unchanged and `--update-baseline`
+records it. The shape presets and the root and second-level layout checks (`shape`,
+`extra_roots`) live in the sibling `structure_layout.py`; an undeclared root is never baselined.
 
 Opt-in per adopter (`[structure_ratchet] enabled = true`; keys `_CONFIG_KEYS`, defaults
 `DEFAULT_*`). Exit 0 pass or not enabled, 1 above the baseline or refused, 2 bad config,
-baseline or arguments, 3 NOT CONFIRMED (never a pass). Vendor-verbatim (manifest key
-`structure_ratchet`), stdlib-only. Modes, limits and the config table: docs/structure-ratchet.md.
+baseline or arguments, 3 NOT CONFIRMED (never a pass). Vendor-verbatim with its sibling (manifest
+keys `structure_ratchet`, `structure_layout`), stdlib-only. Modes, limits and the config table:
+docs/structure-ratchet.md.
 """
 
 from __future__ import annotations
@@ -33,6 +35,16 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+
+try:  # imported as a package member (tests) or run as a script (the gate), where scripts/ is sys.path[0]
+    from scripts import structure_layout as layout
+except ImportError:
+    try:
+        import structure_layout as layout  # type: ignore[no-redef,import-not-found,unused-ignore]
+    except ImportError:
+        print("structure ratchet: NOT CONFIRMED: structure_layout.py is missing beside this script -- vendor both "
+              "(manifest keys structure_ratchet and structure_layout)")
+        sys.exit(3)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -51,7 +63,8 @@ BANDS = {
     "functions": ("function(s)", "near-limit function", "function-length",
                   "split it into named helpers of about {target:,} lines"),
 }
-DEFAULT_LAYERS = (("src", "app"),)
+DEFAULT_LAYERS = layout.DEFAULT_LAYERS
+SHAPES = layout.SHAPES
 
 SIZE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".ts", ".css", ".html", ".ps1", ".sql"})
 JS_SUFFIXES = frozenset({".js", ".mjs"})
@@ -61,9 +74,7 @@ BUILTIN_EXCLUDES = ("**/node_modules/**", "**/.venv/**", "**/venv/**")
 GENERATED_MARKERS = (b"DO NOT EDIT", b"@generated")  # case-sensitive, like the sibling ratchets
 GENERATED_HEAD_LINES = 5
 GIT_TIMEOUT_S = 120
-LAYOUT_DOC = "project-scaffolding docs/repo-layout.md"
-#: Root folders every shape allows, besides hidden ones (`.github`, `.claude`, ...).
-ALWAYS_ALLOWED = ("docs",)
+LAYOUT_DOC = layout.LAYOUT_DOC
 
 EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 
@@ -83,31 +94,8 @@ KINDS = {
     "dir": ("modules", "flat directory", "flat-directory"),
     "layer": ("imports", "layer contract", "layer-contract"),
     "unmeasured": ("functions", "function length", "function-length"),
-}
-
-
-@dataclass(frozen=True)
-class Shape:
-    """One repo shape's root layout: folders it must have, folders it may have, and its layer pairs."""
-
-    required: tuple[str, ...]
-    allowed: tuple[str, ...]
-    layers: tuple[tuple[str, str], ...] = ()
-
-
-#: The `.fleet.toml` `shape` ids, mirroring the trees in docs/repo-layout.md. A required folder
-#: cannot be waived (`extra_roots` only adds), so a set is required only where every repo of the
-#: shape has it. docs/structure-ratchet.md carries the same table; a test compares the two.
-SHAPES = {
-    "webapp-tray": Shape(("app", "src", "tests", "docs"), ("scripts", "data", "brand", "assets", "config"), DEFAULT_LAYERS),
-    "streamlit": Shape(("app", "src", "tests"), ("scripts", "data", "brand"), DEFAULT_LAYERS),
-    "pipeline-cli": Shape(("tests",), ("src", "common", "scripts", "config", "data")),
-    "skills-governance": Shape(("skills", "tests"), ("hooks", "scripts", "architecture")),
-    "node": Shape(("src",), ("test", "scripts")),
-    "static-site": Shape((), ("css", "js", "assets", "games")),
-    "agent-workspace": Shape((), ("scripts",)),
-    # No layer pair: the service in src/ mounts its admin app, so src imports app_web by design.
-    "service": Shape(("src", "tests", "app_web", "tray"), ("scripts", "config", "launchers", "assets")),
+    "root": ("roots", "extra root", "extra-roots"),
+    "place": ("files", "placement", "second-level-placement"),
 }
 
 
@@ -690,31 +678,26 @@ def dir_findings(paths: list[str], limit: int) -> list[Finding]:
     ]
 
 
-def layout_findings(paths: list[str], cfg: Config) -> list[str]:
-    """Root-layout problems for the declared shape, one message each (none when there is no shape).
-
-    Not baselined: a declared exception is data in `extra_roots`, and an undeclared one fails.
-    """
+def layout_baselined(paths: list[str], cfg: Config) -> dict[str, Finding]:
+    """The baselined layout findings: extra root folders (`root:`) and files outside the shape's homes (`place:`)."""
     if cfg.shape is None:
-        return []
-    shape = SHAPES[cfg.shape]
-    roots = {path.split("/", 1)[0] for path in paths if "/" in path}
-    listed = set(shape.required) | set(shape.allowed) | set(ALWAYS_ALLOWED) | set(cfg.extra_roots)
-    see = f"See {LAYOUT_DOC}#{cfg.shape}"
-    problems = [
-        f"shape {cfg.shape}: required folder {name}/ has no tracked file; add it, or correct `shape` in "
-        f".fleet.toml. {see}"
-        for name in shape.required
-        if name not in roots
-    ]
-    problems += [
-        f"shape {cfg.shape}: {name}/ is not a folder this shape lists; move its code into one of "
-        f"{', '.join(f'{n}/' for n in sorted(listed))}, or declare {name!r} in `extra_roots` in .fleet.toml "
-        f"with a line in docs/layout.md. {see}"
-        for name in sorted(roots)
-        if not name.startswith(".") and name not in listed
-    ]
-    return problems
+        return {}
+    shape_id = cfg.shape
+    found = {
+        f"root:{name}": Finding(
+            f"root:{name}", 1, f"{name}/ is an extra root, outside the {shape_id} tree",
+            "move its code under src/ or app/ (or promote the folder into the shape's preset); a justified one "
+            "is declared in `extra_roots` with its reason in docs/layout.md, and is recorded with "
+            "--update-baseline --allow-additions",
+        )
+        for name in layout.extra_root_names(paths, shape_id, cfg.extra_roots)
+    }
+    advice = layout.placement_advice(shape_id)
+    for folder, n in layout.misplaced(paths, shape_id).items():
+        found[f"place:{folder}"] = Finding(
+            f"place:{folder}", n, f"{folder}/ holds {n} file(s) outside the homes of the {shape_id} tree", advice,
+        )
+    return found
 
 
 def _in_band(lines: int | None, cfg: Config, band: str) -> bool:
@@ -782,8 +765,12 @@ def read_baseline(path: Path) -> dict[str, int]:
     return read_baseline_file(path)[0]
 
 
-def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | None]:
-    """Baseline file -> (``{key: count}``, band counts, or None when written before the band existed)."""
+def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | None, bool]:
+    """Baseline file -> (``{key: count}``, band counts or None before the band existed, layout recorded?).
+
+    The recorded `root_extras` list becomes ``root:<name>`` entries; its absence means the layout
+    (extra roots and placement) was never recorded, as in a baseline written before it existed.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -809,12 +796,20 @@ def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | Non
     if band is not None and not (isinstance(band, dict) and set(band) == set(BANDS) and all(
             isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in band.values())):
         raise ConfigError(f"baseline {path}: `band` must hold a count of zero or more for {' and '.join(BANDS)}")
-    return out, band
+    extras = data.get("root_extras")
+    if extras is not None and not (isinstance(extras, list) and all(isinstance(n, str) and n for n in extras)):
+        raise ConfigError(f"baseline {path}: `root_extras` must be a list of root folder names")
+    out.update((f"root:{name}", 1) for name in extras or [])
+    return out, band, extras is not None
 
 
-def render_baseline(counts: dict[str, int]) -> str:
-    """Sorted, one entry per line, no line numbers, so a baseline diff reviews cleanly; `band:` counts in `band`."""
-    entries = {key: n for key, n in counts.items() if _kind(key) != "band"}
+def render_baseline(counts: dict[str, int], layout_recorded: bool = False) -> str:
+    """Sorted, one entry per line, no line numbers, so a baseline diff reviews cleanly.
+
+    `band:` counts go in `band`, `root:` names in `root_extras` (written whenever the layout was checked).
+    """
+    entries = {key: n for key, n in counts.items() if _kind(key) not in ("band", "root")}
+    extras = sorted(key[5:] for key in counts if _kind(key) == "root")
     lines = [
         "    " + json.dumps({"key": key, KINDS[_kind(key)][0]: entries[key]}, ensure_ascii=False)
         for key in sorted(entries)
@@ -822,6 +817,7 @@ def render_baseline(counts: dict[str, int]) -> str:
     body = "[\n" + ",\n".join(lines) + "\n  ]" if lines else "[]"
     band = {b: counts[f"band:{b}"] for b in BANDS if f"band:{b}" in counts}
     head = f'\n  "band": {json.dumps(band)},' if band else ""
+    head += f'\n  "root_extras": {json.dumps(extras, ensure_ascii=False)},' if layout_recorded else ""
     return f'{{\n  "version": {BASELINE_VERSION},{head}\n  "entries": {body}\n}}\n'
 
 
@@ -840,7 +836,8 @@ def summarize(counts: dict[str, int]) -> str:
     near = (f", near-limit band {counts['band:files']} file(s) and {counts['band:functions']} function(s)"
             if "band:files" in counts else "")
     return (f"{kinds['size']} file(s), {kinds['fn']} function(s), {kinds['dir']} directory(s), "
-            f"{kinds['layer']} layer import(s), {kinds['unmeasured']} unmeasured file(s){near}")
+            f"{kinds['layer']} layer import(s), {kinds['unmeasured']} unmeasured file(s), "
+            f"{kinds['root']} extra root(s), {kinds['place']} misplaced folder(s){near}")
 
 
 def band_findings(members: dict[str, list[str]], cfg: Config) -> dict[str, Finding]:
@@ -870,13 +867,13 @@ def _report_rose(rose: list[str], found: dict[str, Finding], baseline: dict[str,
         print(f"      {finding.advice}. See {LAYOUT_DOC}#{anchor}")
 
 
-def _read_or_refuse(path: Path, cfg: Config, init: bool) -> tuple[dict[str, int], dict[str, int] | None] | int:
+def _read_or_refuse(path: Path, cfg: Config, init: bool) -> tuple[dict[str, int], dict[str, int] | None, bool] | int:
     """The baseline (empty for --init), or the exit code that refuses the run."""
     if init:
         if path.exists():
             print(f"structure ratchet: {cfg.baseline} already exists; --init never overwrites it")
             return EXIT_CONFIG
-        return {}, None
+        return {}, None, True
     if not path.is_file():
         print(f"structure ratchet: FAIL: baseline {cfg.baseline} is missing -- "
               "run `python scripts/structure_ratchet.py --init`")
@@ -892,18 +889,18 @@ def _check(paths: list[str], cfg: Config, found: dict[str, Finding], baseline: d
     """The gate's mode: the layout, then every finding and band count against the baseline."""
     current = {key: f.value for key, f in found.items()}
     rose, shrank = diff(current, baseline)
-    layout = layout_findings(paths, cfg)
+    problems = layout.layout_findings(paths, cfg.shape, cfg.extra_roots) if cfg.shape else []
     if cfg.shape is None:
         print("structure ratchet: layout check not applicable (no `shape` in .fleet.toml)")
-    if layout:
-        print(f"structure ratchet: {len(layout)} layout finding(s):")
-        for message in layout:
+    if problems:
+        print(f"structure ratchet: {len(problems)} layout finding(s):")
+        for message in problems:
             print(f"  [root layout] {message}")
     if rose:
         _report_rose(rose, found, baseline)
         print("  Existing offenders may not grow and new ones may not appear. Move the code where the layout "
               "puts it; or (reviewed) raise the baseline with `--update-baseline --allow-additions`.")
-    if rose or layout:
+    if rose or problems:
         return EXIT_RISE
     matched = f"; layout matches {cfg.shape}" if cfg.shape else ""
     print(f"structure ratchet: PASS ({summarize(current)} baselined, none above the baseline{matched})")
@@ -934,7 +931,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     loaded = _read_or_refuse(baseline_path, cfg, init)
     if isinstance(loaded, int):
         return loaded
-    baseline, band_base = loaded
+    baseline, band_base, layout_recorded = loaded
 
     members: dict[str, list[str]] = {band: [] for band in BANDS}
     try:
@@ -945,10 +942,11 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("  (the tree could not be measured, so it is neither a pass nor a clean tree)")
         return EXIT_NOT_CONFIRMED
     found.update(band_findings(members, cfg))
+    found.update(layout_baselined(paths, cfg))
     current = {key: f.value for key, f in found.items()}
 
     if init:
-        baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
+        baseline_path.write_text(render_baseline(current, cfg.shape is not None), encoding="utf-8", newline="\n")
         print(f"structure ratchet: wrote {cfg.baseline}: {summarize(current)}")
         return EXIT_PASS
 
@@ -958,6 +956,10 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print(f"structure ratchet: the near-limit band is not recorded in {cfg.baseline} yet -- "
               "`--update-baseline` records it, and from then on it may only shrink")
     baseline.update((f"band:{b}", n) for b, n in band_base.items())
+    if not layout_recorded and cfg.shape:  # same upgrade rule for the extra roots and placement
+        baseline.update((k, f.value) for k, f in found.items() if _kind(k) in ("root", "place"))
+        print(f"structure ratchet: the extra roots and placement are not recorded in {cfg.baseline} yet -- "
+              "`--update-baseline` records them, and from then on they may only shrink")
     if not update:
         return _check(paths, cfg, found, baseline)
     rose, shrank = diff(current, baseline)
@@ -966,7 +968,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("structure ratchet: nothing written -- fix the findings, "
               "or raise the baseline with --allow-additions")
         return EXIT_RISE
-    baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
+    baseline_path.write_text(render_baseline(current, cfg.shape is not None), encoding="utf-8", newline="\n")
     print(f"structure ratchet: {cfg.baseline} now records {summarize(current)} "
           f"({len(shrank)} lowered or dropped, {len(rose)} raised or added)")
     return EXIT_PASS

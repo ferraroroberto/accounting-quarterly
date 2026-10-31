@@ -1,31 +1,30 @@
 """Ratchet on file size, function length, flat directories, the layer contract and the root layout.
 
-A file, a function or a directory that only ever grows is how a repo ends up with
-a 20,000-line module that every agent then imitates. This stage stops that growth
-deterministically, against a committed baseline: existing offenders never block
-work, but they cannot grow, and a new offender fails by name. Where code goes
-instead is the canonical layout in project-scaffolding's docs/repo-layout.md;
-every failure message points at the section it breaks.
+A file, a function or a directory that only ever grows is how a repo ends up with a 20,000-line module
+that every agent then imitates. This stage stops that growth deterministically, against a committed
+baseline: existing offenders never block work, but they cannot grow, and a new offender fails by name.
+Where code goes instead is the canonical layout in project-scaffolding's docs/repo-layout.md; every
+failure message points at the section it breaks.
 
-Baseline keys (`KINDS`): file size, function length (Python from `ast`, JS from a brace
-matcher), flat directory, layer contract, unmeasured JS functions, extra root folders and
-misplaced files. The near-limit band (`BANDS`) is two shrink-only counts, files and functions
-at or above `near_limit_ratio` of their limit, so a split that stops just under the limit fails
-like a new offender; a baseline from before the band loads unchanged and `--update-baseline`
-records it. The shape presets and the root and second-level layout checks (`shape`,
-`extra_roots`) live in the sibling `structure_layout.py`; an undeclared root is never baselined.
+Baseline keys (`KINDS`): file size, function length (Python from `ast`, JS from a brace matcher), flat
+directory, layer contract, unmeasured JS functions, extra root folders and misplaced files. The
+near-limit band (`BANDS`) is two shrink-only counts, files and functions at or above `near_limit_ratio`
+of their limit, so a split that stops just under the limit fails like a new offender; a baseline from
+before the band loads unchanged and `--update-baseline` records it. The shape presets and the root and
+second-level layout checks (`shape`, `extra_roots`) live in the sibling `structure_layout.py`; an
+undeclared root is never baselined.
 
-Opt-in per adopter (`[structure_ratchet] enabled = true`; keys `_CONFIG_KEYS`, defaults
-`DEFAULT_*`). Exit 0 pass or not enabled, 1 above the baseline or refused, 2 bad config,
-baseline or arguments, 3 NOT CONFIRMED (never a pass). Vendor-verbatim with its sibling (manifest
-keys `structure_ratchet`, `structure_layout`), stdlib-only. Modes, limits and the config table:
-docs/structure-ratchet.md.
+Opt-in per adopter (`[structure_ratchet] enabled = true`; keys `_CONFIG_KEYS`, defaults `DEFAULT_*`).
+Exit 0 pass or not enabled, 1 above the baseline or refused, 2 bad config, baseline or arguments, 3 NOT
+CONFIRMED (never a pass). Vendor-verbatim with its sibling (manifest keys `structure_ratchet`,
+`structure_layout`), stdlib-only. Modes, limits and the config table: docs/structure-ratchet.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import math
 import os
@@ -35,16 +34,25 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import ModuleType
 
-try:  # imported as a package member (tests) or run as a script (the gate), where scripts/ is sys.path[0]
-    from scripts import structure_layout as layout
-except ImportError:
+
+def _load_layout() -> ModuleType:
+    """The sibling `structure_layout.py`, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
     try:
-        import structure_layout as layout  # type: ignore[no-redef,import-not-found,unused-ignore]
-    except ImportError:
-        print("structure ratchet: NOT CONFIRMED: structure_layout.py is missing beside this script -- vendor both "
-              "(manifest keys structure_ratchet and structure_layout)")
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.structure_layout")
+        spec = importlib.util.spec_from_file_location("structure_layout", Path(__file__).with_name("structure_layout.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)  # a dataclass resolves its module by name
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print("structure ratchet: NOT CONFIRMED: structure_layout.py is missing beside this script -- vendor both (manifest keys structure_ratchet and structure_layout)")
         sys.exit(3)
+
+
+layout = _load_layout()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -63,7 +71,7 @@ BANDS = {
     "functions": ("function(s)", "near-limit function", "function-length",
                   "split it into named helpers of about {target:,} lines"),
 }
-DEFAULT_LAYERS = layout.DEFAULT_LAYERS
+DEFAULT_LAYERS: tuple[tuple[str, str], ...] = layout.DEFAULT_LAYERS
 SHAPES = layout.SHAPES
 
 SIZE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".ts", ".css", ".html", ".ps1", ".sql"})
@@ -78,8 +86,7 @@ LAYOUT_DOC = layout.LAYOUT_DOC
 
 EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 
-# Vendor-verbatim module: derives the flag locally (the shared `src/no_window.py`
-# would not resolve in a consumer tree), the documented exception.
+# Vendor-verbatim module: derives the flag locally (the shared `src/no_window.py` would not resolve in a consumer tree).
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 _CONFIG_KEYS = {
@@ -153,7 +160,7 @@ def _positive_int(table: dict[str, object], name: str, default: int) -> int:
 
 def _layers(table: dict[str, object], shape: str | None) -> tuple[tuple[str, str], ...]:
     if "layers" not in table:
-        return SHAPES[shape].layers if shape in SHAPES else DEFAULT_LAYERS
+        return tuple(SHAPES[shape].layers) if shape in SHAPES else DEFAULT_LAYERS
     value = table["layers"]
     error = ConfigError('[structure_ratchet] layers must be a list of ["lower", "upper"] root pairs')
     if not isinstance(value, list):

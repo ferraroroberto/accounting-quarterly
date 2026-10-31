@@ -12,10 +12,14 @@ The rules (each one quotes its global-instruction line in docs/conventions-ratch
   * `no-window` -- a `subprocess.run/Popen/call/check_call/check_output` or
     `asyncio.create_subprocess_*` call with no `creationflags=` keyword;
   * `logging-not-print` -- a builtin `print(...)` in app code (`print_paths`),
-    outside an `if __name__ == "__main__":` block and not writing to a file;
+    outside a command-line module (an `if __name__ == "__main__":` block anywhere,
+    an `argparse`/`click`/`typer`/`fire`/`optparse` import, a `cli.py` or
+    `__main__.py` name, or a `cli/` folder), not writing to a file, and not a
+    `print` the module binds itself;
   * `no-drive-path` -- a string literal that starts with a Windows drive letter
-    (`E:\\data`, `C:/x`); the system folders `?:\\Windows` and `?:\\Program Files`
-    are never reported, because the instructions mandate absolute system binaries;
+    (`E:\\data`, `C:/x`); the system folders `?:\\Windows`, `?:\\Program Files`,
+    `?:\\Program Files (x86)` and `?:\\ProgramData` are never reported, because the
+    instructions mandate absolute system binaries;
   * `secret-compare` -- a `hmac.compare_digest` / `secrets.compare_digest` call
     outside the repo's declared helper (`secret_helpers`);
   * `git-wrapper` -- a spawn whose program is literally `git` outside the

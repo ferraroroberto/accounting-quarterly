@@ -1,23 +1,21 @@
 """Ratchet on instruction-file lint: the deterministic rules of the fleet's prompt audit.
 
-A line that makes the model over-trigger, or a file past its vendor-documented size
-cap, costs every session that reads an instruction file. The weekly prompt audit
-finds those a week later; this stage refuses a new one at ship time, per file and
-per rule, against a committed baseline: it fails only when a count *rises*.
+A line that makes the model over-trigger, or a file past its vendor-documented size cap, costs every
+session that reads an instruction file. The weekly prompt audit finds those a week later; this stage
+refuses a new one at ship time, per file and per rule, against a committed baseline: it fails only when
+a count *rises*.
 
-It counts the audit's lint-tier rules (`RULES`; rule text and fix shapes in
-fleet-config's `.claude/skills/prompt-audit/rules.md`) over the root `CLAUDE.md` and
-`AGENTS.md`, `.claude/rules/*.md`, `<skill_dir>/*/SKILL.md`, `extra_files` and the
-`.md` files a skill references (scope is `git ls-files --cached --others --exclude-standard`). Only hits that reach
-*violation* for the file's reader count: a single-vendor rule is advisory in an
-agent-neutral file. R-14 is the size cap (`SIZE_CAPS`); an over-cap file is baselined
-at its size and may only shrink. `NOT_ENFORCED` names the rules left to the audit.
+It counts the audit's lint-tier rules (`RULES`; rule text and fix shapes in fleet-config's
+`.claude/skills/prompt-audit/rules.md`) over the root `CLAUDE.md` and `AGENTS.md`, `.claude/rules/*.md`,
+`<skill_dir>/*/SKILL.md`, `extra_files` and the `.md` files a skill references (scope is `git ls-files
+--cached --others --exclude-standard`). Only hits that reach *violation* for the file's reader count: a
+single-vendor rule is advisory in an agent-neutral file. R-14 is the size cap (`SIZE_CAPS`); an over-cap
+file is baselined at its size and may only shrink. `NOT_ENFORCED` names the rules left to the audit.
 
-Opt-in per adopter: `[instruction_ratchet]` in its `.fleet.toml`. Exit 0 pass or not
-enabled; 1 a count rose or the baseline is missing; 2 bad configuration; 3 NOT
-CONFIRMED (never folded into a pass). Modes: `check`, `--init`, `--update-baseline`,
-`--update-baseline --allow-additions`. Vendor-verbatim (manifest key
-`instruction_ratchet`), stdlib-only; limits and procedure: docs/instruction-ratchet.md.
+Opt-in per adopter: `[instruction_ratchet]` in its `.fleet.toml`. Exit 0 pass or not enabled; 1 a count
+rose or the baseline is missing; 2 bad configuration; 3 NOT CONFIRMED (never folded into a pass). Modes:
+`check`, `--init`, `--update-baseline`, `--update-baseline --allow-additions`. Vendor-verbatim (manifest
+key `instruction_ratchet`), stdlib-only; limits and procedure: docs/instruction-ratchet.md.
 """
 
 from __future__ import annotations
@@ -99,7 +97,7 @@ class Audience:
     unpointed: tuple[str, ...]  # basenames scoped to this reader unless AGENTS.md points at them
 
 
-#: Mirrors the prompt audit's `sources.toml` [audiences]; tests/test_instruction_ratchet.py checks it.
+#: Mirrors the prompt audit's `sources.toml` [audiences]; tests/ratchets/test_instruction_ratchet.py checks it.
 AUDIENCES: dict[str, Audience] = {
     "claude": Audience("anthropic", ("Claude Code only",), ("Claude", "Anthropic"),
                        ("*/.claude/rules/*.md",), ("CLAUDE.md",)),
@@ -450,13 +448,15 @@ def frontmatter_error(text: str) -> str | None:
 
 
 def frontmatter_field(text: str, name: str) -> str | None:
-    """The `<name>:` value from a `---` frontmatter block, or None."""
-    if not text.startswith("---"):
+    """The `<name>:` value of a `---` block, or None; an empty value or `>`/`|` header takes the indented lines below."""
+    m = text.startswith("---") and re.search(
+        rf"^{re.escape(name)}:[ \t]*(.*)((?:\n(?:[ \t].*)?)*)", text[3:].split("\n---", 1)[0], re.MULTILINE)
+    if not m:
         return None
-    end = text.find("\n---", 3)
-    block = text[3:end] if end != -1 else text[3:]
-    m = re.search(rf"^{re.escape(name)}:\s*(.+)$", block, re.MULTILINE)
-    return m.group(1).strip() if m else None
+    value, rest = m.group(1).strip(), m.group(2)
+    if value and not _BLOCK_SCALAR_HEADER.match(value):
+        return value
+    return ("\n" if value.startswith("|") else " ").join(s.strip() for s in rest.split("\n") if s.strip()) or None
 
 
 # --------------------------------------------------------- files + readers

@@ -45,7 +45,7 @@ A git-ignored JSON file at the repo root (`divergences.json.example` ships fake 
 
 A differing box that matches an entry for its model, period and box shows 🟡 with the entry's tag and explanation; the first matching entry wins. A ⚪ row is never catalogued.
 
-`src/tax_validator.py` is only the loader of the filed returns (`load_filings` / `find_filing`: imported receipts first, `validation.yaml` as the fallback); the comparison itself lives in `src/reconciliation.py`.
+`src/filed_reference.py` is only the loader of the filed returns (`load_reference_filings` / `find_filing`: imported receipts first, `validation.yaml` as the fallback); the comparison itself lives in `src/reconciliation.py`.
 
 ## Importing filed AEAT receipts
 

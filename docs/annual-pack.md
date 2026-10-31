@@ -10,7 +10,7 @@
 
 ## Modelo 390 (`src/returns/modelo_390.py`)
 
-`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation and the validator use it. Full box layout: [docs/tax-engine-reference.md#modelo-390-box-model](tax-engine-reference.md#modelo-390-box-model).
+`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation uses it. Full box layout: [docs/tax-engine-reference.md#modelo-390-box-model](tax-engine-reference.md#modelo-390-box-model).
 
 ## Modelo 347 (`src/returns/modelo_347.py` purchases + `compute_modelo_347` sales)
 

@@ -93,7 +93,7 @@ from src.stripe_client import backfill_billing_details_from_raw_source
 from src.returns.oss_return import compute_eu_b2c_threshold
 from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
-from src.tax_validator import find_filing, load_filings
+from src.filed_reference import find_filing, load_reference_filings
 from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
 
 log = get_logger(__name__)
@@ -502,7 +502,7 @@ def step_reconcile(ctx: CloseContext) -> StepResult:
     res = StepResult("reconcile")
     conn = ctx.connect()
     try:
-        filings = load_filings(conn)
+        filings = load_reference_filings(conn)
         if any(find_filing(filings, m, ctx.year, ctx.quarter) for m in QUARTERLY_MODELS):
             year, quarter = ctx.year, ctx.quarter
             res.info.append(f"{ctx.period} has a filed return: reconciling it.")

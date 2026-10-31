@@ -18,7 +18,7 @@ import pytest
 import src.database.connection as db_connection
 import src.fx_rates as fx_rates
 import src.invoice_ingest as invoice_ingest
-import src.tax_validator as tax_validator
+import src.filed_reference as filed_reference
 from src import close_pipeline as cp
 from src.classifier import classify_payment
 from src.close_pipeline import CloseContext, StepResult
@@ -39,7 +39,7 @@ YEAR, QUARTER = 2025, 1
 def ctx(tmp_path, monkeypatch, sample_rules) -> CloseContext:
     db = tmp_path / "accounting.db"
     monkeypatch.setattr(db_connection, "_DB_PATH", db)  # safety net: nothing may reach the real DB
-    monkeypatch.setattr(tax_validator, "_YAML_PATH", tmp_path / "no-validation.yaml")
+    monkeypatch.setattr(filed_reference, "_YAML_PATH", tmp_path / "no-validation.yaml")
     init_db(db)
     inv_in, inv_out = tmp_path / "invoices" / "in", tmp_path / "invoices" / "out"
     inv_in.mkdir(parents=True)

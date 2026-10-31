@@ -36,8 +36,8 @@ def _filing_key(f: dict) -> tuple[str, int, Optional[int]]:
     return (str(f.get("model")), int(f.get("year", 0)), f.get("quarter"))
 
 
-def _load_filings(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
-    """Filed declarations: imported AEAT receipts first, YAML as fallback.
+def load_reference_filings(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
+    """Every filed declaration: imported AEAT receipts first, YAML as fallback.
 
     A YAML entry is used only for a (model, year, quarter) that has no
     imported receipt in the database.
@@ -50,20 +50,11 @@ def _load_filings(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
     return db_filings + yaml_filings
 
 
-def _find_filing(filings: list[dict], model: str, year: int, quarter: int | None) -> dict | None:
-    for f in filings:
-        if _filing_key(f) == (model, year, quarter):
-            return f
-    return None
-
-
-def load_filings(conn: Optional[sqlite3.Connection] = None) -> list[dict]:
-    """Every filed declaration (imported receipts first, validation.yaml fallback)."""
-    return _load_filings(conn)
-
-
 def find_filing(
     filings: list[dict], model: str, year: int, quarter: Optional[int]
 ) -> Optional[dict]:
     """The filing for (model, year, quarter) — quarter None for annual — or None."""
-    return _find_filing(filings, model, year, quarter)
+    for f in filings:
+        if _filing_key(f) == (model, year, quarter):
+            return f
+    return None

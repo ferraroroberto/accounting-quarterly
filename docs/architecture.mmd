@@ -45,7 +45,7 @@ flowchart TB
     TAXCODES["tax_codes.py\nEU VAT prefixes, NIF→geo, tax_treatment values and mappings"]
     TAXDATA["tax_data.py\nconfig plumbing, record loaders, activity-start floor, per-row VAT figures"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
-    TAXVALIDATOR["tax_validator.py\nfiled-return loader (receipts, yaml fallback)"]
+    FILEDREFERENCE["filed_reference.py\nfiled-return loader (receipts, yaml fallback)"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
@@ -142,14 +142,14 @@ shared by the filing sheet and the Obligations calendar"]
   MODELS --> TAXCODES
   CLASSIFIER --> TAXCODES
   SNAPSHOTCODEC --> TAXMODELS
-  TAXVALIDATOR --> FILEDRETURNS
+  FILEDREFERENCE --> FILEDRETURNS
   FILEDRETURNS --> DB
   MODELS --> FIXEDASSETS
   MODELS -->|303 box 110 from filed 87 + 72| FILEDRETURNS
   MODELS -->|349 key I: vendor VAT id + legal name| VENDORS
   FIXEDASSETS --> DBFILE
   RECONCILIATION --> MODELS
-  RECONCILIATION --> TAXVALIDATOR
+  RECONCILIATION --> FILEDREFERENCE
   RECONCILIATION --> MODELO390
   MODELO390 --> MODELS
   ANNUALPACK --> MODELO390

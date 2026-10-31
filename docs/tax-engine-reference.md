@@ -62,7 +62,7 @@ Old snapshots with earlier field names (`box_01_ingresos`, `box_05_base`, `box_1
 
 ## Modelo 390 box model
 
-`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation and the validator use it. Box layout from the AEAT *Modelo 390. Instrucciones* (Sede, procedure G412, layout valid since ejercicio 2024):
+`compute_modelo_390(year, conn, config)` is built from the year's four `compute_modelo_303` results (their boxes and audit records), so it can never drift from the quarterly returns; `aeat_boxes()` returns every box keyed as printed, and the reconciliation uses it. Box layout from the AEAT *Modelo 390. Instrucciones* (Sede, procedure G412, layout valid since ejercicio 2024):
 
 | Section | Boxes |
 |---------|-------|

@@ -60,7 +60,7 @@
 │   │   └── modelo_347.py          # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── tax_engine.py              # Tax calendar and snapshot persistence; re-exports each model's compute_* function
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
-│   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
+│   ├── filed_reference.py         # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
 │   ├── pl_by_activity.py          # P&L per IAE activity (826/861/751) tied to the Q4 Modelo 130
 │   ├── annual_pack.py             # Annual pack: 390 + 347 + P&L, markdown/CSV export + CLI

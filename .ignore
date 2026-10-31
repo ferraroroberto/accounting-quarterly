@@ -7,6 +7,7 @@
 /scripts/docs_ratchet.py
 /scripts/instruction_ratchet.py
 /scripts/static_ratchet.py
+/scripts/structure_band.py
 /scripts/structure_layout.py
 /scripts/structure_ratchet.py
 # END vendored-copies

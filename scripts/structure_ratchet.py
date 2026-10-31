@@ -10,14 +10,15 @@ Baseline keys (`KINDS`): file size, function length (Python from `ast`, JS from 
 directory, layer contract, unmeasured JS functions, extra root folders and misplaced files. The
 near-limit band (`BANDS`) is two shrink-only counts, files and functions at or above `near_limit_ratio`
 of their limit, so a split that stops just under the limit fails like a new offender; a baseline from
-before the band loads unchanged and `--update-baseline` records it. The shape presets and the root and
-second-level layout checks (`shape`, `extra_roots`) live in the sibling `structure_layout.py`; an
-undeclared root is never baselined.
+before the band loads unchanged and `--update-baseline` records it. Every check also lists the band's
+files, functions and directories as warnings that never fail (sibling `structure_band.py`). The shape
+presets and the root and second-level layout checks (`shape`, `extra_roots`) live in the sibling
+`structure_layout.py`; an undeclared root is never baselined.
 
 Opt-in per adopter (`[structure_ratchet] enabled = true`; keys `_CONFIG_KEYS`, defaults `DEFAULT_*`).
 Exit 0 pass or not enabled, 1 above the baseline or refused, 2 bad config, baseline or arguments, 3 NOT
-CONFIRMED (never a pass). Vendor-verbatim with its sibling (manifest keys `structure_ratchet`,
-`structure_layout`), stdlib-only. Modes, limits and the config table: docs/structure-ratchet.md.
+CONFIRMED (never a pass). Vendor-verbatim with its siblings (manifest keys `structure_ratchet`,
+`structure_layout`, `structure_band`), stdlib-only. Modes, limits and config: docs/structure-ratchet.md.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ import argparse
 import ast
 import importlib.util
 import json
-import math
 import os
 import re
 import subprocess
@@ -37,22 +37,23 @@ from pathlib import Path, PurePosixPath
 from types import ModuleType
 
 
-def _load_layout() -> ModuleType:
-    """The sibling `structure_layout.py`, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
     try:
         if __package__:  # imported as a package member (the tests)
-            return importlib.import_module(f"{__package__}.structure_layout")
-        spec = importlib.util.spec_from_file_location("structure_layout", Path(__file__).with_name("structure_layout.py"))
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
         assert spec is not None and spec.loader is not None
         module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)  # a dataclass resolves its module by name
         spec.loader.exec_module(module)
         return module
     except (ImportError, OSError, SyntaxError):
-        print("structure ratchet: NOT CONFIRMED: structure_layout.py is missing beside this script -- vendor both (manifest keys structure_ratchet and structure_layout)")
+        print(f"structure ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all three (manifest keys structure_ratchet, structure_layout and structure_band)")
         sys.exit(3)
 
 
-layout = _load_layout()
+layout = _load_sibling("structure_layout")
+near_band = _load_sibling("structure_band")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -62,15 +63,8 @@ DEFAULT_MAX_FILE_LINES = 1000
 DEFAULT_MAX_FUNCTION_LINES = 100
 DEFAULT_MAX_DIR_MODULES = 40
 DEFAULT_NEAR_LIMIT_RATIO = 0.9
-#: Where a split should land: low enough that both halves start well clear of the near-limit band.
-SPLIT_TARGET_RATIO = 0.75
-#: Near-limit band -> (unit counted, failure title, docs/repo-layout.md anchor, advice).
-BANDS = {
-    "files": ("file(s)", "near-limit file", "file-size",
-              "split it to about {target:,} lines, moving code into a new module beside it named for what it does"),
-    "functions": ("function(s)", "near-limit function", "function-length",
-                  "split it into named helpers of about {target:,} lines"),
-}
+SPLIT_TARGET_RATIO: float = near_band.SPLIT_TARGET_RATIO
+BANDS: dict[str, tuple[str, str, str, str]] = near_band.BANDS
 DEFAULT_LAYERS: tuple[tuple[str, str], ...] = layout.DEFAULT_LAYERS
 SHAPES = layout.SHAPES
 
@@ -127,9 +121,9 @@ class Config:
     near_limit_ratio: float = DEFAULT_NEAR_LIMIT_RATIO
 
     def band_range(self, band: str) -> tuple[int, int]:
-        """(lowest, highest) line count inside `band`; the rounding keeps 0.9 * 100 at 90, not 91."""
-        limit = self.max_file_lines if band == "files" else self.max_function_lines
-        return math.ceil(round(limit * self.near_limit_ratio, 9)), limit
+        """(lowest, highest) count inside `band`: `files` and `functions` in lines, `dirs` in modules."""
+        limit = {"files": self.max_file_lines, "functions": self.max_function_lines}.get(band, self.max_dir_modules)
+        return near_band.band_low(limit, self.near_limit_ratio), limit
 
 
 @dataclass(frozen=True)
@@ -670,11 +664,7 @@ def layer_findings(path: str, imports: list[str], layers: tuple[tuple[str, str],
 
 def dir_findings(paths: list[str], limit: int) -> list[Finding]:
     """Directories holding more than `limit` modules directly (not counting subfolders)."""
-    counts: dict[str, int] = {}
-    for path in paths:
-        pure = PurePosixPath(path)
-        if pure.suffix.lower() in DIR_SUFFIXES and pure.name != "__init__.py":
-            counts[str(pure.parent)] = counts.get(str(pure.parent), 0) + 1
+    counts = near_band.module_counts(paths, DIR_SUFFIXES)
     return [
         Finding(
             f"dir:{folder}", n, f"{folder}/ has {n} modules (limit {limit})",
@@ -735,6 +725,7 @@ def measure_file(path: str, raw: bytes, cfg: Config, band: dict[str, list[str]] 
             band["files"].append(f"{path}: {lines:,} lines")
         band["functions"] += [f"{path}: {s.qualname}() is {s.lines:,} lines"
                               for s in spans if _in_band(s.lines, cfg, "functions")]
+        band["unknown"] += [path] if any(s.lines is None for s in spans) else []
     return findings
 
 
@@ -758,6 +749,9 @@ def measure_tree(
         measured.append(path)
         found.update((f.key, f) for f in measure_file(path, raw, cfg, band))
     found.update((f.key, f) for f in dir_findings(measured, cfg.max_dir_modules))
+    if band is not None:
+        band["dirs"] += [f"{folder}/: {n} modules" for folder, n in near_band.module_counts(measured, DIR_SUFFIXES).items()
+                         if _in_band(n, cfg, "dirs")]
     return found
 
 
@@ -940,13 +934,13 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         return loaded
     baseline, band_base, layout_recorded = loaded
 
-    members: dict[str, list[str]] = {band: [] for band in BANDS}
+    members = near_band.empty_members()
     try:
         paths = tracked_files(root)
         found = measure_tree(root, paths, cfg, vendored, members)
     except NotConfirmed as exc:
         print(f"structure ratchet: NOT CONFIRMED: {exc}")
-        print("  (the tree could not be measured, so it is neither a pass nor a clean tree)")
+        print("  (the tree could not be measured, so it is neither a pass nor a clean tree; the warning band is unknown)")
         return EXIT_NOT_CONFIRMED
     found.update(band_findings(members, cfg))
     found.update(layout_baselined(paths, cfg))
@@ -968,6 +962,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print(f"structure ratchet: the extra roots and placement are not recorded in {cfg.baseline} yet -- "
               "`--update-baseline` records them, and from then on they may only shrink")
     if not update:
+        print("\n".join(near_band.warning_lines(members, cfg.near_limit_ratio)))  # informational: never the exit code
         return _check(paths, cfg, found, baseline)
     rose, shrank = diff(current, baseline)
     if rose and not allow_additions:

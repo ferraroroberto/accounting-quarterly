@@ -1,5 +1,6 @@
 {
   "version": 1,
   "band": {"files": 0, "functions": 7},
+  "root_extras": ["logs"],
   "entries": []
 }

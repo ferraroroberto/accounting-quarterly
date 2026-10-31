@@ -85,6 +85,7 @@
 │   ├── flash.py                   # Messages that survive st.rerun
 │   ├── excel_download.py          # Shared Excel export button
 │   ├── year_picker.py             # One year range for every picker
+│   ├── invoice_table.py           # Column list shared by the Explorer and OCR invoice tables
 │   └── views/                     # One module per view, each exposing render()
 │       ├── welcome.py             # Welcome page and the tab guide
 │       ├── quarter_report.py      # Quarterly summary + Excel export

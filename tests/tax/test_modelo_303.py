@@ -466,3 +466,25 @@ class TestPlatformFeeReverseCharge:
     def test_activity_start_date_excludes_earlier_charges(self, fees):
         r = compute_modelo_303(2025, 2, fees, {"tax": {"activity_start_date": "2025-05-01"}})
         assert (r.c12_base, r.c13_cuota) == (pytest.approx(4.0), pytest.approx(0.84))
+
+
+def test_prorrata_numerator_and_rate_table_have_one_owner():
+    """The 303 collection, the 303 result and the 390 share one numerator and one rate table."""
+    from dataclasses import fields
+
+    from src.returns import modelo_303, modelo_390
+    from src.tax_models import RIGHT_TO_DEDUCT_FIELDS, Modelo303Result
+
+    assert set(RIGHT_TO_DEDUCT_FIELDS) <= {f.name for f in fields(Modelo303Result)}
+
+    col = modelo_303._Collected303()
+    result = Modelo303Result(year=2025, quarter=1)
+    for i, name in enumerate(RIGHT_TO_DEDUCT_FIELDS, start=1):
+        col.acc[name] = float(i)
+        setattr(result, name, float(i))
+    assert col.with_right_to_deduct == result.with_right_to_deduct == sum(range(1, 8))
+
+    assert modelo_390.RATES == modelo_303.SPANISH_RATES_PCT
+    assert modelo_390.nearest_spanish_rate is modelo_303.nearest_spanish_rate
+    assert modelo_303.nearest_spanish_rate(9.0) == 10.0
+    assert modelo_303.nearest_spanish_rate(None) == 21.0

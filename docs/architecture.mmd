@@ -68,7 +68,7 @@ shared by the filing sheet and the Obligations calendar"]
 
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing; views in app/views/)"]
     LOADER["data_loader.py"]
-    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export) ·\nyear_picker.py (one year range for every picker)"]
+    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export) ·\nyear_picker.py (one year range for every picker) ·\ninvoice_table.py (invoice table columns shared by Explorer and OCR)"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
     INVTABS["invoice_upload · invoice_ocr (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe · invoice_explorer · vendor_registry ·\nfixed_assets"]
     SSTAB["social_security"]

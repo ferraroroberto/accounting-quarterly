@@ -388,6 +388,20 @@ def test_reta_imports_once(ctx, tmp_path):
     _assert_noop(cp.step_reta(ctx, export))
 
 
+def test_reta_honours_configured_sheet_and_header_row(ctx, tmp_path):
+    """The RETA step reads the sheet and header row the Social Security tab is configured with."""
+    import pandas as pd
+
+    export = tmp_path / "bank_export.xlsx"
+    rows = [["Informe", None], ["Fecha", "Importe"], ["31/01/2025", "-100,00"]]
+    with pd.ExcelWriter(export) as writer:
+        pd.DataFrame([["decoy", "decoy"]]).to_excel(writer, sheet_name="Cover", header=False, index=False)
+        pd.DataFrame(rows).to_excel(writer, sheet_name="Movimientos", header=False, index=False)
+    ctx.config["social_security"] = {"sheet_name": "Movimientos", "skiprows": 1}
+    res = cp.step_reta(ctx, export)
+    assert res.changes == ["imported 1 RETA payment(s) from bank_export.xlsx"]
+
+
 # ---------------------------------------------------------------------------
 # 8. compute
 # ---------------------------------------------------------------------------

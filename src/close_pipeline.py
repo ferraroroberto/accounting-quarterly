@@ -83,7 +83,12 @@ from src.reconciliation import (
     result_boxes,
     to_markdown,
 )
-from src.social_security import get_ss_payments, load_bank_export, upsert_ss_payments
+from src.social_security import (
+    bank_export_kwargs,
+    get_ss_payments,
+    load_bank_export,
+    upsert_ss_payments,
+)
 from src.stripe_client import backfill_billing_details_from_raw_source
 from src.returns.oss_return import compute_eu_b2c_threshold
 from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
@@ -421,20 +426,13 @@ def step_stripe(ctx: CloseContext, fetch: Optional[Callable[[], Any]] = None) ->
 def step_reta(ctx: CloseContext, export_file: str | Path) -> StepResult:
     """Import the RETA (TGSS) debits of a bank export; already-stored rows are skipped.
 
-    Column names come from ``config.json → social_security`` (defaults
-    ``Fecha`` / ``Importe``, the header row is auto-detected).
+    Columns, sheet and header row come from ``config.json → social_security``
+    (defaults ``Fecha`` / ``Importe``, first sheet, header row auto-detected).
     """
     res = StepResult("reta")
     ss_cfg = (ctx.config or {}).get("social_security", {})
     path = Path(export_file)
-    rows = load_bank_export(
-        path,
-        date_column=ss_cfg.get("date_column", "Fecha"),
-        amount_column=ss_cfg.get("amount_column", "Importe"),
-        description_column=ss_cfg.get("description_column") or None,
-        concept_column=ss_cfg.get("concept_column") or None,
-        concept_patterns=ss_cfg.get("concept_patterns") or None,
-    )
+    rows = load_bank_export(path, **bank_export_kwargs(ss_cfg))
     inserted, skipped = upsert_ss_payments(rows, source_file=path.name, db_path=ctx.db_path)
     if inserted:
         res.changes.append(f"imported {inserted} RETA payment(s) from {path.name}")

@@ -151,6 +151,25 @@ def _apply_header(raw: pd.DataFrame, header_row: int) -> pd.DataFrame:
     return df
 
 
+def bank_export_kwargs(ss_cfg: Optional[dict]) -> dict:
+    """`load_bank_export` keyword arguments from the ``config.json → social_security`` block.
+
+    The one place the config keys and their defaults map onto the loader, so the
+    Social Security tab's form defaults and the close pipeline's RETA step read
+    the same sheet, header row and columns.
+    """
+    cfg = ss_cfg or {}
+    return {
+        "date_column": cfg.get("date_column", "Fecha"),
+        "amount_column": cfg.get("amount_column", "Importe"),
+        "description_column": cfg.get("description_column") or None,
+        "concept_column": cfg.get("concept_column") or None,
+        "concept_patterns": cfg.get("concept_patterns") or None,
+        "sheet_name": cfg.get("sheet_name", 0),
+        "skiprows": cfg.get("skiprows"),
+    }
+
+
 def load_bank_export(
     file_path: str | Path,
     date_column: str,

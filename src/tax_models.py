@@ -93,6 +93,15 @@ MODELO303_BOX_LABELS: dict[str, str] = {
 }
 
 
+# Art. 104.Dos.1º LIVA pro-rata numerator: taxed sales + art. 94.Uno.2º operations
+# located abroad that would give the right to deduct (EU B2B, non-EU, OSS). One
+# field list so the 303's collected sums and the 390's year total cannot diverge.
+RIGHT_TO_DEDUCT_FIELDS: tuple[str, ...] = (
+    "c01_base", "c04_base", "c07_base", "c59_entregas_intracom", "c60_exportaciones",
+    "c120_no_sujetas_localizacion", "oss_base",
+)
+
+
 @dataclass
 class Modelo303Result:
     """Modelo 303 (quarterly VAT return) with fields named after the AEAT boxes.
@@ -162,6 +171,11 @@ class Modelo303Result:
         sheet. Box 123 is the OSS base; it is 0 unless OSS-registered.
         """
         return {box: float(getattr(self, name)) for box, name in MODELO303_BOX_FIELDS.items()}
+
+    @property
+    def with_right_to_deduct(self) -> float:
+        """The quarter's pro-rata numerator (see ``RIGHT_TO_DEDUCT_FIELDS``)."""
+        return sum(getattr(self, f) for f in RIGHT_TO_DEDUCT_FIELDS)
 
     @property
     def credit_carry_forward(self) -> float:

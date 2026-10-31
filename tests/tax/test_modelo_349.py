@@ -45,11 +45,10 @@ def _sale_invoice(conn, id, date, base, client_nif, client="Client", treatment="
 def _stripe_b2b(conn, id, date, amount, buyer_vat_id):
     conn.execute(
         """INSERT INTO transactions (id, created_date, converted_amount, converted_amount_refunded,
-               description, fee, currency, activity_type, geo_region, vat_treatment,
-               vat_base_eur, vat_amount_eur, buyer_vat_id, email_meta)
-           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', 'COACHING', 'EU_NOT_SPAIN', 'IVA_EU_B2B',
-                   ?, 0, ?, 'buyer@example.test')""",
-        (id, date, amount, amount, buyer_vat_id),
+               description, fee, currency, activity_type, geo_region, buyer_vat_id, email_meta)
+           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', 'COACHING', 'EU_NOT_SPAIN',
+                   ?, 'buyer@example.test')""",
+        (id, date, amount, buyer_vat_id),
     )
     conn.commit()
 

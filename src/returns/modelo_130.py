@@ -453,7 +453,7 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
     return [
         _a("c01_ingresos",
            "01 Ingresos computables YTD — Stripe + facturas emitidas + diferencias de cambio",
-           "SUM(vat_base_eur) FROM transactions YTD (frozen declared amounts win) "
+           "SUM(base) over transactions YTD (frozen declared amounts win) "
            "+ SUM(COALESCE(eur_received, subtotal_eur)) FROM invoices WHERE direction='out' YTD "
            "+ SUM(gain_loss_eur) FROM fx_exchange_differences YTD",
            r.c01_ingresos, stripe_income=round(col.stripe_income, 2), inv_income=round(col.inv_income, 2),

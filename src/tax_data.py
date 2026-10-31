@@ -146,8 +146,7 @@ def _load_classified_range(
     rows = conn.execute(
         """SELECT id, created_date, converted_amount, converted_amount_refunded,
                   activity_type, geo_region, card_country, email_meta,
-                  vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id,
-                  fee_application
+                  buyer_vat_id, fee_application
            FROM transactions
            WHERE created_date >= ? AND created_date <= ?
              AND activity_type IS NOT NULL AND activity_type != 'UNKNOWN'
@@ -317,20 +316,14 @@ def net_amount(row: dict) -> float:
 
 
 def get_vat_treatment(row: dict, config: Optional[dict] = None) -> str:
-    """Return stored vat_treatment, or derive it on-the-fly if missing.
+    """Derive the VAT treatment of a transaction row from activity × geography.
 
-    The fallback derivation delegates to the shared treatment matrix in
-    ``src.vat_rules`` so the classifier and the engine cannot diverge. The
-    ``config`` dict is threaded through so the EU VAT-treatment overrides
-    (``tax.default_vat_treatment_eu_*``) and the ``tax.vat_registered`` flag
-    are honoured. Rows carrying an explicit stored treatment (manual override)
-    win over the derivation.
+    Delegates to the shared treatment matrix in ``src.vat_rules`` so the
+    classifier and the engine cannot diverge. The ``config`` dict is threaded
+    through so the EU VAT-treatment overrides (``tax.default_vat_treatment_eu_*``)
+    and the ``tax.vat_registered`` flag are honoured. ``buyer_vat_id`` decides
+    the EU B2B/B2C split.
     """
-    stored = row.get("vat_treatment")
-    if stored and stored != "UNKNOWN":
-        return stored
-    # Derive from activity × geo (fallback for rows not yet VAT-classified).
-    # buyer_vat_id decides the EU B2B/B2C split.
     return vat_treatment(
         row.get("activity_type"), row.get("geo_region"), config=config,
         buyer_vat_id=row.get("buyer_vat_id"),
@@ -381,7 +374,7 @@ def irpf_expense(inv: dict) -> IrpfExpense:
 
 
 def oss_country_code(row: dict) -> str:
-    return (row.get("oss_country") or row.get("card_country") or "").upper()
+    return (row.get("card_country") or "").upper()
 
 
 def get_vat_base(row: dict, config: Optional[dict] = None) -> float:
@@ -392,16 +385,12 @@ def get_vat_base(row: dict, config: Optional[dict] = None) -> float:
     dividing by (1 + rate).  For exports and EU B2B (ISP) the full net
     amount is the income base — no VAT was charged.
     """
-    if row.get("vat_base_eur") is not None:
-        return row["vat_base_eur"]
     return vat_base_from_inclusive(
         net_amount(row), get_vat_treatment(row, config), oss_country_code(row)
     )
 
 
 def get_vat_amount(row: dict, config: Optional[dict] = None) -> float:
-    if row.get("vat_amount_eur") is not None:
-        return row["vat_amount_eur"]
     return vat_amount_on_base(
         get_vat_base(row, config), get_vat_treatment(row, config), oss_country_code(row)
     )

@@ -41,13 +41,14 @@ def conn(db):
 
 
 def _tx(conn, id, date, base, treatment="IVA_ES_21", activity="COACHING", geo="SPAIN"):
+    """A Stripe charge whose derived treatment is ``treatment`` (an EU B2B sale carries a VAT id)."""
     vat = round(base * 0.21, 2) if treatment == "IVA_ES_21" else 0.0
+    buyer_vat_id = "DE000000001" if treatment == "IVA_EU_B2B" else None
     conn.execute(
         """INSERT INTO transactions (id, created_date, converted_amount, converted_amount_refunded,
-               description, fee, currency, activity_type, geo_region, vat_treatment,
-               vat_base_eur, vat_amount_eur)
-           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', ?, ?, ?, ?, ?)""",
-        (id, f"{date}T10:00:00", base + vat, activity, geo, treatment, base, vat),
+               description, fee, currency, activity_type, geo_region, buyer_vat_id)
+           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', ?, ?, ?)""",
+        (id, f"{date}T10:00:00", base + vat, activity, geo, buyer_vat_id),
     )
     conn.commit()
 

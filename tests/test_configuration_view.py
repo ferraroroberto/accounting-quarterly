@@ -48,3 +48,27 @@ def test_save_tax_settings_keeps_undisplayed_tax_keys(monkeypatch, sample_rules)
     assert tax["activity_start_date"] == "2023-01-01"
     assert tax["prorrata"] == prorrata
     assert tax["previous_year_net_yield"] == 1000.0
+
+
+def test_raw_json_editor_follows_rules_saved_elsewhere(monkeypatch, sample_rules):
+    """A rule saved by another form shows in the Raw JSON editor, so saving it cannot delete the rule."""
+    import json
+
+    import app.views.configuration as tab
+
+    stored = copy.deepcopy(sample_rules)
+    monkeypatch.setattr(tab, "load_config", lambda *a, **k: {"app": {}, "tax": {}})
+    monkeypatch.setattr(tab, "load_rules", lambda *a, **k: copy.deepcopy(stored))
+
+    def _raw_text(at) -> str:
+        [area] = [t for t in at.text_area if t.key.startswith("raw_rules_json")]
+        return area.value
+
+    at = AppTest.from_function(_configuration_page).run()
+    assert not at.exception, at.exception
+    assert "new_geo_override_rule" not in _raw_text(at)
+
+    stored["added_elsewhere"] = "new_geo_override_rule"
+    at.run()
+    assert not at.exception, at.exception
+    assert json.loads(_raw_text(at))["added_elsewhere"] == "new_geo_override_rule"

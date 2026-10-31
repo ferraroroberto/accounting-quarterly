@@ -50,6 +50,14 @@ def _flash_skipped_groups(result: dict) -> None:
                           "excluding the rest would leave no active invoice. Pick an active row to keep.")
 
 
+def _drop_group(group: DuplicateGroup) -> None:
+    """Remove group from the scan result on screen (the ignore set only filters the next scan)."""
+    st.session_state["dedupe_groups"] = [
+        g for g in st.session_state.get("dedupe_groups", [])
+        if (g.detector, g.loser_ids) != (group.detector, group.loser_ids)
+    ]
+
+
 def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> None:
     member_ids = list(group.loser_ids) + ([group.keeper_id] if group.keeper_id else [])
     rows = [by_id[i] for i in member_ids if i in by_id]
@@ -87,6 +95,7 @@ def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> No
                 result = apply_groups([DuplicateGroup(group.detector, group.reason, losers, keep_id, group.note)])
                 if result["applied"]:
                     flash("dedupe", "success", f"Excluded {result['applied']} invoice(s) as {group.reason!r}.")
+                    _drop_group(group)
                 if result["skipped_locked"]:
                     flash("dedupe", "warning", f"Skipped {result['skipped_locked']} row(s) with a locked `excluded` field.")
                 _flash_skipped_groups(result)
@@ -96,6 +105,7 @@ def _render_group(group: DuplicateGroup, by_id: dict[str, dict], idx: int) -> No
                 st.session_state.setdefault("dedupe_ignored", set()).add(
                     (group.detector, group.loser_ids)
                 )
+                _drop_group(group)
                 st.rerun()
 
 

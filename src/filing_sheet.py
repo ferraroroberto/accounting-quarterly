@@ -326,8 +326,8 @@ def render_filing_sheet(year: int, quarter: int, conn: sqlite3.Connection, confi
 # Mark filed
 # ---------------------------------------------------------------------------
 
-# Box holding the amount paid / returned, stored on tax_filing_status like the
-# calendar's old "Mark Filed" did (the legacy 130 engine reads it for box 05).
+# Box holding the amount paid / returned, stored on tax_filing_status so the Tax
+# Calendar shows it.
 _AMOUNT_BOX = {"303": "71", "130": "19"}
 
 

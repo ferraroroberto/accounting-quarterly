@@ -419,6 +419,7 @@ class Modelo347Result:
     rows: list[Modelo347Row] = field(default_factory=list)
     threshold: float = 3005.06
     audit: list = field(default_factory=list)  # list[AuditEntry]
+    excluded: list[dict] = field(default_factory=list)  # issued invoices left out, with reason
 
 
 @dataclass

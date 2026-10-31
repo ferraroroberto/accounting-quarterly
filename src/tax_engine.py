@@ -18,15 +18,25 @@ from src.returns.oss_return import compute_eu_b2c_threshold, compute_oss_return 
 from src.tax_data import load_app_config
 from src.tax_deadlines import calendar_deadline
 from src.tax_models import TaxDeadline
+from src.vat_rules import is_oss_registered
 
 log = get_logger(__name__)
 
 _DUE_SOON_DAYS = 15
 
 
-def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) -> list[TaxDeadline]:
-    """Return all quarterly and annual tax deadlines for the year with their status."""
+def get_tax_calendar(
+    year: int, db_conn: Optional[sqlite3.Connection] = None, config: Optional[dict] = None,
+) -> list[TaxDeadline]:
+    """Return the quarterly and annual tax deadlines of the year with their status.
+
+    The quarterly OSS return is listed only when ``tax.oss_registered`` is true: an
+    unregistered taxpayer files none, so its rows would only ever read OVERDUE.
+    """
     today = date.today()
+    if config is None:
+        config = load_app_config()
+    quarterly = ("303", "130", "349", "OSS") if is_oss_registered(config) else ("303", "130", "349")
     deadlines: list[TaxDeadline] = []
 
     model_names = {
@@ -60,7 +70,7 @@ def get_tax_calendar(year: int, db_conn: Optional[sqlite3.Connection] = None) ->
         return "PENDING"
 
     # Quarterly models
-    for model in ("303", "130", "349", "OSS"):
+    for model in quarterly:
         for q in range(1, 5):
             ddl = calendar_deadline(model, year, q)
             key = f"{model}_{q}"

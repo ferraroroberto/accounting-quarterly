@@ -111,7 +111,7 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 | **Modelo 130** box 02 | `fixed_assets` table | Depreciation YTD (see [Fixed Assets](fixed-assets.md)) |
 | **Modelo 130** box 02 | `social_security_payments` table | SS cuotas YTD, net of refunds (fully deductible) |
 | **Modelo 130** box 06 | Outgoing invoices | IRPF withheld (`irpf_amount`) YTD |
-| **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. |
+| **Modelo 347** | Income invoices | Spanish-client invoice operations alongside Stripe. Both sources accumulate on one VAT-inclusive basis so the single threshold compares like with like: Stripe uses `converted_amount − converted_amount_refunded`, invoices use `subtotal_eur + iva_amount`. Not `total_eur` — that is net of the IRPF retención, which is a withholding on payment rather than a smaller operation. An invoice on which the client withheld IRPF (`irpf_amount` > 0) is left out and listed in the result's `excluded` and the audit summary: the payer reports it in the Modelo 190 (art. 33.2.i RGAT), as on the purchases side. |
 | **Modelo 349** | Expense invoices (`direction='in'`) | `INTRA_EU_RC` → key `I`, per vendor VAT id |
 | **Modelo 349** | Income invoices | `EU_B2B` → key `S` alongside the Stripe B2B charges |
 

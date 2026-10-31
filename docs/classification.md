@@ -54,7 +54,7 @@ For an EU (non-Spain) sale, whether it is booked as B2B (reverse charge) or B2C 
 }
 ```
 
-Editable in the same **Configuration → Geographic Rules** tab as the geographic overrides, under **Customer VAT IDs (B2B)**. An email match wins, then a name/description match. As a read-only fallback, a Stripe `customer.tax_ids` entry already present in the stored raw charge is used if the override lookup finds nothing (currently a no-op — the Stripe fetch does not request `tax_ids`). VIES validity is **not** checked; verify the id yourself before relying on the reverse charge.
+Editable in the same **Configuration → Geographic Rules** tab as the geographic overrides, under **Customer VAT IDs (B2B)**. An email match wins, then a name/description match. The Stripe fetch does not request `customer.tax_ids`, so Stripe data never supplies an id. VIES validity is **not** checked; verify the id yourself before relying on the reverse charge.
 
 ## Card issuing country
 

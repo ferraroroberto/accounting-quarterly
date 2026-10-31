@@ -1,15 +1,12 @@
 """Period-based Stripe payment loading, FX conversion, and classification.
 
-Lives outside ``app/data_loader.py`` because the CLI (``scripts/close_quarter.py``)
-and ``src/close_pipeline.py``'s stripe step need this data-layer logic without
-importing Streamlit via the UI package. ``app/data_loader.py`` keeps a thin
-``@st.cache_data``-wrapped version of ``get_classified_for_period`` for the
-Streamlit tabs.
+Shared by the Streamlit tabs, the CLI (``scripts/close_quarter.py``) and
+``src/close_pipeline.py``'s stripe step, so it must not import Streamlit.
 """
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Optional
 
 from src.classifier import classify_batch
 from src.database import load_classified_payments, upsert_classified, upsert_payments
@@ -70,16 +67,12 @@ def get_classified_for_period(
     end_date: Optional[datetime] = None,
     *,
     input_mode: Optional[str] = None,
-    classify_fn: Optional[Callable[[list[Payment]], list[ClassifiedPayment]]] = None,
 ) -> list[ClassifiedPayment]:
     """Fetch+classify (API mode) or read stored classifications (db mode).
 
-    This is the CLI/pipeline entry point — no Streamlit caching happens here.
-    ``classify_fn`` lets a caller swap in a cached classifier; the Streamlit
-    wrapper in ``app.data_loader`` passes one backed by ``@st.cache_data``.
-    Defaults to the uncached ``classify_payments``.
+    Shared by the Streamlit tabs, the CLI and the close pipeline; no Streamlit
+    caching happens here.
     """
-    classify = classify_fn or classify_payments
     mode = (input_mode or "api").lower()
 
     if start_date is None or end_date is None:
@@ -98,7 +91,7 @@ def get_classified_for_period(
     payments = apply_fx_conversion(payments)
     upsert_payments(payments, source="api")
 
-    classified = classify(payments)
+    classified = classify_payments(payments)
     # Persist classification back to DB (best-effort).
     try:
         upsert_classified(classified)

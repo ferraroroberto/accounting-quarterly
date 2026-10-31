@@ -257,20 +257,12 @@ class TestCustomerVatId:
                     currency="eur", email_meta="biz@example.de")
         assert customer_vat_id(p, self._RULES) == "DE123456789"
 
-    def test_raw_customer_tax_ids_fallback(self):
-        # Read-only fallback: a Stripe customer.tax_ids entry already present
-        # in the stored raw charge, used only when no override matches.
+    def test_raw_customer_tax_ids_are_ignored(self):
+        # The Stripe fetch never requests customer.tax_ids, so a stored raw id is not a source.
         p = Payment(id="c5", created_date="2025-01-15T10:00:00", converted_amount=10.0,
                     converted_amount_refunded=0.0, description="unrelated", fee=0.0, currency="eur",
                     raw_source={"customer": {"tax_ids": {"data": [{"type": "eu_vat", "value": "FR123"}]}}})
-        assert customer_vat_id(p, self._RULES) == "FR123"
-
-    def test_override_wins_over_raw_fallback(self):
-        p = Payment(id="c6", created_date="2025-01-15T10:00:00", converted_amount=10.0,
-                    converted_amount_refunded=0.0, description="unrelated", fee=0.0, currency="eur",
-                    email_meta="biz@example.de",
-                    raw_source={"customer": {"tax_ids": {"data": [{"type": "eu_vat", "value": "FR123"}]}}})
-        assert customer_vat_id(p, self._RULES) == "DE123456789"
+        assert customer_vat_id(p, self._RULES) is None
 
     def test_classify_payment_sets_buyer_vat_id(self, sample_rules):
         rules = dict(sample_rules)

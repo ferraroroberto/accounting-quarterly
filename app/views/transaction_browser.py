@@ -8,8 +8,9 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.data_loader import get_classified_for_period, invalidate_cache
+from app.data_loader import invalidate_cache
 from app.year_picker import year_choices
+from src.payments_loader import get_classified_for_period
 from src.periods import quarter_datetime_bounds
 from src.classifier import eur_default_foreign_warning
 from src.database import (

@@ -488,3 +488,16 @@ def test_prorrata_numerator_and_rate_table_have_one_owner():
     assert modelo_390.nearest_spanish_rate is modelo_303.nearest_spanish_rate
     assert modelo_303.nearest_spanish_rate(9.0) == 10.0
     assert modelo_303.nearest_spanish_rate(None) == 21.0
+
+
+def test_every_eu_member_state_has_an_oss_rate_and_unknown_codes_fail():
+    """The OSS destination-rate table covers tax_codes.EU_COUNTRY_CODES; a missing code is an error."""
+    from src.tax_codes import EU_COUNTRY_CODES
+    from src.tax_models import OSS_RATES
+    from src.vat_rules import oss_rate
+
+    assert set(OSS_RATES) == set(EU_COUNTRY_CODES)
+    assert oss_rate("fi") == 0.255
+    for bad in (None, "", "UNKNOWN", "ES", "US"):
+        with pytest.raises(ValueError):
+            oss_rate(bad)

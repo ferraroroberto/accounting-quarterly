@@ -16,12 +16,17 @@ EntryType = Literal[
     "RETENCIONES_SOPORTADAS", "GASTOS_DEDUCIBLES", "IVA_SOPORTADO", "OTHER"
 ]
 
-# EU VAT rates for OSS digital services
+# Standard VAT rate of each EU member state other than Spain: the destination rate
+# an OSS (art. 70 LIVA, Modelo 035) B2C sale is taxed at. A rate change in any state
+# is a one-line edit here; ``tests/tax/test_modelo_303.py`` fails when a code in
+# ``tax_codes.EU_COUNTRY_CODES`` has no rate.
 OSS_RATES: dict[str, float] = {
-    "DE": 0.19, "FR": 0.20, "IT": 0.22, "NL": 0.21,
-    "BE": 0.21, "PT": 0.23, "AT": 0.20, "PL": 0.23,
-    "SE": 0.25, "DK": 0.25, "FI": 0.24, "IE": 0.23,
-    "DEFAULT_EU": 0.21,
+    "AT": 0.20, "BE": 0.21, "BG": 0.20, "CY": 0.19, "CZ": 0.21,
+    "DE": 0.19, "DK": 0.25, "EE": 0.24, "FI": 0.255, "FR": 0.20,
+    "GR": 0.24, "HR": 0.25, "HU": 0.27, "IE": 0.23, "IT": 0.22,
+    "LT": 0.21, "LU": 0.17, "LV": 0.21, "MT": 0.18, "NL": 0.21,
+    "PL": 0.23, "PT": 0.23, "RO": 0.21, "SE": 0.25, "SI": 0.22,
+    "SK": 0.23,
 }
 
 Q4NegativeResult = Literal["compensate", "refund"]

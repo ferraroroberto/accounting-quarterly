@@ -49,12 +49,16 @@ def is_oss_registered(config: Optional[dict] = None) -> bool:
 
 
 def oss_rate(country_code: Optional[str]) -> float:
-    """Return the OSS VAT rate for an EU destination country code.
+    """Return the OSS VAT rate of an EU destination country code.
 
-    Falls back to ``DEFAULT_EU`` for unknown or missing codes.
+    Raises ValueError for a missing or non-EU code: charging a guessed rate
+    would put a wrong base and cuota on the OSS return.
     """
     cc = (country_code or "").upper()
-    return OSS_RATES.get(cc, OSS_RATES["DEFAULT_EU"])
+    try:
+        return OSS_RATES[cc]
+    except KeyError:
+        raise ValueError(f"No OSS destination VAT rate for country code {country_code!r}") from None
 
 
 def vat_treatment(

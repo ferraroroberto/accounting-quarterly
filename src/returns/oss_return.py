@@ -58,7 +58,7 @@ def compute_oss_return(
         treatment = get_vat_treatment(row, config)
         if treatment != "OSS_EU":
             continue
-        cc = (row.get("oss_country") or row.get("card_country") or "UNKNOWN").upper()
+        cc = (row.get("card_country") or "UNKNOWN").upper()
         base = get_vat_base(row, config)
         vat = get_vat_amount(row, config)
         by_country[cc]["count"] += 1
@@ -87,7 +87,7 @@ def compute_oss_return(
         audit.append(_a(
             f"country_{r.country}_base",
             f"OSS base — {r.country} ({int(r.vat_rate * 100)}%)",
-            "SUM(vat_base_eur) WHERE vat_treatment='OSS_EU' AND country=CC",
+            "SUM(base) over OSS_EU transactions WHERE card_country=CC",
             r.base_eur,
             country=r.country, vat_rate=r.vat_rate, transactions=r.transactions,
         ))
@@ -108,7 +108,7 @@ def compute_oss_return(
     audit.append(_a(
         "total_vat",
         "Cuota total OSS (todos los países)",
-        "SUM(vat_amount_eur) across all countries",
+        "SUM(vat_amount) across all countries",
         result.total_vat,
         total_base=result.total_base,
     ))

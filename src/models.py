@@ -70,12 +70,8 @@ class ClassifiedPayment(Payment):
     classification_rule: str = ""
     geo_rule: str = ""
 
-    # VAT treatment fields — derived lazily by the tax engine (src.vat_rules),
-    # not populated on the live classification path; kept for ad-hoc use.
-    vat_treatment: Optional[str] = None   # IVA_ES_21 | IVA_EU_B2B | OSS_EU | IVA_EXPORT | …
-    vat_base_eur: Optional[float] = None  # taxable base (= net_amount for income, already EUR)
-    vat_amount_eur: Optional[float] = None  # IVA collected
-    oss_country: Optional[str] = None    # ISO-2 country, set when vat_treatment == OSS_EU
+    # The VAT treatment, base and amount are derived by the tax engine
+    # (src.vat_rules) and never stored per payment.
     buyer_vat_id: Optional[str] = None   # NIF-IVA of buyer (B2B EU invoices)
 
     IND_COACHING: int = 0

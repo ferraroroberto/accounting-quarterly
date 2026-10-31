@@ -30,10 +30,9 @@ def _stripe(conn, id, date, base):
     """A Spanish Stripe sale already split into base + 21% VAT."""
     conn.execute(
         """INSERT INTO transactions (id, created_date, converted_amount, converted_amount_refunded,
-               description, fee, currency, activity_type, geo_region, vat_treatment,
-               vat_base_eur, vat_amount_eur)
-           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', 'COACHING', 'SPAIN', 'IVA_ES_21', ?, ?)""",
-        (id, f"{date}T10:00:00", round(base * 1.21, 2), base, round(base * 0.21, 2)),
+               description, fee, currency, activity_type, geo_region)
+           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', 'COACHING', 'SPAIN')""",
+        (id, f"{date}T10:00:00", round(base * 1.21, 2)),
     )
     conn.commit()
 

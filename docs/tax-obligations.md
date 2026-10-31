@@ -46,7 +46,7 @@ Stripe records the gross amount charged to the customer, which for Spain and EU 
 | `IVA_EXPORT` | `net` (no VAT) | €100 gross = €100.00 base |
 | `IVA_EU_B2B` | `net` (reverse charge) | Full amount is income base |
 
-If `vat_base_eur` is already set on a transaction (manual override), that value is used directly and no extraction is performed.
+Treatment, base and VAT are always derived from the gross amount, the activity and the geography; none of them is stored per transaction, and the `OSS_EU` country is the card country.
 
 For **Modelo 130** (IRPF), income reported in Box 01 is the ex-VAT base — IVA collected is a pass-through to AEAT and is not part of your rendimiento.
 

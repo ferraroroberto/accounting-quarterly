@@ -39,13 +39,15 @@ _TRANSACTIONS_COLUMNS: dict[str, str] = {
     "source": "TEXT NOT NULL DEFAULT 'api'",
     "loaded_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
     "updated_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
-    # VAT / tax fields
-    "vat_treatment": "TEXT",
-    "vat_base_eur": "REAL",
-    "vat_amount_eur": "REAL",
-    "oss_country": "TEXT",
     "buyer_vat_id": "TEXT",
 }
+
+# Per-payment VAT overrides nothing ever wrote: the tax engine derives treatment,
+# base and amount from activity × geography. Dropped from older databases only
+# while every row is NULL, so a stored value is never discarded silently.
+_RETIRED_TRANSACTIONS_COLUMNS: tuple[str, ...] = (
+    "vat_treatment", "vat_base_eur", "vat_amount_eur", "oss_country",
+)
 
 
 def _get_table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -88,6 +90,23 @@ def _ensure_transactions_schema(conn: sqlite3.Connection) -> None:
         except Exception as exc:
             # If multiple app instances race, or SQLite rejects certain defaults, ignore safely.
             log.warning("⚠️ DB migration skipped for %s: %s", col, exc)
+    _drop_retired_transactions_columns(conn, existing)
+
+
+def _drop_retired_transactions_columns(conn: sqlite3.Connection, existing: set[str]) -> None:
+    """Drop the retired override columns that are present and hold no value."""
+    for col in _RETIRED_TRANSACTIONS_COLUMNS:
+        if col not in existing:
+            continue
+        filled = conn.execute(f"SELECT COUNT(*) FROM transactions WHERE {col} IS NOT NULL").fetchone()[0]
+        if filled:
+            log.warning("⚠️ transactions.%s kept: %d rows hold a value", col, filled)
+            continue
+        try:
+            conn.execute(f"ALTER TABLE transactions DROP COLUMN {col}")
+            log.info("ℹ️ Migrated DB: dropped transactions.%s", col)
+        except Exception as exc:
+            log.warning("⚠️ DB migration skipped for dropping transactions.%s: %s", col, exc)
 
 
 def _ensure_invoices_schema(conn: sqlite3.Connection) -> None:

@@ -35,11 +35,8 @@ def _insert_tx(conn: sqlite3.Connection, **kwargs) -> None:
         currency="eur",
         activity_type="COACHING",
         geo_region="SPAIN",
-        vat_treatment=None,
-        vat_base_eur=None,
-        vat_amount_eur=None,
-        oss_country=None,
         buyer_vat_id=None,
+        card_country=None,
         email_meta=None,
     )
     defaults.update(kwargs)
@@ -47,10 +44,10 @@ def _insert_tx(conn: sqlite3.Connection, **kwargs) -> None:
         """INSERT OR REPLACE INTO transactions
            (id, created_date, converted_amount, converted_amount_refunded,
             description, fee, currency, activity_type, geo_region,
-            vat_treatment, vat_base_eur, vat_amount_eur, oss_country, buyer_vat_id, email_meta)
+            buyer_vat_id, email_meta, card_country)
            VALUES (:id, :created_date, :converted_amount, :converted_amount_refunded,
                    :description, :fee, :currency, :activity_type, :geo_region,
-                   :vat_treatment, :vat_base_eur, :vat_amount_eur, :oss_country, :buyer_vat_id, :email_meta)""",
+                   :buyer_vat_id, :email_meta, :card_country)""",
         defaults,
     )
     conn.commit()
@@ -110,16 +107,14 @@ def db_conn(tmp_path):
 class TestModelo303:
     def test_all_outside_eu_result_zero(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
-                   converted_amount=500.0, geo_region="OUTSIDE_EU",
-                   vat_treatment="IVA_EXPORT", vat_base_eur=500.0, vat_amount_eur=0.0)
+                   converted_amount=500.0, geo_region="OUTSIDE_EU")
         result = compute_modelo_303(2025, 1, db_conn)
         assert result.c71_resultado_liquidacion == 0.0
         assert result.c120_no_sujetas_localizacion == 500.0
 
     def test_spain_only_box_09_is_21pct(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
-                   converted_amount=1000.0, geo_region="SPAIN",
-                   vat_treatment="IVA_ES_21", vat_base_eur=1000.0, vat_amount_eur=210.0)
+                   converted_amount=1210.0, geo_region="SPAIN")
         result = compute_modelo_303(2025, 1, db_conn)
         assert result.c07_base == pytest.approx(1000.0)
         assert result.c09_cuota == pytest.approx(210.0)
@@ -127,14 +122,12 @@ class TestModelo303:
 
     def test_mixed_income_correct_allocation(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
-                   converted_amount=500.0, geo_region="SPAIN", activity_type="COACHING",
-                   vat_treatment="IVA_ES_21", vat_base_eur=500.0, vat_amount_eur=105.0)
+                   converted_amount=605.0, geo_region="SPAIN", activity_type="COACHING")
         _insert_tx(db_conn, id="t2", created_date="2025-01-20T10:00:00",
                    converted_amount=300.0, geo_region="EU_NOT_SPAIN", activity_type="COACHING",
-                   vat_treatment="IVA_EU_B2B", vat_base_eur=300.0, vat_amount_eur=0.0)
+                   buyer_vat_id="DE123456789")
         _insert_tx(db_conn, id="t3", created_date="2025-01-25T10:00:00",
-                   converted_amount=200.0, geo_region="OUTSIDE_EU", activity_type="COACHING",
-                   vat_treatment="IVA_EXPORT", vat_base_eur=200.0, vat_amount_eur=0.0)
+                   converted_amount=200.0, geo_region="OUTSIDE_EU", activity_type="COACHING")
         result = compute_modelo_303(2025, 1, db_conn)
         assert result.c07_base == pytest.approx(500.0)
         assert result.c09_cuota == pytest.approx(105.0)
@@ -143,8 +136,7 @@ class TestModelo303:
 
     def test_iva_soportado_greater_than_devengado_gives_refund(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
-                   converted_amount=100.0, geo_region="SPAIN",
-                   vat_treatment="IVA_ES_21", vat_base_eur=100.0, vat_amount_eur=21.0)
+                   converted_amount=121.0, geo_region="SPAIN")
         # Add IVA soportado entry: €500 deductible
         db_conn.execute(
             "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) VALUES (2025, 1, 'IVA_SOPORTADO', 500.0)"
@@ -235,22 +227,18 @@ class TestModelo130:
 class TestOSSReturn:
     def test_no_oss_transactions_returns_empty(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-15T10:00:00",
-                   geo_region="SPAIN", vat_treatment="IVA_ES_21")
+                   geo_region="SPAIN")
         result = compute_oss_return(2025, 1, db_conn)
         assert result.rows == []
         assert result.total_base == 0.0
 
     def test_oss_groups_by_country(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
-                   converted_amount=100.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment="OSS_EU",
-                   vat_base_eur=100.0, vat_amount_eur=19.0,
-                   oss_country="DE", card_country="DE")
+                   converted_amount=119.0, geo_region="EU_NOT_SPAIN",
+                   activity_type="NEWSLETTER", card_country="DE")
         _insert_tx(db_conn, id="t2", created_date="2025-01-20T10:00:00",
-                   converted_amount=200.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment="OSS_EU",
-                   vat_base_eur=200.0, vat_amount_eur=40.0,
-                   oss_country="FR", card_country="FR")
+                   converted_amount=240.0, geo_region="EU_NOT_SPAIN",
+                   activity_type="NEWSLETTER", card_country="FR")
         result = compute_oss_return(2025, 1, db_conn, {"tax": {"oss_registered": True}})
         assert len(result.rows) == 2
         countries = {r.country for r in result.rows}
@@ -266,12 +254,10 @@ class TestModelo349:
     def test_only_b2b_included(self, db_conn):
         _insert_tx(db_conn, id="t1", created_date="2025-01-10T10:00:00",
                    converted_amount=500.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="COACHING", vat_treatment="IVA_EU_B2B",
-                   vat_base_eur=500.0, email_meta="client@eu.com", buyer_vat_id="DE123")
+                   activity_type="COACHING", email_meta="client@eu.com", buyer_vat_id="DE123")
         _insert_tx(db_conn, id="t2", created_date="2025-01-20T10:00:00",
                    converted_amount=300.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment="OSS_EU",
-                   vat_base_eur=300.0, email_meta="sub@eu.com")
+                   activity_type="NEWSLETTER", email_meta="sub@eu.com")
         result = compute_modelo_349(2025, 1, db_conn)
         assert len(result.rows) == 1
         assert result.rows[0].base == pytest.approx(500.0)
@@ -424,9 +410,7 @@ class TestConfigDrivenTaxSettings:
         assert result.c29_cuota == pytest.approx(250.0)
 
     def test_not_vat_registered_exempts_spanish_sales(self, db_conn):
-        # No stored vat_treatment → derivation runs and honours the config flag
-        _insert_tx(db_conn, id="t1", converted_amount=121.0, geo_region="SPAIN",
-                   vat_treatment=None)
+        _insert_tx(db_conn, id="t1", converted_amount=121.0, geo_region="SPAIN")
         db_conn.execute(
             "INSERT INTO quarterly_tax_entries (year, quarter, entry_type, amount_eur) "
             "VALUES (2025, 1, 'IVA_SOPORTADO', 500.0)"
@@ -441,8 +425,7 @@ class TestConfigDrivenTaxSettings:
 
     def test_not_oss_registered_produces_no_oss_return(self, db_conn):
         _insert_tx(db_conn, id="t1", converted_amount=100.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment="OSS_EU",
-                   vat_base_eur=100.0, vat_amount_eur=19.0, oss_country="DE")
+                   activity_type="NEWSLETTER", card_country="DE")
         cfg = {"tax": {"oss_registered": False}}
         result = compute_oss_return(2025, 1, db_conn, cfg)
         assert result.rows == []
@@ -451,10 +434,9 @@ class TestConfigDrivenTaxSettings:
 
     def test_buyer_vat_id_routes_to_349_regardless_of_config(self, db_conn):
         # accounting-quarterly#113: the customer's buyer_vat_id — not the
-        # per-activity config default — decides B2B vs. B2C. Row carries no
-        # stored treatment, so it's derived on the fly from buyer_vat_id.
+        # per-activity config default — decides B2B vs. B2C, derived on the fly.
         _insert_tx(db_conn, id="t1", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment=None,
+                   activity_type="NEWSLETTER",
                    email_meta="sub@eu.com", buyer_vat_id=None)
         # No VAT id on file → EU B2C (EU_B2C_ES21, or OSS_EU when registered) → not on 349
         assert len(compute_modelo_349(2025, 1, db_conn, {"tax": {}}).rows) == 0
@@ -464,7 +446,7 @@ class TestConfigDrivenTaxSettings:
 
         # VAT id on file → IVA_EU_B2B → appears on 349, config irrelevant.
         _insert_tx(db_conn, id="t2", converted_amount=300.0, geo_region="EU_NOT_SPAIN",
-                   activity_type="NEWSLETTER", vat_treatment=None,
+                   activity_type="NEWSLETTER",
                    email_meta="biz@eu.com", buyer_vat_id="DE999")
         result = compute_modelo_349(2025, 1, db_conn, {"tax": {}})
         assert len(result.rows) == 1
@@ -479,8 +461,7 @@ class TestActivityStartDate:
 
     def test_stripe_charge_before_start_excluded_from_303_and_130(self, db_conn):
         _insert_tx(db_conn, id="before", created_date="2025-01-31T23:00:00",
-                   converted_amount=121.0, vat_treatment="IVA_ES_21",
-                   vat_base_eur=100.0, vat_amount_eur=21.0)
+                   converted_amount=121.0)
         r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
         assert r303.c07_base == 0.0
         assert r303.c09_cuota == 0.0
@@ -489,8 +470,7 @@ class TestActivityStartDate:
 
     def test_charge_on_start_date_itself_is_counted(self, db_conn):
         _insert_tx(db_conn, id="on_start", created_date="2025-02-01T00:00:01",
-                   converted_amount=121.0, vat_treatment="IVA_ES_21",
-                   vat_base_eur=100.0, vat_amount_eur=21.0)
+                   converted_amount=121.0)
         r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
         assert r303.c07_base == 100.0
         assert r303.c09_cuota == 21.0
@@ -513,7 +493,6 @@ class TestActivityStartDate:
     def test_eu_b2b_charge_before_start_excluded_from_349(self, db_conn):
         _insert_tx(db_conn, id="eu_b2b_before", created_date="2025-01-15T10:00:00",
                    converted_amount=500.0, geo_region="EU_NOT_SPAIN",
-                   vat_treatment="IVA_EU_B2B", vat_base_eur=500.0, vat_amount_eur=0.0,
                    buyer_vat_id="DE123456789")
         r349 = compute_modelo_349(2025, 1, db_conn, self.CFG)
         assert r349.rows == []
@@ -533,8 +512,7 @@ class TestActivityStartDate:
 
     def test_absent_key_leaves_behaviour_unchanged(self, db_conn):
         _insert_tx(db_conn, id="ancient", created_date="2020-01-01T00:00:00",
-                   converted_amount=121.0, vat_treatment="IVA_ES_21",
-                   vat_base_eur=100.0, vat_amount_eur=21.0)
+                   converted_amount=121.0)
         r303 = compute_modelo_303(2020, 1, db_conn)  # no config at all
         assert r303.c07_base == 100.0
         r303_empty_tax = compute_modelo_303(2020, 1, db_conn, {"tax": {}})
@@ -545,15 +523,13 @@ class TestActivityStartDate:
         # not pull the app-computed credit chain back past the start.
         cfg = {"tax": {"activity_start_date": "2025-04-10"}}
         _insert_tx(db_conn, id="stray", created_date="2025-02-01T10:00:00",
-                   converted_amount=50.0, vat_treatment="IVA_ES_21",
-                   vat_base_eur=41.32, vat_amount_eur=8.68)
+                   converted_amount=50.0)
         r = compute_modelo_303(2025, 2, db_conn, cfg)
         assert r.c110_source == "none"
 
     def test_audit_note_reports_excluded_stripe_count_and_total(self, db_conn):
         _insert_tx(db_conn, id="before", created_date="2025-01-15T10:00:00",
-                   converted_amount=121.0, vat_treatment="IVA_ES_21",
-                   vat_base_eur=100.0, vat_amount_eur=21.0)
+                   converted_amount=121.0)
         r303 = compute_modelo_303(2025, 1, db_conn, self.CFG)
         assert "before the activity start" in r303.notes
         assert "1 Stripe transaction(s)" in r303.notes

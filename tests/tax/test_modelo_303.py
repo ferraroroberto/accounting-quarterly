@@ -34,13 +34,13 @@ def conn(db):
     c.close()
 
 
-def _tx(conn, id, date, gross, treatment, base, vat, geo="SPAIN", activity="COACHING"):
+def _tx(conn, id, date, gross, geo="SPAIN", activity="COACHING"):
+    """A Stripe charge; the engine derives its treatment, base and VAT from activity × geo."""
     conn.execute(
         """INSERT INTO transactions (id, created_date, converted_amount, converted_amount_refunded,
-               description, fee, currency, activity_type, geo_region, vat_treatment,
-               vat_base_eur, vat_amount_eur)
-           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', ?, ?, ?, ?, ?)""",
-        (id, date, gross, activity, geo, treatment, base, vat),
+               description, fee, currency, activity_type, geo_region)
+           VALUES (?, ?, ?, 0, 'synthetic', 0, 'eur', ?, ?)""",
+        (id, date, gross, activity, geo),
     )
     conn.commit()
 
@@ -81,10 +81,9 @@ class TestGoldenQuarter:
     def result(self, db, conn):
         # Stripe: Spain 121 gross (100 + 21), EU consumer at Spanish 21% (D7) 60.50
         # gross (50 + 10.50), non-EU consumer 200 (not subject, box 120).
-        _tx(conn, "s_es", "2025-04-10T10:00:00", 121.0, "IVA_ES_21", 100.0, 21.0)
-        _tx(conn, "s_b2c", "2025-05-10T10:00:00", 60.5, "EU_B2C_ES21", 50.0, 10.5,
-            geo="EU_NOT_SPAIN", activity="NEWSLETTER")
-        _tx(conn, "s_us", "2025-06-10T10:00:00", 200.0, "IVA_EXPORT", 200.0, 0.0, geo="OUTSIDE_EU")
+        _tx(conn, "s_es", "2025-04-10T10:00:00", 121.0)
+        _tx(conn, "s_b2c", "2025-05-10T10:00:00", 60.5, geo="EU_NOT_SPAIN", activity="NEWSLETTER")
+        _tx(conn, "s_us", "2025-06-10T10:00:00", 200.0, geo="OUTSIDE_EU")
         # Issued invoices.
         _inv(conn, "o_es", "out", "2025-04-15", 1000.0, "ES_21", iva=210.0, rate=21)
         _inv(conn, "o_eu", "out", "2025-04-16", 300.0, "EU_B2B", geo="EU_NOT_SPAIN")
@@ -400,7 +399,7 @@ def test_snapshot_roundtrip(conn):
 def _fee_tx(conn, id, date, fee_application):
     """A Spanish Stripe sale of 100 + 21 whose connected platform kept ``fee_application``
     (``None`` = fee split unknown, a row fetched before the split was stored)."""
-    _tx(conn, id, f"{date}T10:00:00", 121.0, "IVA_ES_21", 100.0, 21.0)
+    _tx(conn, id, f"{date}T10:00:00", 121.0)
     conn.execute("UPDATE transactions SET fee_application = ? WHERE id = ?", (fee_application, id))
     conn.commit()
 

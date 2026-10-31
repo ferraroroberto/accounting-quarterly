@@ -1,6 +1,7 @@
 """Configuration tab content."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -77,11 +78,16 @@ def _render_classification_rules(rules: dict) -> None:
     st.subheader("Raw JSON Editor")
     st.caption("Advanced: edit the full classification_rules.json directly.")
 
+    # A keyed text_area only takes its value on the first render of a key, so the key
+    # follows the stored rules: a save from any form (or tab) reseeds the editor
+    # instead of leaving a stale copy that "Save raw JSON" would write back.
+    stored_json = json.dumps(rules, indent=2, ensure_ascii=False)
+    rules_version = hashlib.sha256(stored_json.encode()).hexdigest()[:12]
     raw_json = st.text_area(
         "classification_rules.json",
-        json.dumps(rules, indent=2, ensure_ascii=False),
+        stored_json,
         height=400,
-        key="raw_rules_json",
+        key=f"raw_rules_json_{rules_version}",
     )
     if st.button("Save raw JSON", key="save_raw_json"):
         try:

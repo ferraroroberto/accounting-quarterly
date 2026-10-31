@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import src.reconciliation as rc
-import src.tax_validator as tax_validator
+import src.filed_reference as filed_reference
 from src.database import init_db, load_audit_entries_conn, upsert_audit_entries_conn
 from src.filed_returns import FiledReturn, Operator349, store_filed_return
 from src.reconciliation import (
@@ -297,7 +297,7 @@ def test_markdown_export_without_filed_return():
 
 @pytest.fixture
 def db_conn(tmp_path, monkeypatch):
-    monkeypatch.setattr(tax_validator, "_YAML_PATH", tmp_path / "no-validation.yaml")
+    monkeypatch.setattr(filed_reference, "_YAML_PATH", tmp_path / "no-validation.yaml")
     db_path = tmp_path / "recon.db"
     init_db(db_path)
     conn = sqlite3.connect(str(db_path))

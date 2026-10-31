@@ -53,9 +53,10 @@ def test_tab_renders_bulk_editor_and_form(ledger_db):
 def test_form_edit_persists_and_locks(ledger_db):
     at = AppTest.from_function(_render_ledger).run()
     invoice_id = at.selectbox(key="ledger_select_in").value
-    at.selectbox(key=f"ledger_{invoice_id}_tax_treatment").set_value("INTRA_EU_RC")
-    at.number_input(key=f"ledger_{invoice_id}_deductible_pct_irpf").set_value(20.0)
-    at.button(key=f"FormSubmitter:ledger_{invoice_id}_form-Save & mark reviewed").click()
+    prefix = _form_prefix(at, invoice_id, ledger_db)
+    at.selectbox(key=f"{prefix}_tax_treatment").set_value("INTRA_EU_RC")
+    at.number_input(key=f"{prefix}_deductible_pct_irpf").set_value(20.0)
+    at.button(key=f"FormSubmitter:{prefix}_form-Save & mark reviewed").click()
     at.run()
     assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
 
@@ -108,3 +109,46 @@ def test_null_invoice_date_shown_as_no_date(tmp_path, monkeypatch):
     assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
     assert at.metric[0].value == "1"
     assert at.selectbox(key="ledger_select_in") is not None
+
+
+def _form_prefix(at, invoice_id: str, db_path: Path) -> str:
+    from app.views.invoice_ledger import _form_key
+
+    [rec] = [
+        r for r in (get_invoice_by_filename(f"vendor/inv-{n}.pdf", "in", db_path=db_path) for n in (1, 2))
+        if r["id"] == invoice_id
+    ]
+    return _form_key(invoice_id, rec, at.session_state["ledger_editor_version"])
+
+
+def test_edit_form_shows_values_saved_elsewhere(ledger_db):
+    """A change saved outside the form (bulk grid, re-extract) reaches the form, so saving it keeps the change."""
+    from src.database import update_invoice_fields
+
+    at = AppTest.from_function(_render_ledger).run()
+    invoice_id = at.selectbox(key="ledger_select_in").value
+    before = at.selectbox(key=f"{_form_prefix(at, invoice_id, ledger_db)}_tax_treatment").value
+    assert before != "INTRA_EU_RC"
+
+    update_invoice_fields(invoice_id, {"tax_treatment": "INTRA_EU_RC"}, db_path=ledger_db)
+    at.run()
+    assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
+    prefix = _form_prefix(at, invoice_id, ledger_db)
+    assert at.selectbox(key=f"{prefix}_tax_treatment").value == "INTRA_EU_RC"
+
+
+def test_exchange_difference_prefills_from_the_selected_invoice(ledger_db):
+    upsert_invoice({
+        "filename": "client/usd-1.pdf", "direction": "out", "invoice_date": "2025-03-05",
+        "client_name": "Example Client", "subtotal_eur": 90.0, "total_eur": 90.0,
+        "original_currency": "USD", "original_amount": 100.0,
+    }, db_path=ledger_db)
+    at = AppTest.from_function(_render_ledger).run()
+    at.radio(key="ledger_direction").set_value("out").run()
+    assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
+
+    invoice_id = get_invoice_by_filename("client/usd-1.pdf", "out", db_path=ledger_db)["id"]
+    at.selectbox(key="exchange_diff_invoice").set_value(invoice_id).run()
+    assert not at.exception, f"Invoice Ledger tab raised: {at.exception}"
+    assert at.number_input(key=f"exchange_diff_booked_eur_{invoice_id}").value == 90.0
+    assert at.text_input(key=f"exchange_diff_currency_{invoice_id}").value == "USD"

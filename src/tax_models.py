@@ -16,12 +16,17 @@ EntryType = Literal[
     "RETENCIONES_SOPORTADAS", "GASTOS_DEDUCIBLES", "IVA_SOPORTADO", "OTHER"
 ]
 
-# EU VAT rates for OSS digital services
+# Standard VAT rate of each EU member state other than Spain: the destination rate
+# an OSS (art. 70 LIVA, Modelo 035) B2C sale is taxed at. A rate change in any state
+# is a one-line edit here; ``tests/tax/test_modelo_303.py`` fails when a code in
+# ``tax_codes.EU_COUNTRY_CODES`` has no rate.
 OSS_RATES: dict[str, float] = {
-    "DE": 0.19, "FR": 0.20, "IT": 0.22, "NL": 0.21,
-    "BE": 0.21, "PT": 0.23, "AT": 0.20, "PL": 0.23,
-    "SE": 0.25, "DK": 0.25, "FI": 0.24, "IE": 0.23,
-    "DEFAULT_EU": 0.21,
+    "AT": 0.20, "BE": 0.21, "BG": 0.20, "CY": 0.19, "CZ": 0.21,
+    "DE": 0.19, "DK": 0.25, "EE": 0.24, "FI": 0.255, "FR": 0.20,
+    "GR": 0.24, "HR": 0.25, "HU": 0.27, "IE": 0.23, "IT": 0.22,
+    "LT": 0.21, "LU": 0.17, "LV": 0.21, "MT": 0.18, "NL": 0.21,
+    "PL": 0.23, "PT": 0.23, "RO": 0.21, "SE": 0.25, "SI": 0.22,
+    "SK": 0.23,
 }
 
 Q4NegativeResult = Literal["compensate", "refund"]
@@ -93,6 +98,15 @@ MODELO303_BOX_LABELS: dict[str, str] = {
 }
 
 
+# Art. 104.Dos.1º LIVA pro-rata numerator: taxed sales + art. 94.Uno.2º operations
+# located abroad that would give the right to deduct (EU B2B, non-EU, OSS). One
+# field list so the 303's collected sums and the 390's year total cannot diverge.
+RIGHT_TO_DEDUCT_FIELDS: tuple[str, ...] = (
+    "c01_base", "c04_base", "c07_base", "c59_entregas_intracom", "c60_exportaciones",
+    "c120_no_sujetas_localizacion", "oss_base",
+)
+
+
 @dataclass
 class Modelo303Result:
     """Modelo 303 (quarterly VAT return) with fields named after the AEAT boxes.
@@ -162,6 +176,11 @@ class Modelo303Result:
         sheet. Box 123 is the OSS base; it is 0 unless OSS-registered.
         """
         return {box: float(getattr(self, name)) for box, name in MODELO303_BOX_FIELDS.items()}
+
+    @property
+    def with_right_to_deduct(self) -> float:
+        """The quarter's pro-rata numerator (see ``RIGHT_TO_DEDUCT_FIELDS``)."""
+        return sum(getattr(self, f) for f in RIGHT_TO_DEDUCT_FIELDS)
 
     @property
     def credit_carry_forward(self) -> float:
@@ -400,6 +419,7 @@ class Modelo347Result:
     rows: list[Modelo347Row] = field(default_factory=list)
     threshold: float = 3005.06
     audit: list = field(default_factory=list)  # list[AuditEntry]
+    excluded: list[dict] = field(default_factory=list)  # issued invoices left out, with reason
 
 
 @dataclass

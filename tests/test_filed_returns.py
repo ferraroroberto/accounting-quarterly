@@ -32,7 +32,7 @@ from src.filed_returns import (
     parse_pdf,
     period_to_quarter,
 )
-from src import tax_validator
+from src import filed_reference
 
 T, V = "F1", "F2"  # template font (Helvetica), value font (Courier)
 PAGE_H = 842
@@ -333,8 +333,8 @@ def test_validator_prefers_db_and_falls_back_to_yaml(conn, monkeypatch):
         {"model": "130", "year": 2026, "quarter": 1, "filed_date": "2026-04-20",
          "values": {"01_ingresos_ytd": 5.0}},
     ]
-    monkeypatch.setattr(tax_validator, "_load_yaml_filings", lambda: yaml_filings)
-    filings = tax_validator._load_filings(conn)
+    monkeypatch.setattr(filed_reference, "_load_yaml_filings", lambda: yaml_filings)
+    filings = filed_reference.load_reference_filings(conn)
     by_q = {f["quarter"]: f for f in filings if f["model"] == "130"}
     assert by_q[2]["source"] == "db"
     assert by_q[2]["values"]["01_ingresos_ytd"] == pytest.approx(2000.0)

@@ -82,3 +82,24 @@ def test_empty_db_shows_guidance(tmp_path, monkeypatch):
     at = AppTest.from_function(_render_dedupe).run()
     assert not at.exception
     assert any("Invoice OCR" in i.value for i in at.info)
+
+
+def test_ignore_removes_the_group_from_the_screen(dedupe_db):
+    at = AppTest.from_function(_render_dedupe).run()
+    at.button(key="dedupe_scan").click().run()
+    assert at.metric[0].value == "1"
+
+    at.button(key="dedupe_skip_0").click().run()
+    assert not at.exception, f"Duplicate Review tab raised: {at.exception}"
+    assert not at.metric
+    assert all(not r["excluded"] for r in get_invoices(db_path=dedupe_db))
+
+
+def test_exclude_the_rest_removes_the_applied_group_from_the_screen(dedupe_db):
+    at = AppTest.from_function(_render_dedupe).run()
+    at.button(key="dedupe_scan").click().run()
+
+    at.button(key="dedupe_apply_0").click().run()
+    assert not at.exception, f"Duplicate Review tab raised: {at.exception}"
+    assert not at.metric
+    assert len([r for r in get_invoices(db_path=dedupe_db) if r["excluded"]]) == 1

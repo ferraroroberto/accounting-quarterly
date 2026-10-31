@@ -7,6 +7,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from app.invoice_table import invoice_display_frame
 from src.database import get_invoices
 
 
@@ -196,19 +197,7 @@ def _render_metrics(filtered: pd.DataFrame) -> None:
 
 def _render_table_and_export(filtered: pd.DataFrame) -> None:
     """Result table plus the filtered-CSV download."""
-    display_cols = [
-        "direction", "filename", "extracted_at", "invoice_date",
-        "invoice_type", "vendor_name", "vendor_nif",
-        "client_name", "client_nif",
-        "description", "subtotal_eur", "iva_rate", "iva_amount",
-        "irpf_rate", "irpf_amount", "total_eur", "currency",
-        "category", "payment_method",
-        "supply_date", "due_date", "tax_treatment",
-        "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
-        "is_rectificativa", "vat_exempt_reason", "notes",
-    ]
-    visible = [c for c in display_cols if c in filtered.columns]
-    display_df = filtered[visible].rename(columns={"extracted_at": "date_scanned"})
+    display_df = invoice_display_frame(filtered)
 
     st.dataframe(display_df, width="stretch", hide_index=True)
 

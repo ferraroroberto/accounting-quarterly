@@ -209,10 +209,12 @@ def _load_347_invoice_rows(year: int, start: str, db_conn: sqlite3.Connection) -
     # `iva_amount` is selected alongside the base because Modelo 347 reports the
     # importe *IVA incluido* — see the gross-basis note on the accumulation loop.
     return db_conn.execute(
-        """SELECT COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
+        """SELECT id,
+                  COALESCE(client_name, client_nif, 'UNKNOWN') AS counterparty,
                   client_nif,
                   subtotal_eur,
                   iva_amount,
+                  irpf_amount,
                   strftime('%m', invoice_date) AS month
            FROM invoices
            WHERE direction = 'out'
@@ -223,6 +225,21 @@ def _load_347_invoice_rows(year: int, start: str, db_conn: sqlite3.Connection) -
              AND subtotal_eur IS NOT NULL""",
         (start, f"{year}-12-31"),
     ).fetchall()
+
+
+def _split_withheld(inv_rows: list) -> tuple[list, list[dict]]:
+    """(invoices to declare, excluded records): an invoice on which the client withheld
+    IRPF is reported in the payer's Modelo 190 and left out of the 347 for both parties
+    (art. 33.2.i RGAT), the same rule the purchases side applies."""
+    kept, excluded = [], []
+    for row in inv_rows:
+        if (row["irpf_amount"] or 0.0) > 0:
+            excluded.append({"id": row["id"], "counterparty": row["counterparty"],
+                             "amount_eur": round((row["subtotal_eur"] or 0.0) + (row["iva_amount"] or 0.0), 2),
+                             "reason": EXCLUDED_WITHHOLDING})
+        else:
+            kept.append(row)
+    return kept, excluded
 
 
 def _accumulate_347(rows: list[dict], inv_rows: list) -> dict[str, dict]:
@@ -307,6 +324,7 @@ def _audit_347(
         above_threshold=len(result.rows),
         below_threshold=below_threshold,
         threshold_eur=result.threshold,
+        excluded=[{"id": e["id"], "reason": e["reason"]} for e in result.excluded],
     ))
     return audit
 
@@ -323,7 +341,7 @@ def compute_modelo_347(
     start = clamp_start(f"{year}-01-01", config)
 
     rows = _load_347_stripe_rows(year, start, db_conn)
-    inv_rows = _load_347_invoice_rows(year, start, db_conn)
+    inv_rows, result.excluded = _split_withheld(_load_347_invoice_rows(year, start, db_conn))
 
     by_counterparty = _accumulate_347(rows, inv_rows)
 

@@ -1,6 +1,6 @@
 # Dashboard Tabs
 
-The three tabs that make up the main reporting flow — the view a gestor or asesor fiscal is walked through first. Each reads classified payments via `app/data_loader.get_classified_for_period()`, which classifies on load from `db` (SQLite, the default) or `api` (live Stripe refresh) and caches the result in `st.session_state` until the period or mode changes.
+The three tabs that make up the main reporting flow — the view a gestor or asesor fiscal is walked through first. Each reads classified payments via `src/payments_loader.get_classified_for_period()`, which classifies on load from `db` (SQLite, the default) or `api` (live Stripe refresh) and caches the result in `st.session_state` until the period or mode changes.
 
 ## Quarter Report
 

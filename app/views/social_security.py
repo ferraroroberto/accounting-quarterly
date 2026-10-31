@@ -17,6 +17,7 @@ from src.logger import get_logger
 from src.social_security import (
     DEFAULT_CONCEPT_PATTERNS,
     add_manual_ss_entry,
+    bank_export_kwargs,
     clear_ss_payments,
     delete_ss_payment,
     detect_header_row,
@@ -53,13 +54,14 @@ def _render_import_form(ss_cfg: dict) -> _ImportSettings:
     st.subheader("Import from bank export")
 
     default_file = ss_cfg.get("bank_export_file", "tmp/social_security_bank_export.xlsx")
-    default_date_col = ss_cfg.get("date_column", "Fecha")
-    default_amount_col = ss_cfg.get("amount_column", "Importe")
-    default_desc_col = ss_cfg.get("description_column", "")
-    default_concept_col = ss_cfg.get("concept_column", "")
-    default_concept_patterns = ss_cfg.get("concept_patterns", DEFAULT_CONCEPT_PATTERNS)
-    default_sheet = ss_cfg.get("sheet_name", 0)
-    default_skiprows = ss_cfg.get("skiprows")
+    kw = bank_export_kwargs(ss_cfg)
+    default_date_col = kw["date_column"]
+    default_amount_col = kw["amount_column"]
+    default_desc_col = kw["description_column"] or ""
+    default_concept_col = kw["concept_column"] or ""
+    default_concept_patterns = kw["concept_patterns"] or DEFAULT_CONCEPT_PATTERNS
+    default_sheet = kw["sheet_name"]
+    default_skiprows = kw["skiprows"]
 
     col1, col2 = st.columns(2)
     with col1:

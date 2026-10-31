@@ -7,8 +7,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.data_loader import first_data_year, get_classified_for_period
+from app.data_loader import first_data_year
 from app.excel_download import render_excel_download
+from src.payments_loader import get_classified_for_period
 from src.periods import quarter_datetime_bounds
 from src.aggregator import calculate_grand_totals, calculate_regional_totals, get_transaction_count
 from src.database import get_transaction_date_bounds

@@ -26,7 +26,7 @@ comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "baac1ed97388a3545
 conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "9d0fd2777fbae78aaffa7a0e53f62a201db5af79", dest = "scripts/conventions_ratchet.py" }
 
 # [docs_ratchet] -- the scaffold's docs ratchet. The gate (scripts/verify-before-ship.ps1)
-# runs scripts/docs_ratchet.py through scripts/docs_ratchet_gate.py, which fails when
+# runs scripts/docs_ratchet.py, which fails when
 # README.md grows past 40 KiB or when README.md / docs/**/*.md gains a history marker
 # (issue reference, dated or changelog heading) beyond .docs-ratchet-baseline.json. A
 # check that cannot run (exit 3) is NOT CONFIRMED and fails, never a pass. Mechanism +

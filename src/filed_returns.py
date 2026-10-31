@@ -522,10 +522,10 @@ def import_paths(conn: sqlite3.Connection, paths: Iterable[str | Path]) -> list[
 
 
 # ---------------------------------------------------------------------------
-# Reading back (validator-facing)
+# Reading back (reconciliation-facing)
 # ---------------------------------------------------------------------------
 
-# Box -> key in the validator's value dict (same keys as validation.yaml).
+# Box -> key in the reconciliation's value dict (same keys as validation.yaml).
 VALIDATOR_KEYS: dict[str, dict[str, str]] = {
     "130": {
         "01": "01_ingresos_ytd", "02": "02_gastos_ytd", "03": "03_rendimiento_neto",
@@ -561,11 +561,11 @@ def load_filed_boxes(
 
 
 def load_filings(conn: sqlite3.Connection) -> list[dict]:
-    """Imported returns in the validator's filing-dict shape.
+    """Imported returns in the reconciliation's filing-dict shape.
 
-    An empty box on a filed return means zero, so every mapped validator key
+    An empty box on a filed return means zero, so every mapped filing key
     is present (0.0 when the box was blank). Monthly periods are skipped —
-    the validator works per quarter / year.
+    the reconciliation works per quarter / year.
     """
     ensure_filed_returns_schema(conn)
     heads = conn.execute(

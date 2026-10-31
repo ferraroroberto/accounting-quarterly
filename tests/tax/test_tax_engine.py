@@ -362,14 +362,28 @@ class TestModelo347:
         # ex-VAT basis it is 2,600 → silently omitted from the declaration.
         _insert_invoice(db_conn, id="inv1", invoice_date="2025-06-01",
                         client_name="Acme SL", client_nif="B11111111",
-                        subtotal_eur=2600.0, iva_amount=546.0,
-                        irpf_amount=390.0, total_eur=2756.0)
+                        subtotal_eur=2600.0, iva_amount=546.0, total_eur=3146.0)
         result = compute_modelo_347(2025, db_conn)
         assert len(result.rows) == 1
-        # Not 2600.0 (ex-VAT base) and not 2756.0 (total_eur, net of the IRPF
-        # retención — a withholding on payment, not a smaller operation).
+        # Not 2600.0 (the ex-VAT base).
         assert result.rows[0].total_operations == pytest.approx(3146.0)
         assert result.rows[0].quarter_breakdown[2] == pytest.approx(3146.0)
+
+    def test_invoice_with_irpf_withheld_is_excluded(self, db_conn):
+        # Art. 33.2.i RGAT: an operation the client withheld IRPF on is reported in the
+        # payer's Modelo 190 and left out of the 347 for both parties.
+        _insert_invoice(db_conn, id="inv_w", invoice_date="2025-06-01",
+                        client_name="Withholder SL", client_nif="B33333333",
+                        subtotal_eur=4000.0, iva_amount=840.0, irpf_amount=600.0, total_eur=4240.0)
+        _insert_invoice(db_conn, id="inv_n", invoice_date="2025-06-02",
+                        client_name="Plain SL", client_nif="B44444444",
+                        subtotal_eur=4000.0, iva_amount=840.0, total_eur=4840.0)
+        result = compute_modelo_347(2025, db_conn)
+        assert [r.counterparty_nif for r in result.rows] == ["B44444444"]
+        [excluded] = result.excluded
+        assert excluded["id"] == "inv_w"
+        assert excluded["amount_eur"] == pytest.approx(4840.0)
+        assert "withheld" in excluded["reason"]
 
     def test_audit_formula_records_the_gross_basis(self, db_conn):
         # The chosen basis must be visible in the audit trail, not just in the

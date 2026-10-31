@@ -1,9 +1,9 @@
-"""Shared data-loading utilities for Streamlit tabs (with caching).
+"""Shared data-loading utilities for Streamlit tabs.
 
-Thin UI wrapper — the actual period loading, FX conversion and classification
-logic lives in ``src/payments_loader.py`` so the CLI and close pipeline
-can use it without importing Streamlit. This module only adds the
-``@st.cache_data`` layer.
+Period loading, FX conversion and classification live in ``src/payments_loader.py``,
+which the tabs call directly: the "db" mode they render with only reads stored
+classifications, so there is nothing to cache here. This module holds the
+first-year lookup and the cache reset.
 """
 from __future__ import annotations
 
@@ -20,9 +20,6 @@ from typing import Optional
 import streamlit as st
 
 from src.database import get_transaction_date_bounds
-from src.models import ClassifiedPayment, Payment
-from src.payments_loader import classify_payments as _classify_payments_uncached
-from src.payments_loader import get_classified_for_period as _get_classified_for_period
 
 # Fallback first year when no transactions are stored yet (e.g. a fresh DB).
 DEFAULT_FIRST_YEAR = 2023
@@ -37,34 +34,6 @@ def first_data_year(min_tx_dt: Optional[datetime] = None) -> int:
     if min_tx_dt is None:
         min_tx_dt, _ = get_transaction_date_bounds()
     return min_tx_dt.year if min_tx_dt else DEFAULT_FIRST_YEAR
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _classify_payments_cached(payments_tuple: tuple) -> list[ClassifiedPayment]:
-    """Classify a tuple of payments (hashable for caching)."""
-    payments = [Payment.model_validate_json(p) for p in payments_tuple]
-    return _classify_payments_uncached(payments)
-
-
-def _classify_cached(payments: list[Payment]) -> list[ClassifiedPayment]:
-    return _classify_payments_cached(tuple(p.model_dump_json() for p in payments))
-
-
-def get_classified_for_period(
-    year: int,
-    quarter: Optional[int],
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    *,
-    input_mode: Optional[str] = None,
-) -> list[ClassifiedPayment]:
-    """Streamlit-facing wrapper over ``src.payments_loader.get_classified_for_period``,
-    with classification routed through the ``@st.cache_data``-wrapped classifier
-    above so repeated tab renders don't re-run the rules engine."""
-    return _get_classified_for_period(
-        year, quarter, start_date, end_date,
-        input_mode=input_mode, classify_fn=_classify_cached,
-    )
 
 
 def invalidate_cache():

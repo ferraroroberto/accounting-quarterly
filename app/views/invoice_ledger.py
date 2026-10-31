@@ -6,6 +6,7 @@ re-extraction (OCR) never overwrites it.
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 from typing import Optional
 
@@ -77,6 +78,18 @@ def _to_date(value: object) -> Optional[date]:
         return date.fromisoformat(value[:10])
     except ValueError:
         return None
+
+
+def _form_key(invoice_id: str, rec: dict, version: int) -> str:
+    """Widget-key prefix of the edit form, changing whenever the stored record does.
+
+    A keyed widget only takes its ``value=`` on the first render of its key, so the
+    prefix follows the record (a bulk-grid save restamps ``reviewed_at``, a re-extract
+    ``extracted_at``) and the editor version: the form never keeps showing values that
+    "Save & mark reviewed" would then write back over newer ones.
+    """
+    stamp = "|".join(str(rec.get(f)) for f in ("reviewed_at", "extracted_at", "locked_fields"))
+    return f"ledger_{invoice_id}_{hashlib.sha256(stamp.encode()).hexdigest()[:8]}_{version}"
 
 
 def _editor_version() -> int:
@@ -301,7 +314,7 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
         f"🔒 Locked: {', '.join(locked) if locked else 'none'} · "
         f"Reviewed: {rec.get('reviewed_at') or 'never'} · Legacy vat_treatment: {rec.get('vat_treatment') or '—'}"
     )
-    k = f"ledger_{invoice_id}"
+    k = _form_key(invoice_id, rec, _editor_version())
     treatments = [None, *_treatments(direction)]
     reasons = [None, *EXCLUDED_REASONS]
 
@@ -337,6 +350,17 @@ def _render_edit_form(view: pd.DataFrame, records: dict[str, dict], direction: s
     render_register_from_invoice(rec)
 
 
+def _exchange_prefill(inv: Optional[dict]) -> tuple[float, str, float]:
+    """(EUR booked, currency, foreign amount) the exchange-difference form starts from."""
+    if inv is None:
+        return 0.0, "", 0.0
+    return (
+        float(inv.get("eur_received") or inv.get("subtotal_eur") or 0.0),
+        inv.get("original_currency") or "",
+        float(inv.get("original_amount") or 0.0),
+    )
+
+
 def _render_exchange_differences(income_records: list[dict]) -> None:
     """Record a later conversion of a foreign-currency income balance to EUR (D5).
 
@@ -368,36 +392,34 @@ def _render_exchange_differences(income_records: list[dict]) -> None:
     else:
         st.caption("No exchange differences recorded yet.")
 
+    # The selector sits outside the form (a selection inside a form does not rerun) and
+    # the prefilled inputs are keyed by the chosen invoice, so each choice reseeds them.
+    options = [None, *foreign_invoices.keys()]
+    invoice_id = st.selectbox(
+        "Invoice (optional)", options,
+        format_func=lambda i: "— manual / no invoice —" if i is None else (
+            f"{foreign_invoices[i].get('invoice_date') or '?'} · "
+            f"{foreign_invoices[i].get('client_name') or foreign_invoices[i].get('client_nif') or '?'} · "
+            f"{foreign_invoices[i].get('original_amount') or '?'} {foreign_invoices[i].get('original_currency')}"
+        ),
+        key="exchange_diff_invoice",
+    )
+    default_booked, default_currency, default_foreign = _exchange_prefill(foreign_invoices.get(invoice_id))
+    prefill = invoice_id or "manual"
+
     with st.form(key="exchange_diff_form"):
         c1, c2 = st.columns(2)
         with c1:
-            options = [None, *foreign_invoices.keys()]
-            invoice_id = st.selectbox(
-                "Invoice (optional)", options,
-                format_func=lambda i: "— manual / no invoice —" if i is None else (
-                    f"{foreign_invoices[i].get('invoice_date') or '?'} · "
-                    f"{foreign_invoices[i].get('client_name') or foreign_invoices[i].get('client_nif') or '?'} · "
-                    f"{foreign_invoices[i].get('original_amount') or '?'} {foreign_invoices[i].get('original_currency')}"
-                ),
-                key="exchange_diff_invoice",
-            )
-            default_booked = 0.0
-            default_currency = ""
-            default_foreign = 0.0
-            if invoice_id:
-                inv = foreign_invoices[invoice_id]
-                default_booked = float(inv.get("eur_received") or inv.get("subtotal_eur") or 0.0)
-                default_currency = inv.get("original_currency") or ""
-                default_foreign = float(inv.get("original_amount") or 0.0)
             conversion_date = st.date_input("Conversion date", value=date.today(),
                                             min_value=date(2000, 1, 1), format="YYYY-MM-DD",
                                             key="exchange_diff_date")
-            currency = st.text_input("Currency", value=default_currency, key="exchange_diff_currency")
+            currency = st.text_input("Currency", value=default_currency,
+                                     key=f"exchange_diff_currency_{prefill}")
         with c2:
             foreign_amount = st.number_input("Foreign-currency amount converted", value=default_foreign,
-                                             format="%.2f", key="exchange_diff_foreign_amount")
+                                             format="%.2f", key=f"exchange_diff_foreign_amount_{prefill}")
             booked_eur = st.number_input("EUR originally booked", value=default_booked, format="%.2f",
-                                         key="exchange_diff_booked_eur")
+                                         key=f"exchange_diff_booked_eur_{prefill}")
             eur_obtained = st.number_input("EUR actually obtained", value=0.0, format="%.2f",
                                            key="exchange_diff_eur_obtained")
         notes = st.text_input("Notes", value="", key="exchange_diff_notes")

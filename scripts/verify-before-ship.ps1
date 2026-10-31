@@ -101,9 +101,8 @@ Invoke-Stage "comment ratchet" { & $py "scripts/comment_ratchet.py" }
 Invoke-Stage "docstring ratchet" { & $py "scripts/docstring_ratchet.py" }
 # Not path-routed: a rule added to `rules` must see the whole tree. Exit 3 fails here too.
 Invoke-Stage "conventions ratchet" { & $py "scripts/conventions_ratchet.py" }
-# The wrapper maps the script's exit 3 to NOT CONFIRMED (tests/test_docs_ratchet_gate.py
-# pins it); call it, never scripts/docs_ratchet.py directly.
-Invoke-Stage "docs ratchet"  { & $py -m scripts.docs_ratchet_gate }
+# Not path-routed: any README or docs change can add a history marker. Exit 3 fails here too.
+Invoke-Stage "docs ratchet"  { & $py "scripts/docs_ratchet.py" }
 # Invoke-Stage fails on any non-zero exit, so the script's exit 3 (git unusable, an
 # unparseable file, an unknown shape: nothing was checked) is a failure, not a pass.
 Invoke-Stage "structure ratchet" { & $py "scripts/structure_ratchet.py" }

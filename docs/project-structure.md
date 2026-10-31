@@ -17,7 +17,6 @@
 │   ├── clean_invoice_activity_type.py  # One-off: NULL the non-activity values old rows hold in invoices.activity_type (dry run by default, --apply writes)
 │   ├── verify-before-ship.ps1     # Pre-ship gate: byte-compile, static ratchet, comment ratchet, docstring ratchet, conventions ratchet, docs ratchet, structure ratchet, instruction ratchet, doc-refs ratchet, dead-code ratchet, pytest
 │   ├── docs_ratchet.py            # Vendored from project-scaffolding (never edited here): README size + history-marker ratchet
-│   └── docs_ratchet_gate.py       # Gate wrapper: maps the ratchet's exit codes, so exit 3 (not confirmed) fails
 │   ├── structure_ratchet.py       # Vendored from project-scaffolding (never edited here): file-size, function-length, flat-directory, src→app and root-layout ratchet
 │   ├── instruction_ratchet.py     # Vendored from project-scaffolding (never edited here): prompt-audit lint ratchet over CLAUDE.md, AGENTS.md, rules and skills
 │   ├── doc_refs_ratchet.py        # Vendored from project-scaffolding (never edited here): ratchet on README, CLAUDE.md and docs/ references to paths, modules and ports that do not exist
@@ -60,7 +59,7 @@
 │   │   └── modelo_347.py          # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── tax_engine.py              # Tax calendar and snapshot persistence; re-exports each model's compute_* function
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
-│   ├── tax_validator.py           # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
+│   ├── filed_reference.py         # Filed-return loader: imported AEAT receipts first, validation.yaml fallback
 │   ├── reconciliation.py          # Box-by-box filed-vs-app reconciliation, divergence catalogue, markdown export
 │   ├── pl_by_activity.py          # P&L per IAE activity (826/861/751) tied to the Q4 Modelo 130
 │   ├── annual_pack.py             # Annual pack: 390 + 347 + P&L, markdown/CSV export + CLI
@@ -81,10 +80,11 @@
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard
 │   ├── streamlit_app.py           # Entry point: welcome page and horizontal tabs
-│   ├── data_loader.py             # Data loading, FX conversion, classification pipeline
+│   ├── data_loader.py             # First data year and the cache reset for the tabs
 │   ├── flash.py                   # Messages that survive st.rerun
 │   ├── excel_download.py          # Shared Excel export button
 │   ├── year_picker.py             # One year range for every picker
+│   ├── invoice_table.py           # Column list shared by the Explorer and OCR invoice tables
 │   └── views/                     # One module per view, each exposing render()
 │       ├── welcome.py             # Welcome page and the tab guide
 │       ├── quarter_report.py      # Quarterly summary + Excel export

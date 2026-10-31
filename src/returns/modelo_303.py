@@ -30,7 +30,7 @@ from src.tax_data import (
     oss_country_code,
     tax_settings,
 )
-from src.tax_models import AuditEntry, Modelo303Result
+from src.tax_models import RIGHT_TO_DEDUCT_FIELDS, AuditEntry, Modelo303Result
 from src.vat_rules import IVA_ES_RATE, SPANISH_21_TREATMENTS
 
 log = get_logger(__name__)
@@ -56,12 +56,13 @@ log = get_logger(__name__)
 # anteriores" (Mod_303/303_NovedValidCuotasCompensPeriodosAnter.pdf) and the
 # Delsol/Sage 303 guides on 4T refunds.
 
-_RATE_ROWS: dict[float, tuple[str, str]] = {
+RATE_ROWS: dict[float, tuple[str, str]] = {
     4.0: ("c01_base", "c03_cuota"),
     10.0: ("c04_base", "c06_cuota"),
     21.0: ("c07_base", "c09_cuota"),
 }
-_SPANISH_RATES_PCT: tuple[float, ...] = tuple(_RATE_ROWS)
+SPANISH_RATES_PCT: tuple[float, ...] = tuple(RATE_ROWS)
+DEFAULT_SPANISH_RATE_PCT = 21.0
 Q4_NEGATIVE_OPTIONS: tuple[str, ...] = ("compensate", "refund")
 # tax.platform_fee_vat_treatment: self-assess the Stripe application fees
 # as a non-EU reverse charge (default), or leave them out of the 303.
@@ -83,11 +84,8 @@ class _Collected303:
 
     @property
     def with_right_to_deduct(self) -> float:
-        """Art. 104.Dos.1º LIVA numerator: taxed sales + art. 94.Uno.2º operations
-        located abroad that would give the right to deduct (EU B2B, non-EU, OSS)."""
-        a = self.acc
-        return (a["c01_base"] + a["c04_base"] + a["c07_base"] + a["c59_entregas_intracom"]
-                + a["c60_exportaciones"] + a["c120_no_sujetas_localizacion"] + a["oss_base"])
+        """Art. 104.Dos.1º LIVA numerator over the unrounded sums."""
+        return sum(self.acc[f] for f in RIGHT_TO_DEDUCT_FIELDS)
 
     @property
     def full_deductible_vat(self) -> float:
@@ -110,7 +108,14 @@ def _reverse_charge_rate(inv: dict) -> float:
     """Spanish rate self-assessed on a reverse-charge purchase: the invoice's rate
     when it is a Spanish one (4/10/21), otherwise the general 21%."""
     r = _rate_pct(inv.get("iva_rate"))
-    return r if r in _SPANISH_RATES_PCT else IVA_ES_RATE * 100.0
+    return r if r in SPANISH_RATES_PCT else IVA_ES_RATE * 100.0
+
+
+def nearest_spanish_rate(pct: Optional[float]) -> float:
+    """The modelled Spanish rate (4/10/21) closest to ``pct``; 21 when unknown or ≤ 0."""
+    if pct is None or pct <= 0:
+        return DEFAULT_SPANISH_RATE_PCT
+    return min(SPANISH_RATES_PCT, key=lambda x: abs(x - pct))
 
 
 def _sale_rate_row(inv: dict, base: float, vat: float) -> tuple[str, str]:
@@ -118,10 +123,7 @@ def _sale_rate_row(inv: dict, base: float, vat: float) -> tuple[str, str]:
     r = _rate_pct(inv.get("iva_rate"))
     if r is None and base and vat:
         r = abs(vat / base) * 100.0
-    if r is None:   # no rate and no VAT to infer it from: the general rate
-        return _RATE_ROWS[21.0]
-    nearest = min(_SPANISH_RATES_PCT, key=lambda x: abs(x - r))
-    return _RATE_ROWS[nearest]
+    return RATE_ROWS[nearest_spanish_rate(r)]
 
 
 def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
@@ -183,7 +185,7 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
         if tt == "ES_21":
             base_f, cuota_f = _sale_rate_row(inv, base, vat)
         elif tt == "EU_B2C_ES21":
-            base_f, cuota_f = _RATE_ROWS[21.0]
+            base_f, cuota_f = RATE_ROWS[DEFAULT_SPANISH_RATE_PCT]
         elif tt == "EU_B2B":
             base_f, cuota_f = "c59_entregas_intracom", None
         elif tt == "NON_EU_NOT_SUBJECT":

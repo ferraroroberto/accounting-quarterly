@@ -28,7 +28,7 @@ def _gate_stage_lines() -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("name", ["static", "comment", "conventions"])
+@pytest.mark.parametrize("name", ["static", "comment", "conventions", "docs"])
 def test_the_gate_runs_the_script_directly_on_the_whole_tree(name):
     script = f"{name}_ratchet.py"
     stages = [line for line in _gate_stage_lines() if script in line]
@@ -43,7 +43,7 @@ def test_invoke_stage_fails_on_any_non_zero_exit():
     assert not re.search(r"\$LASTEXITCODE\s+-eq\s+[123]\b", gate)
 
 
-@pytest.mark.parametrize("name", ["static", "comment", "conventions"])
+@pytest.mark.parametrize("name", ["static", "comment", "conventions", "docs"])
 def test_the_script_is_vendored_and_enabled(name):
     config = tomllib.loads((REPO_ROOT / ".fleet.toml").read_text(encoding="utf-8"))
     entry = config["vendored"][f"{name}_ratchet"]

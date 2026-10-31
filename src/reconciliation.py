@@ -2,7 +2,7 @@
 
 For one model (303 / 130 / 349 / 390) and period this module lines up every
 box of the filed return (``src/filed_returns.py``, with ``validation.yaml`` as
-fallback via ``src/tax_validator.py``) against the box the app computes, and
+fallback via ``src/filed_reference.py``) against the box the app computes, and
 gives each row a status:
 
 - ✅ ``exact``        filed and app agree within €0.01.
@@ -51,7 +51,7 @@ from src.returns.modelo_303 import compute_modelo_303
 from src.returns.modelo_349 import compute_modelo_349
 from src.tax_data import load_app_config
 from src.tax_models import BOX_LABELS as _CANONICAL_BOX_LABELS
-from src.tax_validator import find_filing, load_filings
+from src.filed_reference import find_filing, load_reference_filings
 
 log = get_logger(__name__)
 
@@ -504,7 +504,7 @@ def _filed_side(filing: dict, model: str) -> tuple[dict[str, float], bool, list[
 def list_filed_periods(conn: Optional[sqlite3.Connection]) -> list[tuple[str, int, Optional[int]]]:
     """(model, year, quarter) of every filed return known to the validator loader."""
     out = []
-    for f in load_filings(conn):
+    for f in load_reference_filings(conn):
         key = (str(f.get("model")), int(f.get("year", 0)), f.get("quarter"))
         if key[0] in MODELS and key not in out:
             out.append(key)
@@ -533,7 +533,7 @@ def reconcile(
     if config is None:
         config = load_app_config()
 
-    filing = find_filing(load_filings(conn), model, year, quarter)
+    filing = find_filing(load_reference_filings(conn), model, year, quarter)
     filed_boxes: Optional[dict[str, float]] = None
     filed_complete, filed_ops = True, []
     if filing is not None:

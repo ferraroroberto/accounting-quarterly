@@ -22,7 +22,7 @@ flowchart TB
     DECLARED["declared_reports.py\nfrozen sent reports (immutable EUR amounts)"]
     OCR["invoice_ocr.py\nlocal-llm-hub only (gemini_pro alias)"]
     INGEST["invoice_ingest.py\nOCR -> FX -> vendor registry -> DB save path\n(hash-based new/changed detection)"]
-    PAYMENTSLOADER["payments_loader.py\nperiod loading, FX conversion, classification\n(CLI-facing; app/data_loader.py adds @st.cache_data)"]
+    PAYMENTSLOADER["payments_loader.py\nperiod loading, FX conversion, classification\n(shared by the tabs, the CLI and the close pipeline)"]
     SCANNER["invoice_scanner.py\ninvoice folder resolution + recursive PDF scan"]
     RELINK["relink.py\nre-point invoice records after PDFs move or rename\n(move record, then content hash; unmatched/ambiguous reported)"]
     PIPELINE["close_pipeline.py + close/ (context, gestor_pack)\nquarter-close steps: sweep, ocr, vendors, dedupe, fx,\nstripe, reta, compute, reconcile, sheet, gestor pack, archive\n(idempotent, each reports its changes)"]
@@ -45,7 +45,7 @@ flowchart TB
     TAXCODES["tax_codes.py\nEU VAT prefixes, NIF→geo, tax_treatment values and mappings"]
     TAXDATA["tax_data.py\nconfig plumbing, record loaders, activity-start floor, per-row VAT figures"]
     SNAPSHOTCODEC["tax_snapshot_codec.py\nserialize engine output"]
-    TAXVALIDATOR["tax_validator.py\nfiled-return loader (receipts, yaml fallback)"]
+    FILEDREFERENCE["filed_reference.py\nfiled-return loader (receipts, yaml fallback)"]
     FILEDRETURNS["filed_returns.py\nAEAT receipt PDFs -> filed boxes (pdfplumber) + CLI"]
     FIXEDASSETS["fixed_assets.py\ndepreciation (simplified table), 130 hook,\nVAT capital goods 303 30/31 + regularisation"]
     RECONCILIATION["reconciliation.py\nfiled vs app per AEAT box + 349 operators,\ndivergence catalogue, markdown export"]
@@ -67,8 +67,8 @@ shared by the filing sheet and the Obligations calendar"]
   end
 
   subgraph ui["app/ — Streamlit dashboard\n(streamlit_app.py: entry point, tab routing; views in app/views/)"]
-    LOADER["data_loader.py"]
-    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export) ·\nyear_picker.py (one year range for every picker)"]
+    LOADER["data_loader.py\nfirst data year, cache reset"]
+    UIHELPERS["flash.py (messages that survive st.rerun) ·\nexcel_download.py (shared Excel export) ·\nyear_picker.py (one year range for every picker) ·\ninvoice_table.py (invoice table columns shared by Explorer and OCR)"]
     REPORTTABS["quarter_report · transaction_browser ·\nhistory · currency · configuration"]
     INVTABS["invoice_upload · invoice_ocr (FX resolution at ingestion) ·\ninvoice_ledger (exchange differences form) ·\ninvoice_dedupe · invoice_explorer · vendor_registry ·\nfixed_assets"]
     SSTAB["social_security"]
@@ -142,14 +142,14 @@ shared by the filing sheet and the Obligations calendar"]
   MODELS --> TAXCODES
   CLASSIFIER --> TAXCODES
   SNAPSHOTCODEC --> TAXMODELS
-  TAXVALIDATOR --> FILEDRETURNS
+  FILEDREFERENCE --> FILEDRETURNS
   FILEDRETURNS --> DB
   MODELS --> FIXEDASSETS
   MODELS -->|303 box 110 from filed 87 + 72| FILEDRETURNS
   MODELS -->|349 key I: vendor VAT id + legal name| VENDORS
   FIXEDASSETS --> DBFILE
   RECONCILIATION --> MODELS
-  RECONCILIATION --> TAXVALIDATOR
+  RECONCILIATION --> FILEDREFERENCE
   RECONCILIATION --> MODELO390
   MODELO390 --> MODELS
   ANNUALPACK --> MODELO390
@@ -160,12 +160,12 @@ shared by the filing sheet and the Obligations calendar"]
   FILINGSHEET -->|result_boxes / operators| RECONCILIATION
   FILINGSHEET -->|versioned snapshots| DB
 
-  LOADER --> PAYMENTSLOADER
   PAYMENTSLOADER --> DB
   PAYMENTSLOADER --> CLASSIFIER
   PAYMENTSLOADER --> STRIPECLIENT
   PAYMENTSLOADER --> FX
   REPORTTABS --> LOADER
+  REPORTTABS --> PAYMENTSLOADER
   REPORTTABS --> AGGEXPORT
   INVTABS --> INGEST
   INVTABS --> VENDORS

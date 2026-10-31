@@ -55,3 +55,16 @@ def test_extract_new_button_saves_the_invoice(ocr_env):
     assert not at.exception, f"Invoice OCR tab raised: {at.exception}"
     rows = get_invoices(db_path=ocr_env)
     assert [(r["filename"], r["total_eur"]) for r in rows] == [("inv-001.pdf", 121.0)]
+
+
+def test_invoice_display_frame_is_the_shared_table_shape():
+    """Explorer and OCR tables share one column list; OCR keeps `id` first for row mapping."""
+    import pandas as pd
+
+    from app.invoice_table import INVOICE_TABLE_COLUMNS, invoice_display_frame
+
+    df = pd.DataFrame([{"id": 7, "direction": "in", "extracted_at": "2025-01-01", "unlisted": 1}])
+    plain = invoice_display_frame(df)
+    assert list(plain.columns) == ["direction", "date_scanned"]
+    assert list(invoice_display_frame(df, with_id=True).columns) == ["id", "direction", "date_scanned"]
+    assert "id" not in INVOICE_TABLE_COLUMNS

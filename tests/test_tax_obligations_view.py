@@ -89,3 +89,35 @@ def test_save_computed_button_keeps_a_filed_period_filed(db_path, monkeypatch):
     assert [w.value for w in at.warning] == [
         "Modelo 303 Q1 is already filed — status left unchanged."
     ]
+
+
+def _calendar_tab() -> None:
+    from app.views.tax_obligations import _render_tax_calendar
+
+    _render_tax_calendar(2025)
+
+
+def test_calendar_marks_filed_only_where_no_filing_sheet_exists(db_path, monkeypatch):
+    """303/130/349 are filed through the Filing Sheet (frozen snapshot); the calendar button stays for the rest."""
+    import app.views.tax_obligations as tab
+    import src.tax_engine as engine
+
+    monkeypatch.setattr(tab, "_get_conn", lambda: get_connection(db_path))
+    monkeypatch.setattr(engine, "load_app_config", lambda: {"tax": {"oss_registered": True}})
+
+    at = AppTest.from_function(_calendar_tab).run()
+    assert not at.exception, at.exception
+    keys = {b.key for b in at.button}
+    assert not any(k.startswith(("file_303_", "file_130_", "file_349_")) for k in keys)
+    assert {"file_390_annual_2025", "file_347_annual_2025", "file_OSS_1_2025"} <= keys
+
+
+def test_calendar_lists_oss_returns_only_when_registered(db_path):
+    conn = get_connection(db_path)
+    try:
+        without = {d.model for d in get_tax_calendar(YEAR, db_conn=conn, config={"tax": {}})}
+        with_oss = {d.model for d in get_tax_calendar(YEAR, db_conn=conn, config={"tax": {"oss_registered": True}})}
+    finally:
+        conn.close()
+    assert "OSS" not in without
+    assert "OSS" in with_oss

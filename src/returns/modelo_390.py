@@ -51,14 +51,21 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from src.logger import get_logger
-from src.returns.modelo_303 import compute_modelo_303, prorrata_pct
+from src.returns.modelo_303 import (
+    DEFAULT_SPANISH_RATE_PCT,
+    RATE_ROWS,
+    SPANISH_RATES_PCT,
+    compute_modelo_303,
+    nearest_spanish_rate,
+    prorrata_pct,
+)
 from src.tax_data import load_app_config
 from src.tax_models import AuditEntry, Modelo303Result
 
 log = get_logger(__name__)
 
-RATES: tuple[float, ...] = (4.0, 10.0, 21.0)
-DEFAULT_RATE = 21.0
+RATES = SPANISH_RATES_PCT
+DEFAULT_RATE = DEFAULT_SPANISH_RATE_PCT
 
 # (base box, cuota box) per rate, per section — AEAT instr390, section 5.
 DEVENGADO_ORDINARIO: dict[float, tuple[str, str]] = {4.0: ("01", "02"), 10.0: ("03", "04"), 21.0: ("05", "06")}
@@ -153,19 +160,12 @@ class Modelo390Result:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _nearest_rate(pct: Optional[float]) -> float:
-    """The modelled Spanish rate closest to ``pct`` (21 % when unknown)."""
-    if pct is None or pct <= 0:
-        return DEFAULT_RATE
-    return min(RATES, key=lambda r: abs(r - pct))
-
-
 def _rate_of(amount_vat: Any, amount_base: Any) -> float:
     try:
         base, vat = float(amount_base or 0.0), float(amount_vat or 0.0)
     except (TypeError, ValueError):
         return DEFAULT_RATE
-    return _nearest_rate(abs(vat / base) * 100.0) if base else DEFAULT_RATE
+    return nearest_spanish_rate(abs(vat / base) * 100.0) if base else DEFAULT_RATE
 
 
 def _rate_of_record(rec: dict) -> tuple[float, bool, Optional[float]]:
@@ -180,7 +180,7 @@ def _rate_of_record(rec: dict) -> tuple[float, bool, Optional[float]]:
     raw = rec.get("iva_rate")
     if raw is not None:
         pct = _f(raw)
-        return _nearest_rate(pct), False, pct
+        return nearest_spanish_rate(pct), False, pct
     return _rate_of(rec.get("iva_amount"), rec.get("subtotal_eur")), True, None
 
 
@@ -208,12 +208,12 @@ def _f(v: Any) -> float:
 def _weights_interiores(rec: dict) -> tuple:
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
     if rec.get("source") == "manual_entry":
-        return _nearest_rate(rec.get("vat_rate")), _f(rec.get("base")), _f(rec.get("cuota"))
+        return nearest_spanish_rate(rec.get("vat_rate")), _f(rec.get("base")), _f(rec.get("cuota"))
     if rec.get("source") == "platform_fee":   # Stripe application fee, NON_EU_RC deducted at 100%
         fee, rate = _f(rec.get("fee_application")), _f(rec.get("rate_pct"))
-        return _nearest_rate(rate), fee, fee * rate / 100.0
+        return nearest_spanish_rate(rate), fee, fee * rate / 100.0
     if "rate_pct" in rec:   # NON_EU_RC self-assessed, deducted with the current domestic operations
-        return _nearest_rate(_f(rec["rate_pct"])), _f(rec.get("subtotal_eur")) * pct, _f(rec.get("deductible_cuota"))
+        return nearest_spanish_rate(_f(rec["rate_pct"])), _f(rec.get("subtotal_eur")) * pct, _f(rec.get("deductible_cuota"))
     rate, fallback, raw = _rate_of_record(rec)
     return rate, _f(rec.get("subtotal_eur")) * pct, _f(rec.get("c29_cuota")), fallback, raw
 
@@ -228,12 +228,12 @@ def _weights_inversion(rec: dict) -> tuple:
 
 
 def _weights_aic_devengado(rec: dict) -> tuple[float, float, float]:
-    return _nearest_rate(_f(rec.get("rate_pct"))), _f(rec.get("subtotal_eur")), _f(rec.get("self_assessed_cuota"))
+    return nearest_spanish_rate(_f(rec.get("rate_pct"))), _f(rec.get("subtotal_eur")), _f(rec.get("self_assessed_cuota"))
 
 
 def _weights_aic_deducible(rec: dict) -> tuple[float, float, float]:
     pct = _f(rec.get("deductible_pct_vat", 100.0)) / 100.0
-    return (_nearest_rate(_f(rec.get("rate_pct"))), _f(rec.get("subtotal_eur")) * pct,
+    return (nearest_spanish_rate(_f(rec.get("rate_pct"))), _f(rec.get("subtotal_eur")) * pct,
             _f(rec.get("deductible_cuota")))
 
 
@@ -419,8 +419,7 @@ def _fill_prorrata(
     result: Modelo390Result, b: dict[str, float], qs: list[Modelo303Result], notes: list[str], year: int,
 ) -> None:
     """Section 12 (general pro-rata) when exempt operations exist and the pro-rata is enabled."""
-    with_right = sum(r.c01_base + r.c04_base + r.c07_base + r.c59_entregas_intracom + r.c60_exportaciones
-                     + r.c120_no_sujetas_localizacion + r.oss_base for r in qs)
+    with_right = sum(r.with_right_to_deduct for r in qs)
     exempt = sum(r.exempt_base for r in qs)
     q4 = qs[3]
     if exempt > 0 and q4.prorrata_enabled:
@@ -468,8 +467,7 @@ def compute_modelo_390(
 
     # --- IVA devengado ------------------------------------------------------
     for rate, (fb, fc) in DEVENGADO_ORDINARIO.items():
-        base_f, cuota_f = {4.0: ("c01_base", "c03_cuota"), 10.0: ("c04_base", "c06_cuota"),
-                           21.0: ("c07_base", "c09_cuota")}[rate]
+        base_f, cuota_f = RATE_ROWS[rate]
         b[fb] = _qsum(fb, lambda r, n=base_f: getattr(r, n))
         b[fc] = _qsum(fc, lambda r, n=cuota_f: getattr(r, n))
 

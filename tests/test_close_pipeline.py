@@ -18,7 +18,7 @@ import pytest
 import src.database.connection as db_connection
 import src.fx_rates as fx_rates
 import src.invoice_ingest as invoice_ingest
-import src.tax_validator as tax_validator
+import src.filed_reference as filed_reference
 from src import close_pipeline as cp
 from src.classifier import classify_payment
 from src.close_pipeline import CloseContext, StepResult
@@ -39,7 +39,7 @@ YEAR, QUARTER = 2025, 1
 def ctx(tmp_path, monkeypatch, sample_rules) -> CloseContext:
     db = tmp_path / "accounting.db"
     monkeypatch.setattr(db_connection, "_DB_PATH", db)  # safety net: nothing may reach the real DB
-    monkeypatch.setattr(tax_validator, "_YAML_PATH", tmp_path / "no-validation.yaml")
+    monkeypatch.setattr(filed_reference, "_YAML_PATH", tmp_path / "no-validation.yaml")
     init_db(db)
     inv_in, inv_out = tmp_path / "invoices" / "in", tmp_path / "invoices" / "out"
     inv_in.mkdir(parents=True)
@@ -386,6 +386,20 @@ def test_reta_imports_once(ctx, tmp_path):
     assert first.changes == ["imported 3 RETA payment(s) from bank_export.csv"]
     assert any("300.00 EUR (3 payment(s))" in line for line in first.info)
     _assert_noop(cp.step_reta(ctx, export))
+
+
+def test_reta_honours_configured_sheet_and_header_row(ctx, tmp_path):
+    """The RETA step reads the sheet and header row the Social Security tab is configured with."""
+    import pandas as pd
+
+    export = tmp_path / "bank_export.xlsx"
+    rows = [["Informe", None], ["Fecha", "Importe"], ["31/01/2025", "-100,00"]]
+    with pd.ExcelWriter(export) as writer:
+        pd.DataFrame([["decoy", "decoy"]]).to_excel(writer, sheet_name="Cover", header=False, index=False)
+        pd.DataFrame(rows).to_excel(writer, sheet_name="Movimientos", header=False, index=False)
+    ctx.config["social_security"] = {"sheet_name": "Movimientos", "skiprows": 1}
+    res = cp.step_reta(ctx, export)
+    assert res.changes == ["imported 1 RETA payment(s) from bank_export.xlsx"]
 
 
 # ---------------------------------------------------------------------------

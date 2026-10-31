@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.flash import flash, show_flash
+from app.invoice_table import invoice_display_frame
 from src.config import load_config
 from src.database import (
     clear_invoices,
@@ -256,20 +257,7 @@ def _render_all_records(all_invoices: list[dict]) -> None:
     if not all_invoices:
         st.info("No invoices extracted yet.")
     else:
-        display_cols = [
-            "id", "direction", "filename", "extracted_at", "invoice_date",
-            "invoice_type", "vendor_name", "vendor_nif",
-            "client_name", "client_nif", "description",
-            "subtotal_eur", "iva_rate", "iva_amount",
-            "irpf_rate", "irpf_amount", "total_eur",
-            "currency", "category", "payment_method",
-            "supply_date", "due_date", "tax_treatment",
-            "deductible_pct_vat", "deductible_pct_irpf", "excluded", "excluded_reason",
-            "is_rectificativa", "vat_exempt_reason", "notes",
-        ]
-        df = pd.DataFrame(all_invoices)
-        visible = [c for c in display_cols if c in df.columns]
-        df_display = df[visible].rename(columns={"extracted_at": "date_scanned"})
+        df_display = invoice_display_frame(pd.DataFrame(all_invoices), with_id=True)
 
         # Row-selection dataframe (Streamlit ≥ 1.35)
         event = st.dataframe(

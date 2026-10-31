@@ -270,57 +270,23 @@ def _match_vat_id_override(
     return None
 
 
-def _vat_id_from_raw_customer(payment: Payment) -> Optional[str]:
-    """Read-only fallback: a Stripe ``customer.tax_ids`` VAT id already present
-    in the stored raw charge JSON.
-
-    ``src.stripe_client.fetch_charges`` does not currently expand
-    ``data.customer.tax_ids``, so this is a no-op for data fetched today —
-    kept so the id is picked up automatically if that expand is ever added,
-    or for raw sources populated by another path. Returns the first tax id's
-    ``value`` (e.g. ``"DE123456789"``), or ``None``.
-    """
-    raw = payment.raw_source or {}
-    customer = raw.get("customer")
-    if not isinstance(customer, dict):
-        return None
-    tax_ids = customer.get("tax_ids")
-    if isinstance(tax_ids, dict):
-        entries = tax_ids.get("data")
-    elif isinstance(tax_ids, list):
-        entries = tax_ids
-    else:
-        entries = None
-    for entry in entries or []:
-        if isinstance(entry, dict) and entry.get("value"):
-            return str(entry["value"]).strip()
-    return None
-
-
 def customer_vat_id(payment: Payment, rules: Optional[dict] = None) -> Optional[str]:
     """Return the buyer's EU VAT id for a payment, or ``None`` when unknown.
 
     Determines B2B vs. B2C for EU (non-Spain) sales: a sale to a
     customer with a known VAT id is business-to-business
     (reverse charge, Modelo 349 key S); otherwise it is treated as a
-    consumer sale. Looked up in order:
-
-    1. A per-customer override in ``classification_rules.json``'s
-       ``customer_vat_ids`` (email match first, then name/description match —
-       see :func:`_match_vat_id_override`).
-    2. A Stripe ``customer.tax_ids`` entry already present in the stored raw
-       charge JSON (:func:`_vat_id_from_raw_customer`) — a read-only
-       fallback, since the id is not requested by the Stripe fetch today.
+    consumer sale. The id comes from a per-customer override in ``classification_rules.json``'s
+    ``customer_vat_ids`` (email match first, then name/description match —
+    see :func:`_match_vat_id_override`). The Stripe fetch does not request the
+    customer's ``tax_ids``, so Stripe data never supplies an id.
 
     VIES validity of the id is not checked — out of scope here.
     """
     rules = rules or load_rules()
-    override = _match_vat_id_override(
+    return _match_vat_id_override(
         payment.description, payment.email_meta, rules.get("customer_vat_ids", {})
     )
-    if override:
-        return override
-    return _vat_id_from_raw_customer(payment)
 
 
 def classify_payment(payment: Payment, rules: Optional[dict] = None) -> ClassifiedPayment:

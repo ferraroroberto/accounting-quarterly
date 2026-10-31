@@ -55,7 +55,7 @@ The treatment of a Stripe charge is derived from activity × geography × custom
 
 ### 2.3 EU businesses: reverse charge only with a VAT id (box 59, Modelo 349 key S)
 
-**Rule.** A sale to an EU (non-Spanish) customer is B2B (`IVA_EU_B2B` / `EU_B2B`: no Spanish VAT, box 59, Modelo 349 key `S`) **only** when the customer's VAT id is known: from `classification_rules.json → customer_vat_ids` (email or name override), from the invoice's `client_nif`, or from a Stripe `customer.tax_ids` already stored. Without an id the sale is B2C (2.2), whatever the activity. The app does not check the id against VIES.
+**Rule.** A sale to an EU (non-Spanish) customer is B2B (`IVA_EU_B2B` / `EU_B2B`: no Spanish VAT, box 59, Modelo 349 key `S`) **only** when the customer's VAT id is known: from `classification_rules.json → customer_vat_ids` (email or name override) or from the invoice's `client_nif`. Without an id the sale is B2C (2.2), whatever the activity. The app does not check the id against VIES.
 
 **Legal basis.** B2B services are located where the business customer is established (art. 69.Uno.1º LIVA), so they are not subject to Spanish VAT. The supplier may treat an EU customer as a business when the customer has given its VAT identification number and the supplier has confirmed its validity, e.g. in VIES (art. 18.1.a Council Implementing Regulation (EU) 282/2011). Box 59 is labelled "Entregas intracomunitarias de bienes y servicios" (intra-EU supplies of goods, exempt under art. 25 LIVA, which also require the buyer's VAT id; and services to EU businesses). The Modelo 349 declares them under key `S` (Orden EHA/769/2010).
 

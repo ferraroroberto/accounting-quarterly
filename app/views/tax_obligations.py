@@ -21,6 +21,7 @@ from src.database import (
 )
 from src.declared_reports import get_declared_report
 from src.returns.oss_return import compute_eu_b2c_threshold
+from src.tax_deadlines import SHEET_MODELS
 from src.tax_engine import compute_and_persist_tax_snapshots, get_tax_calendar
 from src.tax_snapshot_codec import decode_snapshot
 from src.tax_models import (
@@ -114,16 +115,18 @@ def _render_tax_calendar(year: int) -> None:
         cols[3].markdown(f"{_STATUS_COLOURS.get(dl.status, '⚪')} {dl.status}")
         cols[4].markdown(_fmt_eur(dl.amount_eur))
 
-        if dl.status != "FILED":
-            if cols[5].button("Mark Filed", key=f"file_{key_base}"):
-                upsert_filing_status(
-                    year=year, model=dl.model, quarter=dl.quarter,
-                    status="FILED", amount_eur=dl.amount_eur,
-                    filed_at=datetime.now().isoformat(),
-                )
-                st.rerun()
-        else:
+        if dl.status == "FILED":
             cols[5].markdown("✅ Filed")
+        elif dl.model in SHEET_MODELS:
+            # Only the Filing Sheet freezes the FILED snapshot and records the justificante.
+            cols[5].caption("Mark filed in Filing Sheet")
+        elif cols[5].button("Mark Filed", key=f"file_{key_base}"):
+            upsert_filing_status(
+                year=year, model=dl.model, quarter=dl.quarter,
+                status="FILED", amount_eur=dl.amount_eur,
+                filed_at=datetime.now().isoformat(),
+            )
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------

@@ -40,8 +40,7 @@ GIT_TIMEOUT_S = 120
 
 EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 
-# Vendor-verbatim module: derives the flag locally (the shared `src/no_window.py`
-# would not resolve in a consumer tree), the documented exception.
+# Vendor-verbatim: derives the flag locally, as `src/no_window.py` would not resolve in a consumer tree.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 _CONFIG_KEYS = {"enabled", "baseline", "skill_dirs", "extra_files"}
@@ -973,11 +972,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
               "cap, move scoped detail into a skill, rule or referenced doc (an @import does not shrink it); or "
               "(reviewed) raise the baseline with `--update-baseline --allow-additions`.")
         return EXIT_RISE
-    print(f"instruction ratchet: PASS ({_total(current)} hit(s) in {len(current)} of {scan.files} file(s), "
-          "none above the baseline)")
+    print(f"instruction ratchet: PASS ({_total(current)} hit(s) in {len(current)} of {scan.files} file(s), none above the baseline)")
     if shrank:
-        print(f"  {len(shrank)} file(s) are below the baseline -- run "
-              "`python scripts/instruction_ratchet.py --update-baseline` to lower it")
+        print(f"  {len(shrank)} file(s) are below the baseline -- run `python scripts/instruction_ratchet.py --update-baseline` to lower it")
     return EXIT_PASS
 
 
@@ -997,4 +994,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Reports contain non-ASCII (e.g. "→"); a cp1252 console would otherwise crash after the verdict.
+    for _stream in (sys.stdout, sys.stderr):
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # real console streams are TextIOWrapper
     sys.exit(main())

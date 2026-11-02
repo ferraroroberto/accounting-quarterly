@@ -992,4 +992,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Reports contain non-ASCII (e.g. "→"); a cp1252 console would otherwise crash after the verdict.
+    for _stream in (sys.stdout, sys.stderr):
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # real console streams are TextIOWrapper
     sys.exit(main())

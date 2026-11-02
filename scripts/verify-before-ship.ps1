@@ -53,7 +53,13 @@
                          the repo refers to, beyond .dead-code-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
-      10. pytest       - the unit suite
+      10. runtime write ratchet - a Python write target resolving under a code
+                         folder, beyond .runtime-write-ratchet-baseline.json, fails;
+                         a new target it cannot resolve is exit 3 (not confirmed),
+                         which fails, never a pass. Runs after the conventions ratchet.
+      11. pytest       - the unit suite, bracketed by the runtime write probe
+                         (--snapshot before, --probe after): any untracked or ignored
+                         file the tests left under a code folder fails
 
     Anchors to the repo root, so run it from anywhere:
         & .\scripts\verify-before-ship.ps1
@@ -101,6 +107,7 @@ Invoke-Stage "comment ratchet" { & $py "scripts/comment_ratchet.py" }
 Invoke-Stage "docstring ratchet" { & $py "scripts/docstring_ratchet.py" }
 # Not path-routed: a rule added to `rules` must see the whole tree. Exit 3 fails here too.
 Invoke-Stage "conventions ratchet" { & $py "scripts/conventions_ratchet.py" }
+Invoke-Stage "runtime write ratchet" { & $py "scripts/runtime_write_ratchet.py" }
 # Not path-routed: any README or docs change can add a history marker. Exit 3 fails here too.
 Invoke-Stage "docs ratchet"  { & $py "scripts/docs_ratchet.py" }
 # Invoke-Stage fails on any non-zero exit, so the script's exit 3 (git unusable, an
@@ -113,7 +120,12 @@ Invoke-Stage "instruction ratchet" { & $py "scripts/instruction_ratchet.py" }
 Invoke-Stage "doc-refs ratchet" { & $py "scripts/doc_refs_ratchet.py" }
 # Not path-routed: deleting the last caller in one file strands a definition in another.
 Invoke-Stage "dead-code ratchet" { & $py "scripts/dead_code_ratchet.py" }
+# Runtime write probe, first half: what already sits untracked or ignored under
+# the code folders, so the probe after the tests names only what they wrote.
+$runtimeSnapshot = Join-Path ([IO.Path]::GetTempPath()) "runtime-write-snapshot-$PID.json"
+Invoke-Stage "runtime write probe (snapshot)" { & $py "scripts/runtime_write_ratchet.py" --snapshot $runtimeSnapshot }
 Invoke-Stage "pytest"        { & $py -m pytest }
+Invoke-Stage "runtime write probe" { & $py "scripts/runtime_write_ratchet.py" --probe $runtimeSnapshot }
 
 Write-Host ""
 Write-Host "[PASS] all checks green - safe to ship." -ForegroundColor Green

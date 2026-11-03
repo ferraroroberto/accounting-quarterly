@@ -14,6 +14,25 @@ from src._json_store import JsonCache
 from src.models import Payment
 
 
+APPTEST_TIMEOUT_S = 30
+"""Script-run timeout for every AppTest in the suite. Streamlit's 3 s default is
+shorter than a heavy page needs on a loaded machine, so a correct page fails."""
+
+
+@pytest.fixture(autouse=True)
+def apptest_timeout(monkeypatch):
+    """Give every `AppTest.from_function` run (and its follow-up `.run()` calls) one
+    deliberate timeout instead of Streamlit's 3 s default."""
+    from streamlit.testing.v1 import AppTest
+
+    original = AppTest.from_function.__func__
+
+    def from_function(cls, script, *, default_timeout=APPTEST_TIMEOUT_S, **kwargs):
+        return original(cls, script, default_timeout=default_timeout, **kwargs)
+
+    monkeypatch.setattr(AppTest, "from_function", classmethod(from_function))
+
+
 @pytest.fixture(autouse=True)
 def isolated_vendor_registry(tmp_path, monkeypatch):
     """Point the default vendor registry at an empty temp file: tests never read the

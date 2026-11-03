@@ -224,3 +224,11 @@ def test_transaction_browser_raw_table_uses_native_row_selection(monkeypatch):
     assert len(at.dataframe) == 1
     assert any("Select a row above" in c.value for c in at.caption)
     assert not at.get("data_editor")
+
+
+def test_apptest_runs_use_the_suite_timeout():
+    """#258: AppTest runs carry the deliberate suite timeout, not Streamlit's 3 s default."""
+    from tests.conftest import APPTEST_TIMEOUT_S
+
+    assert APPTEST_TIMEOUT_S > 3
+    assert AppTest.from_function(_browser_page).default_timeout == APPTEST_TIMEOUT_S

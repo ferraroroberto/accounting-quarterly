@@ -7,6 +7,7 @@ icon        = "💳"
 description = "Stripe payments → quarterly reports."
 tag         = ["→", "Stripe"]
 shape       = "streamlit"
+depends_on  = ["local-llm-hub"]
 # logs/ keeps a tracked .gitkeep so the runtime log folder exists in a fresh clone
 # (src/logger.py also creates it on first use); its contents are git-ignored.
 extra_roots = ["logs"]

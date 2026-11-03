@@ -24,6 +24,8 @@ LAYOUT_DOC = "project-scaffolding docs/repo-layout.md"
 #: Root folders every shape allows, besides hidden ones (`.github`, `.claude`, ...).
 ALWAYS_ALLOWED = ("docs",)
 DEFAULT_LAYERS = (("src", "app"),)
+#: The file that makes a folder a surface package: its own app and listener.
+SURFACE_ENTRY = "server.py"
 
 
 @dataclass(frozen=True)
@@ -32,12 +34,15 @@ class Shape:
 
     `homes` is the second-level contract: path patterns where files under `home_roots` may live.
     A pattern ending in `/` is a folder and everything below it; `dir/*.py` is a file directly in `dir`.
+    `surface_parents` are folders whose direct subfolder holding a `SURFACE_ENTRY` file is a home too:
+    a second, separately bound HTTP surface, whose isolation boundary is that package.
     """
 
     required: tuple[str, ...]
     allowed: tuple[str, ...]
     layers: tuple[tuple[str, str], ...] = ()
     homes: tuple[str, ...] = ()
+    surface_parents: tuple[str, ...] = ()
 
     @property
     def home_roots(self) -> frozenset[str]:
@@ -51,12 +56,13 @@ SHAPES = {
     "webapp-tray": Shape(
         ("app", "src", "tests", "docs"), ("scripts", "data", "brand", "assets", "config", "webapp"), DEFAULT_LAYERS,
         ("app/*.py", "app/cli/", "app/tray/", "app/webapp/*.py", "app/webapp/routers/", "app/webapp/static/", "src/"),
+        ("app/webapp",),
     ),
     "streamlit": Shape(("app", "src", "tests"), ("scripts", "data", "brand", "config"), DEFAULT_LAYERS),
     "pipeline-cli": Shape(("tests",), ("src", "common", "scripts", "config", "data")),
     "skills-governance": Shape(("skills", "tests"), ("hooks", "scripts", "architecture")),
     "node": Shape(("src",), ("test", "scripts")),
-    "static-site": Shape((), ("css", "js", "assets", "games")),
+    "static-site": Shape((), ("css", "js", "assets", "games", "content", "site", "scripts")),
     "agent-workspace": Shape((), ("scripts",)),
     # No layer pair: the service in src/ mounts its admin app, so src imports app_web by design.
     "service": Shape(("src", "tests", "app_web", "tray"), ("scripts", "config", "launchers", "assets")),
@@ -111,12 +117,26 @@ def _in_home(path: str, home: str) -> bool:
     return path.startswith(folder + "/") and "/" not in name and fnmatch.fnmatchcase(name, pattern)
 
 
+def surface_packages(paths: list[str], shape_id: str) -> frozenset[str]:
+    """Folders directly under a surface parent that track their own `SURFACE_ENTRY`."""
+    parents = SHAPES[shape_id].surface_parents
+    found = set()
+    for path in paths:
+        folder, _, name = path.rpartition("/")
+        if name == SURFACE_ENTRY and str(PurePosixPath(folder).parent) in parents:
+            found.add(folder)
+    return frozenset(found)
+
+
 def misplaced(paths: list[str], shape_id: str) -> dict[str, int]:
     """Files under a home root that sit in no home, counted per folder (empty when the shape has no homes)."""
     shape = SHAPES[shape_id]
+    surfaces = tuple(package + "/" for package in surface_packages(paths, shape_id))
     counts: dict[str, int] = {}
     for path in paths:
-        if path.split("/", 1)[0] in shape.home_roots and not any(_in_home(path, home) for home in shape.homes):
+        if path.split("/", 1)[0] not in shape.home_roots or path.startswith(surfaces):
+            continue
+        if not any(_in_home(path, home) for home in shape.homes):
             folder = str(PurePosixPath(path).parent)
             counts[folder] = counts.get(folder, 0) + 1
     return counts
@@ -125,4 +145,5 @@ def misplaced(paths: list[str], shape_id: str) -> dict[str, int]:
 def placement_advice(shape_id: str) -> str:
     """Where a misplaced file goes: the shape's homes, spelled out."""
     homes = ", ".join(home if home.endswith("/") else home.replace("*.py", "<module>.py") for home in SHAPES[shape_id].homes)
-    return f"move it into one of this shape's homes ({homes}), or into a domain subpackage of src/"
+    surfaces = "".join(f", {parent}/<package>/ holding its own {SURFACE_ENTRY}" for parent in SHAPES[shape_id].surface_parents)
+    return f"move it into one of this shape's homes ({homes}{surfaces}), or into a domain subpackage of src/"

@@ -15,7 +15,7 @@ from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
 # Box keys agreed with the reconciliation view (#100).
 CONTRACT_BOXES = (
     "01", "03", "07", "09", "10", "11", "12", "13", "27", "28", "29", "30", "31", "36", "37",
-    "44", "45", "46", "59", "60", "64", "65", "66", "69", "71", "72", "73", "78", "87", "110", "120",
+    "40", "41", "44", "45", "46", "59", "60", "64", "65", "66", "69", "71", "72", "73", "78", "87", "110", "120",
 )
 
 
@@ -328,6 +328,97 @@ def test_zero_vat_domestic_row_adds_nothing_to_28_29(conn):
     _inv(conn, "zero", "in", "2025-05-02", 100.0, "DOMESTIC", iva=0.0, rate=0)
     r = compute_modelo_303(2025, 2, conn)
     assert (r.c28_base, r.c29_cuota) == (0.0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Boxes 40/41: received rectificativas of deductions of earlier periods
+# ---------------------------------------------------------------------------
+
+def _doc(conn, id, number=None, nif="B00000000", name="Synthetic Vendor SL", rect=0, ref=None):
+    """Set the document fields a rectificativa is linked by on an invoice made with ``_inv``."""
+    conn.execute(
+        """UPDATE invoices SET invoice_number = ?, vendor_nif = ?, vendor_name = ?,
+               is_rectificativa = ?, rectified_invoice_ref = ? WHERE id = ?""",
+        (number, nif, name, rect, ref, id),
+    )
+    conn.commit()
+
+
+class TestRectificationOfDeductions:
+    def test_rectificativa_of_an_earlier_quarter_goes_to_40_41_and_45(self, conn):
+        _inv(conn, "orig", "in", "2025-03-31", 200.0, "DOMESTIC", iva=42.0, rate=21)
+        _doc(conn, "orig", number="F-2025/017")
+        _inv(conn, "cn", "in", "2025-04-15", -50.0, "DOMESTIC", iva=-10.5, rate=21)
+        _doc(conn, "cn", number="R-1", rect=1, ref="f2025 017")   # punctuation and case ignored
+        _inv(conn, "q2", "in", "2025-05-02", 100.0, "DOMESTIC", iva=21.0, rate=21)
+        r = compute_modelo_303(2025, 2, conn)
+        assert (r.c40_base, r.c41_cuota) == (pytest.approx(-50.0), pytest.approx(-10.5))
+        assert (r.c28_base, r.c29_cuota) == (pytest.approx(100.0), pytest.approx(21.0))
+        assert r.c45_total_deducir == pytest.approx(10.5)        # 29 + 41
+        boxes = list(r.aeat_boxes())
+        assert boxes.index("37") < boxes.index("40") < boxes.index("41") < boxes.index("43")
+        audit = {a.cell: json.loads(a.inputs_json) for a in r.audit}
+        (rec,) = audit["c40_base"]["records"]
+        assert (rec["id"], rec["rectified_invoice_id"], rec["rectified_invoice_date"]) == ("cn", "orig", "2025-03-31")
+        assert "not linked" not in r.notes
+
+    def test_rectificativa_of_the_same_quarter_still_nets_into_28_29(self, conn):
+        _inv(conn, "orig", "in", "2025-04-02", 200.0, "DOMESTIC", iva=42.0, rate=21)
+        _doc(conn, "orig", number="F-9")
+        _inv(conn, "cn", "in", "2025-05-20", -50.0, "DOMESTIC", iva=-10.5, rate=21)
+        _doc(conn, "cn", rect=1, ref="F-9")
+        r = compute_modelo_303(2025, 2, conn)
+        assert (r.c40_base, r.c41_cuota) == (0.0, 0.0)
+        assert (r.c28_base, r.c29_cuota) == (pytest.approx(150.0), pytest.approx(31.5))
+
+    def test_reference_by_ledger_id_and_an_increase_keeps_its_sign(self, conn):
+        _inv(conn, "orig", "in", "2024-11-05", 100.0, "DOMESTIC", iva=21.0, rate=21)
+        _inv(conn, "up", "in", "2025-01-20", 20.0, "DOMESTIC", iva=4.2, rate=21)
+        _doc(conn, "up", rect=1, ref="orig")
+        r = compute_modelo_303(2025, 1, conn)
+        assert (r.c40_base, r.c41_cuota) == (pytest.approx(20.0), pytest.approx(4.2))
+        assert r.c29_cuota == 0.0
+
+    def test_deductible_pct_and_pro_rata_apply_to_40_41(self, conn):
+        _inv(conn, "orig", "in", "2025-02-10", 100.0, "DOMESTIC", iva=21.0, rate=21, pct=50)
+        _doc(conn, "orig", number="A1")
+        _inv(conn, "cn", "in", "2025-05-10", -40.0, "DOMESTIC", iva=-8.4, rate=21, pct=50)
+        _doc(conn, "cn", rect=1, ref="A1")
+        cfg = {"tax": {"prorrata": {"definitive_pct_by_year": {"2024": 80}}}}
+        r = compute_modelo_303(2025, 2, conn, cfg)
+        # -40 × 50% × 80% = -16 ; -8.4 × 50% × 80% = -3.36
+        assert (r.c40_base, r.c41_cuota) == (pytest.approx(-16.0), pytest.approx(-3.36))
+        assert r.c45_total_deducir == pytest.approx(-3.36)
+
+    @pytest.mark.parametrize("setup", ["no_ref", "unknown_ref", "other_vendor", "ambiguous"])
+    def test_unlinked_rectificativa_stays_in_28_29_with_a_note(self, conn, setup):
+        _inv(conn, "orig", "in", "2025-02-10", 100.0, "DOMESTIC", iva=21.0, rate=21)
+        _doc(conn, "orig", number="X-1")
+        if setup == "ambiguous":
+            _inv(conn, "orig2", "in", "2025-03-10", 100.0, "DOMESTIC", iva=21.0, rate=21)
+            _doc(conn, "orig2", number="X1")
+        _inv(conn, "cn", "in", "2025-05-10", -50.0, "DOMESTIC", iva=-10.5, rate=21)
+        ref = {"no_ref": None, "unknown_ref": "Z-99"}.get(setup, "X-1")
+        nif = "B99999999" if setup == "other_vendor" else "B00000000"
+        _doc(conn, "cn", rect=1, ref=ref, nif=nif)
+        r = compute_modelo_303(2025, 2, conn)
+        assert (r.c40_base, r.c41_cuota) == (0.0, 0.0)
+        assert (r.c28_base, r.c29_cuota) == (pytest.approx(-50.0), pytest.approx(-10.5))
+        assert "['cn'] are not linked" in r.notes
+
+    def test_ordinary_invoices_add_no_note(self, conn):
+        _inv(conn, "plain", "in", "2025-05-02", 100.0, "DOMESTIC", iva=21.0, rate=21)
+        r = compute_modelo_303(2025, 2, conn)
+        assert "not linked" not in r.notes
+
+    def test_40_41_survive_a_snapshot_roundtrip(self, conn):
+        _inv(conn, "orig", "in", "2025-02-10", 100.0, "DOMESTIC", iva=21.0, rate=21)
+        _inv(conn, "cn", "in", "2025-05-10", -50.0, "DOMESTIC", iva=-10.5, rate=21)
+        _doc(conn, "cn", rect=1, ref="orig")
+        r = compute_modelo_303(2025, 2, conn)
+        back = decode_snapshot("303", encode_snapshot("303", r))
+        assert (back.c40_base, back.c41_cuota) == (pytest.approx(-50.0), pytest.approx(-10.5))
+        assert back.aeat_boxes() == r.aeat_boxes()
 
 
 def test_unregistered_capital_invoice_uses_the_invoice(conn):

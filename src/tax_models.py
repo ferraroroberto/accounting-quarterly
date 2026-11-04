@@ -47,6 +47,7 @@ MODELO303_BOX_FIELDS: dict[str, str] = {
     "28": "c28_base", "29": "c29_cuota",
     "30": "c30_base", "31": "c31_cuota",
     "36": "c36_base", "37": "c37_cuota",
+    "40": "c40_base", "41": "c41_cuota",
     "43": "c43_regularizacion_bienes_inversion",
     "44": "c44_regularizacion_prorrata",
     "45": "c45_total_deducir",
@@ -83,6 +84,7 @@ MODELO303_BOX_LABELS: dict[str, str] = {
     "31": "Operaciones interiores bienes de inversión — cuota",
     "36": "Adquisiciones intracomunitarias corrientes — base",
     "37": "Adquisiciones intracomunitarias corrientes — cuota",
+    "40": "Rectificación de deducciones — base", "41": "Rectificación de deducciones — cuota",
     "43": "Regularización bienes de inversión", "44": "Regularización por aplicación del porcentaje definitivo de prorrata",
     "45": "Total a deducir", "46": "Resultado régimen general",
     "59": "Entregas intracomunitarias de bienes y servicios", "60": "Exportaciones y operaciones asimiladas",
@@ -136,9 +138,11 @@ class Modelo303Result:
     c31_cuota: float = 0.0
     c36_base: float = 0.0                 # adquisiciones intracomunitarias corrientes
     c37_cuota: float = 0.0
+    c40_base: float = 0.0                 # rectificación de deducciones of earlier periods (art. 114 LIVA)
+    c41_cuota: float = 0.0
     c43_regularizacion_bienes_inversion: float = 0.0  # arts. 107-109 LIVA, Q4 only
     c44_regularizacion_prorrata: float = 0.0          # art. 105 LIVA, Q4 only
-    c45_total_deducir: float = 0.0        # 29 + 31 + 37 + 43 + 44
+    c45_total_deducir: float = 0.0        # 29 + 31 + 37 + 41 + 43 + 44
     c46_resultado_regimen_general: float = 0.0  # 27 − 45
     # --- Información adicional ---
     c59_entregas_intracom: float = 0.0    # EU B2B sales

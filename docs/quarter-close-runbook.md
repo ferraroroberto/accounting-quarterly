@@ -159,7 +159,7 @@ Computes Modelo 303, 130 and 349 (plus OSS and the annual 347) and stores the sn
 ### Review 2: figures
 
 Walk the box summary (and the **Tax Audit** tab for any figure you cannot explain):
-- **303:** 07/09 against the quarter's Spanish + EU-consumer sales; 10/11 = 36/37 at 100% deduction; 12/13 non-EU services; 28/29; 30/31 capital goods; the provisional pro-rata % and its source; in Q4, boxes 43 and 44; 110 and its source (`filed` expected).
+- **303:** 07/09 against the quarter's Spanish + EU-consumer sales; 10/11 = 36/37 at 100% deduction; 12/13 non-EU services; 28/29; 30/31 capital goods; 40/41 rectificativas of earlier periods (an unlinked one is named in the notes); the provisional pro-rata % and its source; in Q4, boxes 43 and 44; 110 and its source (`filed` expected).
 - **130:** 01 and 02 are year-to-date; the 5% allowance; box 13 and its source; 05 and 15 chains (`filed` expected for the earlier quarters).
 - **349:** one line per operator; nothing under *excluded* or *unidentified* (fix the VAT id in the ledger or the vendor registry).
 

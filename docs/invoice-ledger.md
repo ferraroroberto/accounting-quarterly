@@ -4,7 +4,7 @@ The **Invoice Ledger** tab is where OCR output is reviewed and corrected. Pick a
 
 - **Bulk edit** — an `st.data_editor` grid over the ledger columns (invoice date, tax treatment, VAT/IRPF business-use %, capital asset, exclusion, EUR received, payment date). Edits apply on **Save changes**.
 - **Vendor** (expenses) — the [vendor-registry](vendor-registry.md) match for each row; **⚠ unknown** when no vendor matches (also counted in the *⚠ Unknown vendor* metric).
-- **Edit one invoice** — a form covering the OCR fields (number, dates, parties, amounts, …) and the ledger columns. Saving stamps `reviewed_at` even when nothing changed.
+- **Edit one invoice** — a form covering the OCR fields (number, dates, parties, amounts, the *Factura rectificativa* flag and the number of the invoice it rectifies, …) and the ledger columns. Saving stamps `reviewed_at` even when nothing changed.
 
 **Locks.** Every field you change is added to the invoice's `locked_fields` (JSON list). Re-extracting the PDF in the Invoice OCR tab never overwrites a locked field — enforced in `src/database/invoices.py` (`upsert_invoice`), not just in the UI. Ledger-only columns (`excluded`, `eur_received`, …) also survive a plain re-extract. **Unlock all fields** releases the locks (values stay as they are) so the next re-extract may overwrite them.
 

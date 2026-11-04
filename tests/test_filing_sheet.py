@@ -95,6 +95,9 @@ def test_303_boxes_follow_the_form_order_and_carry_the_credit_chain(conn):
     order = [b.box for b in s303.boxes]
     assert order.index("07") < order.index("27") < order.index("46") < order.index("59") < order.index("110") \
         < order.index("78") < order.index("87") < order.index("71")
+    assert order.index("37") < order.index("40") < order.index("41") < order.index("43")
+    sections = {b.box: b.section for b in s303.boxes}
+    assert sections["40"] == sections["41"] == sections["29"] == "Page 1 — IVA deducible"
     assert [b.box for b in s303.credit_chain] == ["110", "78", "87", "71", "72", "73"]
     assert s303.result.startswith("To pay (box 71)")
 

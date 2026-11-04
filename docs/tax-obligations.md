@@ -104,7 +104,7 @@ OCR-extracted invoices (from the Invoice OCR tab) feed directly into all tax mod
 
 | Model | Source | Contribution |
 |-------|--------|-------------|
-| **Modelo 303** | Expense invoices (`direction='in'`) | By `tax_treatment`: `DOMESTIC` → 28/29, `DOMESTIC_CAPITAL` / registered capital goods → 30/31, `INTRA_EU_RC` → 10/11 + 36/37, `NON_EU_RC` → 12/13 + 28/29, each weighted by `deductible_pct_vat` |
+| **Modelo 303** | Expense invoices (`direction='in'`) | By `tax_treatment`: `DOMESTIC` → 28/29, `DOMESTIC_CAPITAL` / registered capital goods → 30/31, `INTRA_EU_RC` → 10/11 + 36/37, `NON_EU_RC` → 12/13 + 28/29, each weighted by `deductible_pct_vat`; a received rectificativa of an earlier period → 40/41 |
 | **Modelo 303** | Income invoices (`direction='out'`) | `ES_21` → 01/03, 04/06 or 07/09 by rate, `EU_B2C_ES21` → 07/09, `EU_B2B` → 59, `NON_EU_NOT_SUBJECT` → 120, `EXEMPT_TEACHING` → pro-rata denominator only |
 | **Modelo 130** box 01 | Non-Stripe income invoices (`direction='out'`) | Subtotal ingresos YTD (gross of the withholding) — `eur_received` when set, otherwise the stored (ECB-resolved) `subtotal_eur`, plus `fx_exchange_differences.gain_loss_eur` recorded in the period |
 | **Modelo 130** box 02 | Expense invoices (`direction='in'`, not `is_capital_asset`) | Subtotal gastos (weighted by `deductible_pct_irpf`) + the input VAT the 303 does not deduct, in the same share YTD (see [tax conventions §3.1](tax-conventions.md#31-domestic-purchases-boxes-2829)) |

@@ -6,6 +6,7 @@ Reads its records through ``src.tax_data`` and the tax-code derivations in ``src
 from __future__ import annotations
 
 import math
+import re
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -43,11 +44,14 @@ log = get_logger(__name__)
 #   rows 01/02/03 = 4%, 04/05/06 = 10%, 07/08/09 = 21%
 #   27 = 152 + 167 + 03 + 155 + 06 + 09 + 11 + 13 + 15 + 158 + 170 + 18 + 21 + 24 + 26
 #   45 = 29 + 31 + 33 + 35 + 37 + 39 + 41 + 42 + 43 + 44;   46 = 27 − 45
+#   40/41 = "importe de la base imponible y de las cuotas deducibles rectificadas",
+#           negative when the rectification lowers the deduction (AEAT 303 instrucciones)
 #   64 = 46 + 58 + 76;   66 = 64 × 65 %;   87 = 110 − 78
 #   69 = 66 + 77 − 78 + 68 + 108;   71 = 69 − 70 + 109
 #   72 = "si resulta [71] negativa, consignar el importe a compensar"; 73 = devolución
 # Boxes this taxpayer never uses (0/2/5% rows, recargo de equivalencia,
-# imports, rectifications, 58/76/77/68/108/70/109) are 0 and not modelled.
+# imports, modified bases of issued invoices 14/15, 58/76/77/68/108/70/109)
+# are 0 and not modelled.
 #
 # Credit chain (boxes 110/78/87): 110 = previous period's 87 + 72; 78 is at
 # most the positive 66; from 2T 2021 a return that applies 78 cannot itself be
@@ -81,6 +85,7 @@ class _Collected303:
     platform_fees: float = 0.0          # quarter's fee_application total self-assessed in 12/13
     platform_fees_cuota: float = 0.0
     fee_split_unknown: int = 0
+    unlinked_rectificativas: list[str] = field(default_factory=list)   # invoice ids, kept in 28/29
 
     @property
     def with_right_to_deduct(self) -> float:
@@ -89,8 +94,8 @@ class _Collected303:
 
     @property
     def full_deductible_vat(self) -> float:
-        """Deductible cuota of the quarter before pro-rata (29 + 31 + 37 at 100%)."""
-        return self.acc["c29_cuota"] + self.acc["c31_cuota"] + self.acc["c37_cuota"]
+        """Deductible cuota of the quarter before pro-rata (29 + 31 + 37 + 41 at 100%)."""
+        return self.acc["c29_cuota"] + self.acc["c31_cuota"] + self.acc["c37_cuota"] + self.acc["c41_cuota"]
 
 
 def _rate_pct(raw: object) -> Optional[float]:
@@ -263,10 +268,72 @@ def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection
         )
 
 
+def _norm_ref(raw: object) -> str:
+    """An invoice number or tax id reduced to upper-case letters and digits ("a-12/3" → "A123")."""
+    return re.sub(r"[^0-9A-Z]", "", str(raw or "").upper())
+
+
+def _same_vendor(a: dict, b: dict) -> bool:
+    """Same vendor tax id when both invoices carry one, else the same vendor name."""
+    nif_a, nif_b = _norm_ref(a.get("vendor_nif")), _norm_ref(b.get("vendor_nif"))
+    if nif_a and nif_b:
+        return nif_a == nif_b
+    name_a, name_b = (str(x.get("vendor_name") or "").strip().casefold() for x in (a, b))
+    return bool(name_a) and name_a == name_b
+
+
+def _rectified_original(conn: sqlite3.Connection, inv: dict) -> Optional[dict]:
+    """The received invoice a rectificativa corrects, found from its ``rectified_invoice_ref``.
+
+    The reference matches another received invoice's ledger id, or the invoice
+    number (letters and digits, any case) of one from the same vendor. ``None``
+    when nothing or more than one invoice matches: the original is never guessed.
+    """
+    ref = str(inv.get("rectified_invoice_ref") or "").strip()
+    if not ref:
+        return None
+    rows = [dict(r) for r in conn.execute(
+        """SELECT id, invoice_date, invoice_number, vendor_nif, vendor_name FROM invoices
+           WHERE direction = 'in' AND COALESCE(excluded, 0) = 0 AND id != ?""", (inv.get("id"),))]
+    by_id = [r for r in rows if r["id"] == ref]
+    if by_id:
+        return by_id[0]
+    key = _norm_ref(ref)
+    matches = [r for r in rows if key and _norm_ref(r["invoice_number"]) == key and _same_vendor(r, inv)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _place_domestic_remainder(inv: dict, rec: dict, base: float, iva: float, pct: float,
+                              quarter_start: str, conn: sqlite3.Connection, col: _Collected303) -> None:
+    """Deduct a domestic invoice's 28/29 share, or put it in 40/41 when it rectifies an earlier period.
+
+    A received rectificativa of an invoice dated before the quarter changes a
+    deduction already declared (art. 114 LIVA), which the form puts in 40/41
+    with its sign. One of the same quarter only changes this quarter's own
+    deduction and nets into 28/29. A credit note whose original cannot be
+    linked stays in 28/29 and is listed in the result notes.
+    """
+    if iva == 0:   # a zero-VAT row deducts nothing
+        return
+    is_rect = bool(inv.get("is_rectificativa")) or bool(inv.get("rectified_invoice_ref")) or iva < 0
+    original = _rectified_original(conn, inv) if is_rect else None
+    if is_rect and original is None:
+        col.unlinked_rectificativas.append(str(inv.get("id")))
+    original_date = str((original or {}).get("invoice_date") or "")[:10]
+    earlier = bool(original_date) and original_date < quarter_start
+    base_f, cuota_f = ("c40_base", "c41_cuota") if earlier else ("c28_base", "c29_cuota")
+    col.acc[base_f] += base * pct
+    col.acc[cuota_f] += iva * pct
+    link = {"rectified_invoice_id": original["id"], "rectified_invoice_date": original_date} if original else {}
+    col.records[base_f].append({**rec, cuota_f: round(iva * pct, 2), **link})
+
+
 def _collect_303_expense_invoices(year: int, quarter: int, conn: sqlite3.Connection,
                                   config: Optional[dict], col: _Collected303) -> None:
     """Deductible VAT and reverse-charge accruals from the quarter's expense invoices."""
     from src.fixed_assets import load_fixed_assets
+
+    quarter_start = quarter_iso_bounds(year, quarter)[0]
 
     capital_by_invoice: dict[str, list] = defaultdict(list)
     registered_by_invoice: dict[str, list] = defaultdict(list)
@@ -326,12 +393,7 @@ def _collect_303_expense_invoices(year: int, quarter: int, conn: sqlite3.Connect
                 continue
             else:
                 base_rest, iva_rest = base, iva
-            # Only a zero-VAT remainder adds nothing; a negative one is a received
-            # rectificativa and must net off the quarter's 28/29.
-            if iva_rest != 0:
-                col.acc["c28_base"] += base_rest * pct
-                col.acc["c29_cuota"] += iva_rest * pct
-                col.records["c28_base"].append({**rec, "c29_cuota": round(iva_rest * pct, 2)})
+            _place_domestic_remainder(inv, rec, base_rest, iva_rest, pct, quarter_start, conn, col)
         elif tt in ("INTRA_EU_RC", "NON_EU_RC"):
             rate = _reverse_charge_rate(inv)
             cuota = round(base * rate / 100.0, 2)
@@ -396,6 +458,14 @@ def _collect_303_purchases(year: int, quarter: int, conn: sqlite3.Connection,
     from src.fixed_assets import capital_goods_vat_for_period
 
     _collect_303_expense_invoices(year, quarter, conn, config, col)
+    if col.records["c40_base"]:
+        log.info("ℹ️ 303 %dQ%d: %d received rectificativa(s) of earlier periods in boxes 40/41",
+                 year, quarter, len(col.records["c40_base"]))
+    if col.unlinked_rectificativas:
+        col.notes.append(
+            f"Received rectificativa(s) {col.unlinked_rectificativas} are not linked to the invoice they "
+            "correct, so they net into 28/29. If that invoice is from an earlier period they belong in "
+            "40/41: set 'Rectifies invoice' in the ledger to its number or ledger id.")
 
     _collect_303_platform_fees(year, quarter, conn, config, col)
 
@@ -543,7 +613,7 @@ def _fill_accrued_boxes(result: Modelo303Result, acc: dict[str, float]) -> None:
 def _fill_deductible_boxes(result: Modelo303Result, acc: dict[str, float], p: float) -> None:
     """Deductible base / cuota boxes at the provisional pro-rata fraction `p`."""
     for base_f, cuota_f in (("c28_base", "c29_cuota"), ("c30_base", "c31_cuota"),
-                            ("c36_base", "c37_cuota")):
+                            ("c36_base", "c37_cuota"), ("c40_base", "c41_cuota")):
         setattr(result, base_f, round(acc[base_f] * p, 2))
         setattr(result, cuota_f, round(acc[cuota_f] * p, 2))
 
@@ -660,7 +730,7 @@ def compute_modelo_303(
             result, year, db_conn, config, col, prorrata_enabled, provisional)
 
     result.c45_total_deducir = round(
-        result.c29_cuota + result.c31_cuota + result.c37_cuota
+        result.c29_cuota + result.c31_cuota + result.c37_cuota + result.c41_cuota
         + result.c43_regularizacion_bienes_inversion + result.c44_regularizacion_prorrata, 2)
     result.c46_resultado_regimen_general = round(result.c27_total_devengado - result.c45_total_deducir, 2)
     full_deductible_q = col.full_deductible_vat if vat_registered else 0.0
@@ -749,14 +819,21 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
         _a("c37_cuota", "37 Cuota — adquisiciones intracomunitarias corrientes",
            "SUM(self-assessed cuota × deductible_pct_vat) INTRA_EU_RC × provisional pro-rata", r.c37_cuota,
            cuota_100=round(col.acc["c37_cuota"], 2), **pro),
+        _a("c40_base", "40 Base — rectificación de deducciones",
+           "(SUM(base × deductible_pct_vat) received DOMESTIC rectificativas linked to an invoice dated "
+           "before Q) × provisional pro-rata", r.c40_base,
+           base_100=round(col.acc["c40_base"], 2), records=rec["c40_base"], **pro),
+        _a("c41_cuota", "41 Cuota — rectificación de deducciones",
+           "(SUM(iva × deductible_pct_vat) of the 40 rectificativas) × provisional pro-rata", r.c41_cuota,
+           cuota_100=round(col.acc["c41_cuota"], 2), **pro),
         _a("c43_regularizacion_bienes_inversion", "43 Regularización bienes de inversión (Q4)",
            "SUM(adjustment_eur) of the arts. 107-109 LIVA register rows that apply this year",
            r.c43_regularizacion_bienes_inversion, records=regularisation_rows),
         _a("c44_regularizacion_prorrata", "44 Regularización por prorrata definitiva (Q4)",
-           "(definitive % − provisional %) × deductible VAT of the year at 100% (Q1–Q4 29 + 31 + 37)",
+           "(definitive % − provisional %) × deductible VAT of the year at 100% (Q1–Q4 29 + 31 + 37 + 41)",
            r.c44_regularizacion_prorrata, definitive_pct=r.prorrata_definitive_pct,
            year_deductible_vat_100=round(year_full_deductible, 2), **pro),
-        _a("c45_total_deducir", "45 Total a deducir", "29 + 31 + 37 + 43 + 44", r.c45_total_deducir),
+        _a("c45_total_deducir", "45 Total a deducir", "29 + 31 + 37 + 41 + 43 + 44", r.c45_total_deducir),
         _a("c46_resultado_regimen_general", "46 Resultado régimen general", "27 − 45",
            r.c46_resultado_regimen_general, c46_sin_prorrata=r.c46_sin_prorrata),
         _a("c59_entregas_intracom", "59 Entregas intracomunitarias de bienes y servicios",
@@ -774,6 +851,12 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
         _a("exempt_base", "Operaciones exentas sin derecho a deducción (no box — pro-rata denominator)",
            "SUM(base) income invoices EXEMPT_TEACHING (art. 20.1.9º LIVA)", r.exempt_base,
            records=rec["exempt_base"]),
+    ] + _result_audit(_a, r, c110_detail)
+
+
+def _result_audit(_a: partial, r: Modelo303Result, c110_detail: dict) -> list[AuditEntry]:
+    """Audit entries of the result and credit-chain boxes (64-110)."""
+    return [
         _a("c64_suma_resultados", "64 Suma de resultados", "46 + 58 + 76 (58/76 not applicable)",
            r.c64_suma_resultados),
         _a("c65_pct_atribuible_estado", "65 % atribuible a la Administración del Estado",

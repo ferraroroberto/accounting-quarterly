@@ -4,7 +4,7 @@ Field-by-field box models and the data mechanics that produce them — field nam
 
 ## Modelo 303 box model
 
-`compute_modelo_303` returns a `Modelo303Result` whose fields are named after the AEAT boxes (`c07_base`, `c09_cuota`, …, `c110_pendiente_anteriores`); `result.aeat_boxes()` gives them keyed by the box number as printed on the form (`"07"`, `"110"`), in form order. The layout and formulas follow the AEAT form (Manual práctico IVA 2025, cap. 9): rows 01/03 = 4%, 04/06 = 10%, 07/09 = 21%; 27 = sum of the accrued cuotas; 45 = 29 + 31 + 37 + 43 + 44; 46 = 27 − 45; 64 = 46; 66 = 64 × 65 %; 69 = 66 − 78; 71 = 69.
+`compute_modelo_303` returns a `Modelo303Result` whose fields are named after the AEAT boxes (`c07_base`, `c09_cuota`, …, `c110_pendiente_anteriores`); `result.aeat_boxes()` gives them keyed by the box number as printed on the form (`"07"`, `"110"`), in form order. The layout and formulas follow the AEAT form (Manual práctico IVA 2025, cap. 9): rows 01/03 = 4%, 04/06 = 10%, 07/09 = 21%; 27 = sum of the accrued cuotas; 45 = 29 + 31 + 37 + 41 + 43 + 44; 46 = 27 − 45; 64 = 46; 66 = 64 × 65 %; 69 = 66 − 78; 71 = 69.
 
 | Box | Source |
 |-----|--------|
@@ -13,6 +13,7 @@ Field-by-field box models and the data mechanics that produce them — field nam
 | 12/13 | `NON_EU_RC` purchases (non-EU services, reverse charge — VAT-neutral) and the quarter's Stripe platform (application) fees at 21% (same classified charges as the sales, by charge date; audit source `platform_fee`, one record per charge; `tax.platform_fee_vat_treatment`), deducted in 28/29 |
 | 28/29 | `DOMESTIC` invoices × `deductible_pct_vat` (minus any capital-good share), `NON_EU_RC`, Stripe platform fees at 100%, manual `IVA_SOPORTADO` entries (cuota ÷ their rate for the base) |
 | 30/31 | Capital goods (unit base > €3,005.06) from the fixed-asset register at their VAT business-use %; `DOMESTIC_CAPITAL` invoices not in the register use the invoice |
+| 40/41 | Received `DOMESTIC` rectificativas linked to an invoice dated before the quarter, with their sign, × `deductible_pct_vat` ([tax-conventions.md §3.5](tax-conventions.md#35-received-rectificativas-boxes-2829-or-4041)); same-quarter and unlinked ones net into 28/29 |
 | 43 · 44 | Q4 only: capital-goods regularisation (arts. 107–109 LIVA) and the pro-rata regularisation |
 | 59 · 60 · 120 | EU B2B sales · exports of goods (none today) · non-EU sales not subject by location rules (Stripe non-EU customers + `NON_EU_NOT_SUBJECT` invoices). Earlier filings by the external accountant put non-EU service invoices in 60 instead of 120 — informational only, no money effect |
 | 110 | The previous quarter's **filed** 87 + 72 (imported receipt, see [Importing filed AEAT receipts](reconciliation.md#importing-filed-aeat-receipts)); when not imported, the app's own previous-quarter result, chained back to the first period with data |

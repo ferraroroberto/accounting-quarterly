@@ -169,8 +169,8 @@ class TestModelo390RateRows:
         assert "7.5" in m.notes
 
     def test_credit_note_lands_negative_on_its_invoices_rate_row(self, conn):
-        # #161: a received rectificativa nets off on the rate row of the invoice it
-        # corrects (here 10 %, in a later quarter), next to an untouched 21 % row.
+        # #161: a received credit note not linked to its original nets off on its
+        # own rate row (here 10 %, in a later quarter), next to an untouched 21 % row.
         _inv(conn, "ten", "in", "2025-02-10", 100.0, "DOMESTIC", iva=10.0, rate=10)
         _inv(conn, "ten_cn", "in", "2025-05-10", -40.0, "DOMESTIC", iva=-4.0, rate=10)
         _inv(conn, "twenty_one", "in", "2025-05-11", 200.0, "DOMESTIC", iva=42.0, rate=21)
@@ -179,6 +179,21 @@ class TestModelo390RateRows:
         assert (b["603"], b["604"]) == (60.0, 6.0)
         assert (b["605"], b["606"]) == (200.0, 42.0)
         assert (b["48"], b["49"]) == (260.0, 48.0)
+
+    def test_linked_rectificativa_of_an_earlier_quarter_goes_to_639_62(self, conn):
+        # The quarterly 303 puts it in 40/41, so the 390 shows it in its own
+        # rectification row, not netted into the deductible rate rows.
+        _inv(conn, "ten", "in", "2025-02-10", 100.0, "DOMESTIC", iva=10.0, rate=10)
+        _inv(conn, "ten_cn", "in", "2025-05-10", -40.0, "DOMESTIC", iva=-4.0, rate=10)
+        conn.execute("UPDATE invoices SET is_rectificativa = 1, rectified_invoice_ref = 'ten' WHERE id = 'ten_cn'")
+        conn.commit()
+        quarters = [compute_modelo_303(YEAR, q, conn, CFG) for q in range(1, 5)]
+        assert quarters[1].c41_cuota == pytest.approx(-4.0)
+        b = compute_modelo_390(YEAR, conn, CFG, quarters=quarters).aeat_boxes()
+        assert (b["603"], b["604"]) == (100.0, 10.0)
+        assert (b["639"], b["62"]) == (-40.0, -4.0)
+        assert b["64"] == pytest.approx(b["49"] + b["51"] + b["598"] + b["62"] + b["63"] + b["522"])
+        assert b["64"] == pytest.approx(6.0)
 
     def test_platform_fees_in_reverse_charge_and_deductible_21_rows(self, conn):
         # #147: Stripe application fees are a NON_EU_RC purchase — 27/28 and the 21 % deductible row,

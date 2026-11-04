@@ -579,12 +579,36 @@ def comments_ps(text: str) -> list[tuple[int, str]]:
     return out
 
 
+def _yaml_scalar_close(text: str, i: int, quote: str) -> int:
+    """`text[i]` opens a quoted scalar; return the index of its closing quote.
+
+    A single-quoted scalar escapes a quote by doubling it, a double-quoted one with a backslash.
+    """
+    j = i + 1
+    if quote == "'":
+        while True:
+            j = text.find("'", j)
+            if j == -1:
+                raise NotConfirmed("unterminated single-quoted scalar")
+            if not text.startswith("''", j):
+                return j
+            j += 2
+    while j < len(text) and text[j] != '"':
+        j += 2 if text[j] == "\\" else 1
+    if j >= len(text):
+        raise NotConfirmed("unterminated double-quoted scalar")
+    return j
+
+
 def comments_yaml(text: str) -> list[tuple[int, str]]:
     """`#` line comments in YAML -- must start the line or follow whitespace
     (YAML comment grammar; `a#b` is a plain scalar, `a #b` is a comment).
     Single- and double-quoted scalars are skipped so a `#` inside one never
     counts; a `''` inside a single-quoted scalar is YAML's own escape for a
-    literal quote, so it does not end the scalar.
+    literal quote, so it does not end the scalar. A quote opens a scalar only
+    where a value can start (line start, after `- `, `? `, `: `, or `[`, `{`, `,`
+    in a flow collection, optionally after an anchor or tag); anywhere else it
+    is a plain-scalar character such as an apostrophe in `the customer's store`.
     """
     out: list[tuple[int, str]] = []
     n = len(text)
@@ -592,6 +616,8 @@ def comments_yaml(text: str) -> list[tuple[int, str]]:
     line = 1
     prev_char = "\n"  # start-of-text counts as start-of-line
     comment_start: int | None = None
+    value_start = True  # a quote here opens a quoted scalar
+    flow_depth = 0
     while i < n:
         c = text[i]
         if comment_start is not None:
@@ -601,37 +627,56 @@ def comments_yaml(text: str) -> list[tuple[int, str]]:
             else:
                 i += 1
                 continue
+        nxt = text[i + 1] if i + 1 < n else "\n"
         if c == "\n":
             line += 1
             prev_char = c
+            value_start = True
             i += 1
-        elif c == "'":
-            j = i + 1
-            while True:
-                j = text.find("'", j)
-                if j == -1:
-                    raise NotConfirmed("unterminated single-quoted scalar")
-                if text.startswith("''", j):
-                    j += 2
-                    continue
-                break
-            line += text.count("\n", i, j)
-            prev_char = "'"
-            i = j + 1
-        elif c == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == "\\" else 1
-            if j >= n:
-                raise NotConfirmed("unterminated double-quoted scalar")
-            line += text.count("\n", i, j)
-            prev_char = '"'
-            i = j + 1
+        elif c in " \t":
+            prev_char = c
+            i += 1
         elif c == "#" and prev_char in (" ", "\t", "\n"):
             comment_start = i
             i += 1
+        elif c in "'\"" and not value_start:
+            prev_char = c
+            i += 1
+        elif c in "-?" and value_start:
+            value_start = nxt in " \t\n"
+            prev_char = c
+            i += 1
+        elif c == ":" and (nxt in " \t\n" or (flow_depth > 0 and nxt in ",]}")):
+            value_start = True
+            prev_char = c
+            i += 1
+        elif c in "[{" and (value_start or flow_depth > 0):
+            flow_depth += 1
+            value_start = True
+            prev_char = c
+            i += 1
+        elif c in "]}" and flow_depth > 0:
+            flow_depth -= 1
+            value_start = False
+            prev_char = c
+            i += 1
+        elif c == "," and flow_depth > 0:
+            value_start = True
+            prev_char = c
+            i += 1
+        elif c in "&!" and value_start:
+            while i < n and text[i] not in " \t\n":
+                i += 1
+            prev_char = text[i - 1]
+        elif c in "'\"":
+            j = _yaml_scalar_close(text, i, c)
+            line += text.count("\n", i, j)
+            prev_char = c
+            value_start = False
+            i = j + 1
         else:
             prev_char = c
+            value_start = False
             i += 1
     if comment_start is not None:
         out.append((line, text[comment_start:]))

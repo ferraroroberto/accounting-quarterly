@@ -223,6 +223,13 @@ def _document_column(rec: dict, k: str, changes: dict) -> None:
         "description": st.text_area("Description", value=rec.get("description") or "",
                                     key=f"{k}_description"),
         "notes": st.text_area("Notes", value=rec.get("notes") or "", key=f"{k}_notes"),
+        "is_rectificativa": st.checkbox("Factura rectificativa", value=bool(rec.get("is_rectificativa")),
+                                        key=f"{k}_is_rectificativa"),
+        "rectified_invoice_ref": st.text_input(
+            "Rectifies invoice", value=rec.get("rectified_invoice_ref") or "",
+            help="Number (or ledger id) of the invoice this one corrects. A received rectificativa of an "
+                 "invoice from an earlier period goes to 303 boxes 40/41.",
+            key=f"{k}_rectified_invoice_ref"),
     })
     changes["invoice_date"] = inv_date.isoformat() if inv_date else None
     changes["supply_date"] = sup_date.isoformat() if sup_date else None

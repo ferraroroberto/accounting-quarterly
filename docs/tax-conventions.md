@@ -119,6 +119,22 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 
 **External accountant.** May deduct 100% of mixed-use devices (a phone, a computer) or 0% of a home-office utility's VAT. For an indivisible asset used privately beyond incidental use, the strict IRPF position is 0%, not a share. Record the position you take per item, with the reason, in the ledger notes.
 
+### 3.5 Received rectificativas (boxes 28/29 or 40/41)
+
+**Rule.** A received *factura rectificativa* on a `DOMESTIC` (or registered non-capital `DOMESTIC_CAPITAL`) expense is placed by the period of the invoice it corrects:
+
+- The corrected invoice is dated **before** the rectificativa's quarter: its base × `deductible_pct_vat` and VAT × `deductible_pct_vat`, with their sign (negative when the deduction goes down, positive when it goes up), go to boxes **40/41** *rectificación de deducciones*, scaled by the quarter's provisional pro-rata like 28/29. Box 41 counts in 45, and in the year's deductible VAT the Q4 pro-rata regularisation (box 44) is computed on.
+- The corrected invoice is in the **same** quarter: the rectificativa nets into 28/29, because that quarter's deduction has not been declared yet.
+- The corrected invoice **cannot be identified**: the rectificativa nets into 28/29 and the result notes list it. The original is never guessed.
+
+An invoice counts as a rectificativa when it has `is_rectificativa` set, carries a `rectified_invoice_ref`, or has negative VAT. The link is `rectified_invoice_ref`. It matches another non-excluded received invoice's ledger id, or the `invoice_number` (letters and digits, any case) of exactly one invoice from the same vendor (same tax id when both have one, else the same name). Two candidates leave it unlinked. Both fields are OCR output and can be corrected in the Invoice Ledger's *Edit one invoice* form (*Factura rectificativa*, *Rectifies invoice*). The audit records of box 40 name the corrected invoice and its date. The 390 carries the year's 40/41 in its own rectification row 639/62 (in 64), outside the per-rate deductible rows.
+
+Not covered: rectificativas of reverse-charge purchases (10/11, 12/13, 36/37), of capital goods in 30/31, and issued rectificativas (303 boxes 14/15). They keep their current treatment. A rectification that the law sends back to the period of the original deduction (concurso, or an error in the invoice outside art. 80 LIVA) is filed as a rectifying return for that period, which the app does not prepare. The pro-rata applied to 40/41 is the current quarter's provisional %, not the % at which the original was deducted, so the two differ only across years with a pro-rata below 100%.
+
+**Legal basis.** AEAT *Modelo 303 — Instrucciones*, casillas 40 y 41: "Se hará constar el importe de la base imponible y de las cuotas deducibles rectificadas … Si el resultado de la rectificación implica una minoración de las deducciones, se consignará con signo negativo." Art. 114.Dos LIVA (as set out in the AEAT *Manual práctico IVA 2026*, cap. 5, *Rectificación de deducciones*): when the rectification comes from a modification of the base (art. 80 LIVA) or an error of law, the lower deduction is entered "en la autoliquidación del período en que se hubiese recibido la factura rectificativa". A rectificativa of an invoice of the same quarter does not rectify a deduction already declared, so it stays in the ordinary boxes 28/29.
+
+**External accountant.** Uses 40/41 for a rectificativa of an earlier period. Where the app nets one into 28/29 because the corrected invoice is not linked, 28/29 and 40/41 differ by the same amount with opposite signs and 45 matches. Link the invoice in the ledger rather than cataloguing the difference.
+
 ---
 
 ## 4. VAT pro-rata
@@ -182,7 +198,7 @@ The Stripe platform (application) fees that connected platforms keep from the ch
 
 ## 7. Modelo 303: result and credit chain
 
-**Rule.** 27 = accrued cuotas; 45 = 29 + 31 + 37 + 43 + 44; 46 = 27 − 45; 64 = 46; 65 = 100% (common territory); 66 = 64 × 65%.
+**Rule.** 27 = accrued cuotas; 45 = 29 + 31 + 37 + 41 + 43 + 44; 46 = 27 − 45; 64 = 46; 65 = 100% (common territory); 66 = 64 × 65%.
 - **110**, credit pending from earlier periods = the previous quarter's **filed** 87 + 72, read from its imported AEAT receipt. Without a receipt, the app's own previous-quarter result, chained back to a filed quarter or the first period with data.
 - **78** = the credit applied = min(110, positive 66); **87** = 110 − 78; 69 = 66 − 78; 71 = 69.
 - A negative 71 goes to **72** (to compensate). In Q4, `tax.modelo303_q4_negative_result: refund` puts it in **73** (refund) instead, and 78 may then take the whole of 110.
@@ -308,6 +324,6 @@ Consolidated legal texts (BOE):
 - Orden HAC/241/2025 (direct-debit period): BOE-A-2025-5048
 - Council Implementing Regulation (EU) 282/2011: <https://eur-lex.europa.eu/eli/reg_impl/2011/282/oj>
 
-AEAT (sede.agenciatributaria.gob.es): *Manual práctico IVA 2025* (cap. 4 base imponible, cap. 9 Modelo 303 and 349); *Manual práctico de Renta* (rendimientos de actividades económicas en estimación directa); Modelo 130 *Instrucciones*; *calendario del contribuyente*.
+AEAT (sede.agenciatributaria.gob.es): *Manual práctico IVA 2025* (cap. 4 base imponible, cap. 9 Modelo 303 and 349); *Manual práctico IVA 2026* (cap. 5 *Rectificación de deducciones*); *Modelo 303 — Instrucciones* (casillas 40 y 41); *Manual práctico de Renta* (rendimientos de actividades económicas en estimación directa); Modelo 130 *Instrucciones*; *calendario del contribuyente*.
 
-**Checked on 2026-09-28** against the article text: LIVA arts. 20.Uno.9º–10º, 69, 73, 79.Once, 84.Uno.2º, 95, 99, 104, 105, 107, 108; RIVA arts. 71.4 and 81; LIRPF art. 30.2 (reglas 4ª and 5ª); RIRPF arts. 22, 30, 109, 110, 111; LIS art. 12.3.e (through the AEAT IRPF manual). Cited from the existing code or from secondary sources without a fresh check of the article text: art. 18 Regulation 282/2011; arts. 25, 75, 90, 94, 97, 115 LIVA; arts. 14.1.b, 28.1, 29.2 and 101.5 LIRPF; arts. 7.2 and 95 RIRPF; arts. 78–80 RIVA; art. 11 RD 1619/2012; arts. 66, 120, 198/199 LGT; PGC *Norma de registro y valoración* 12ª (non-deductible VAT as cost); the RETA deductibility reference; the 303 box definitions of 59/60/120.
+**Checked on 2026-09-28** against the article text: LIVA arts. 20.Uno.9º–10º, 69, 73, 79.Once, 84.Uno.2º, 95, 99, 104, 105, 107, 108; RIVA arts. 71.4 and 81; LIRPF art. 30.2 (reglas 4ª and 5ª); RIRPF arts. 22, 30, 109, 110, 111; LIS art. 12.3.e (through the AEAT IRPF manual). Cited from the existing code or from secondary sources without a fresh check of the article text: art. 18 Regulation 282/2011; arts. 25, 75, 90, 94, 97, 115 LIVA; art. 114 LIVA (through the AEAT *Manual práctico IVA 2026*, checked on 2026-11-04); arts. 14.1.b, 28.1, 29.2 and 101.5 LIRPF; arts. 7.2 and 95 RIRPF; arts. 78–80 RIVA; art. 11 RD 1619/2012; arts. 66, 120, 198/199 LGT; PGC *Norma de registro y valoración* 12ª (non-deductible VAT as cost); the RETA deductibility reference; the 303 box definitions of 59/60/120.

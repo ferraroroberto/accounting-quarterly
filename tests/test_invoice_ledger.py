@@ -291,6 +291,14 @@ class TestLocks:
         rec = get_invoice_by_filename("vendor/inv-001.pdf", "in", db_path=db)
         assert (rec["excluded"], rec["excluded_reason"], rec["eur_received"]) == (1, "duplicate", 90.0)
 
+    def test_rectificativa_fields_are_editable_and_locked(self, db):
+        rid = upsert_invoice(_ocr_record(), db_path=db)
+        changed = update_invoice_fields(rid, {"is_rectificativa": True, "rectified_invoice_ref": "F-1"}, db_path=db)
+        assert sorted(changed) == ["is_rectificativa", "rectified_invoice_ref"]
+        upsert_invoice(_ocr_record(file_hash="hash-2"), db_path=db)
+        rec = get_invoice_by_filename("vendor/inv-001.pdf", "in", db_path=db)
+        assert (rec["is_rectificativa"], rec["rectified_invoice_ref"]) == (1, "F-1")
+
     def test_unlock_lets_re_extract_overwrite(self, db):
         rid = upsert_invoice(_ocr_record(), db_path=db)
         update_invoice_fields(rid, {"subtotal_eur": 50.0, "vendor_name": "Fixed"}, db_path=db)

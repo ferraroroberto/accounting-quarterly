@@ -53,7 +53,7 @@ MODEL_TITLES = {
 # (page 1 liquidación; page 3 información adicional + resultado).
 _303_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Page 1 — IVA devengado", ("01", "03", "04", "06", "07", "09", "10", "11", "12", "13", "27")),
-    ("Page 1 — IVA deducible", ("28", "29", "30", "31", "36", "37", "43", "44", "45", "46")),
+    ("Page 1 — IVA deducible", ("28", "29", "30", "31", "36", "37", "40", "41", "43", "44", "45", "46")),
     ("Page 3 — Información adicional", ("59", "60", "120", "123")),
     ("Page 3 — Resultado", ("64", "65", "66", "110", "78", "87", "69", "71", "72", "73")),
 )

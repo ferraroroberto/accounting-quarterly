@@ -30,6 +30,7 @@ INVOICE_EDITABLE_FIELDS: tuple[str, ...] = (
     "vendor_name", "vendor_nif", "client_name", "client_nif", "description",
     "subtotal_eur", "iva_rate", "iva_amount", "irpf_rate", "irpf_amount", "total_eur",
     "original_currency", "original_amount", "fx_rate", "category", "notes",
+    "is_rectificativa", "rectified_invoice_ref",
     # Ledger fields
     "tax_treatment", "deductible_pct_vat", "deductible_pct_irpf",
     "is_capital_asset", "asset_class", "excluded", "excluded_reason",
@@ -273,7 +274,7 @@ def _coerce_invoice_field(field: str, value, direction: str):
             raise ValueError(
                 f"excluded_reason {value!r} is not one of {', '.join(EXCLUDED_REASONS)}"
             )
-    elif field in ("excluded", "is_capital_asset"):
+    elif field in ("excluded", "is_capital_asset", "is_rectificativa"):
         value = 1 if value else 0
     elif field in ("deductible_pct_vat", "deductible_pct_irpf"):
         if value is not None:

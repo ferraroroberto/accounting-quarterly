@@ -22,7 +22,8 @@ rows were added) and the form's printed formulas (Anexo I, modelo 390):
   **605/606 (21 %)**, total **48/49**; bienes de inversión 749/750, **196/197**, 728/729,
   751/752, **611/612**, **613/614**, total **50/51**; adquisiciones intracomunitarias de
   servicios 773/774, **587/588**, 740/741, 775/776, **635/636**, **637/638**, total **597/598**.
-- 63 regularización bienes de inversión; 522 regularización por prorrata definitiva.
+- 639/62 rectificación de deducciones (the quarterly 303 boxes 40/41);
+  63 regularización bienes de inversión; 522 regularización por prorrata definitiva.
 - 64 = 49 + 513 + 51 + 521 + 53 + 55 + 57 + 59 + 598 + 61 + 661 + 62 + 652 + 63 + 522;
   65 = 47 − 64; 84 = 65 + 83 + 658; 86 = 84 + 659 − 85.
 - 85 compensación de cuotas del ejercicio anterior (credit of earlier years applied via 303 box 78,
@@ -38,7 +39,7 @@ rows were added) and the form's printed formulas (Anexo I, modelo 390):
   116 operaciones con derecho a deducción, 117 tipo ("G" general), 118 % definitivo.
 
 Rows this taxpayer never uses (other rates, intragroup, criterio de caja,
-recargo de equivalencia, imports, special regimes, rectifications) are 0 and
+recargo de equivalencia, imports, special regimes, rectified issued invoices) are 0 and
 not modelled. Reverse-charge purchases with ``INTRA_EU_RC`` are services
 (Modelo 349 key I), so they go to the intra-EU *services* rows.
 """
@@ -103,6 +104,7 @@ MODELO390_LABELS: dict[str, str] = {
     "637": "Deducible adq. intracom. servicios 21 % — base", "638": "Deducible adq. intracom. servicios 21 % — cuota",
     "597": "Deducible adq. intracom. servicios — total base",
     "598": "Deducible adq. intracom. servicios — total cuota",
+    "639": "Rectificación de deducciones — base", "62": "Rectificación de deducciones — cuota",
     "63": "Regularización bienes de inversión", "522": "Regularización por prorrata definitiva",
     "64": "Suma de deducciones", "65": "Resultado régimen general (47 − 64)",
     "84": "Suma de resultados", "85": "Compensación de cuotas del ejercicio anterior",
@@ -483,9 +485,11 @@ def compute_modelo_390(
     b["48"], b["49"] = totals["interiores"]
     b["50"], b["51"] = totals["inversion"]
     b["597"], b["598"] = totals["aic_ded"]
+    b["639"] = _qsum("639", lambda r: _f(_audit_inputs(r, "c40_base").get("base_100", r.c40_base)))
+    b["62"] = _qsum("62", lambda r: r.c41_cuota)
     b["63"] = _qsum("63", lambda r: r.c43_regularizacion_bienes_inversion)
     b["522"] = _qsum("522", lambda r: r.c44_regularizacion_prorrata)
-    b["64"] = round(b["49"] + b["51"] + b["598"] + b["63"] + b["522"], 2)
+    b["64"] = round(b["49"] + b["51"] + b["598"] + b["62"] + b["63"] + b["522"], 2)
     b["65"] = round(b["47"] - b["64"], 2)
 
     walk = _fill_liquidation(b, qs, notes, year)
@@ -521,7 +525,8 @@ _FORMULAS: dict[str, str] = {
     "50": "Σ quarterly 303 box 30 base before pro-rata (base_100)", "51": "Σ quarterly 303 box 31",
     "597": "Σ quarterly 303 box 36 base before pro-rata (base_100)", "598": "Σ quarterly 303 box 37",
     "63": "Σ quarterly 303 box 43", "522": "Σ quarterly 303 box 44 (Q4 pro-rata regularisation)",
-    "64": "49 + 51 + 598 + 63 + 522", "65": "47 − 64", "84": "65 (+ 83 + 658, not applicable)",
+    "639": "Σ quarterly 303 box 40 base before pro-rata (base_100)", "62": "Σ quarterly 303 box 41",
+    "64": "49 + 51 + 598 + 62 + 63 + 522", "65": "47 − 64", "84": "65 (+ 83 + 658, not applicable)",
     "85": "FIFO walk Q1..Q4: each 303 box 78 consumes first the credit of earlier years (Q1 box 110, "
           "capped at each quarter's box 110); Σ of that part",
     "86": "84 − 85", "95": "Σ max(0, 303 box 71)", "97": "Q4 303 box 72", "98": "Q4 303 box 73",

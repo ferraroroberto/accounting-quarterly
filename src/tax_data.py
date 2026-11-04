@@ -205,7 +205,8 @@ def _load_expense_invoices_range(
                   total_eur, category, geo_region, vat_treatment, tax_treatment,
                   COALESCE(deductible_pct_vat, deductible_pct, 100.0) AS deductible_pct_vat,
                   COALESCE(deductible_pct_irpf, deductible_pct, 100.0) AS deductible_pct_irpf,
-                  vendor_nif, vendor_name, description
+                  vendor_nif, vendor_name, description,
+                  invoice_number, is_rectificativa, rectified_invoice_ref
            FROM invoices
            WHERE direction = 'in'
              AND COALESCE(excluded, 0) = 0

@@ -138,7 +138,7 @@ def _render_tax_calendar(year: int) -> None:
 # the reconciliation view and the filing sheet.
 _M303_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("IVA devengado", ("01", "03", "04", "06", "07", "09", "10", "11", "12", "13", "27")),
-    ("IVA deducible", ("28", "29", "30", "31", "36", "37", "43", "44", "45", "46")),
+    ("IVA deducible", ("28", "29", "30", "31", "36", "37", "40", "41", "43", "44", "45", "46")),
     ("Información adicional", ("59", "60", "120", "123")),
     ("Resultado", ("64", "65", "66", "110", "78", "87", "69", "71", "72", "73")),
 )

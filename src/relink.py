@@ -184,6 +184,7 @@ def backup_database(db_path: Optional[str | Path] = None, label: str = "pre-reli
         dest_dir = src_file.parent / "backups"
         dest_dir.mkdir(exist_ok=True)
         dest = dest_dir / f"accounting_{datetime.now():%Y%m%d-%H%M%S}_{label}.db"
+        # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
         with sqlite3.connect(dest) as out:
             conn.backup(out)
     finally:

@@ -144,6 +144,13 @@ helper = ["src/pooled_http.py"]
 why    = "CLAUDE.md: outbound-connection discipline, one pooled session"
 paths  = ["app/", "src/"]
 
+# A raw connect skips the WAL and foreign-key pragmas.
+[[conventions_ratchet.must_use]]
+call   = "sqlite3.connect"
+helper = ["src/database/connection.py"]
+why    = "src/database/connection.py is the one SQLite connection helper (WAL, foreign keys)"
+paths  = ["app/", "src/"]
+
 # [runtime_write_ratchet] -- scripts/runtime_write_ratchet.py fails when a tracked
 # Python file gains a write target (open for writing, Path.write_*, mkdir, a log
 # FileHandler, sqlite3.connect, a copy destination) whose path resolves under a code

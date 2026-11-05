@@ -607,6 +607,7 @@ def step_archive(ctx: CloseContext) -> StepResult:
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         conn = ctx.connect()
         try:
+            # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
             with sqlite3.connect(snapshot) as out:
                 conn.backup(out)
         finally:

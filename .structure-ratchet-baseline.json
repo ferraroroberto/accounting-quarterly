@@ -1,6 +1,11 @@
 {
   "version": 1,
-  "band": {"files": 0, "functions": 7},
+  "band": {"files": 0, "functions": 6},
   "root_extras": ["logs"],
+  "shape_contract": {
+    "root_files": ["classification_rules.json.example", "divergences.json.example", "vendors.json.example"],
+    "redundant": [],
+    "folder_types": {}
+  },
   "entries": []
 }

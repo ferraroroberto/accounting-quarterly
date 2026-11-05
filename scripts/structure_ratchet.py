@@ -13,7 +13,8 @@ of their limit, so a split that stops just under the limit fails like a new offe
 before the band loads unchanged and `--update-baseline` records it. Every check also lists the band's
 files, functions and directories as warnings that never fail (sibling `structure_band.py`). The shape
 presets and the root and second-level layout checks (`shape`, `extra_roots`) live in the sibling
-`structure_layout.py`; an undeclared root is never baselined.
+`structure_layout.py`, with the root files, folder types, homes and redundant exceptions of the repo-shape
+contract; an undeclared root is never baselined.
 
 Opt-in per adopter (`[structure_ratchet] enabled = true`; keys `_CONFIG_KEYS`, defaults `DEFAULT_*`).
 Exit 0 pass or not enabled, 1 above the baseline or refused, 2 bad config, baseline or arguments, 3 NOT
@@ -97,6 +98,9 @@ KINDS = {
     "unmeasured": ("functions", "function length", "function-length"),
     "root": ("roots", "extra root", "extra-roots"),
     "place": ("files", "placement", "second-level-placement"),
+    "rootfile": ("files", "root file", "root-files"),
+    "type": ("files", "folder type", "folder-types"),
+    "redundant": ("entries", "redundant exception", "extra-roots"),
 }
 
 
@@ -119,6 +123,8 @@ class Config:
     shape: str | None = None  # top-level `shape` in .fleet.toml; validated against SHAPES in run()
     extra_roots: tuple[str, ...] = ()
     near_limit_ratio: float = DEFAULT_NEAR_LIMIT_RATIO
+    extra_root_files: tuple[str, ...] = ()
+    published: tuple[str, ...] = ()  # `[components]` srcs: the repo's own published component sources
 
     def band_range(self, band: str) -> tuple[int, int]:
         """(lowest, highest) count inside `band`: `files` and `functions` in lines, `dirs` in modules."""
@@ -167,27 +173,6 @@ def _layers(table: dict[str, object], shape: str | None) -> tuple[tuple[str, str
     return tuple(pairs)
 
 
-def _shape(data: dict[str, object]) -> str | None:
-    value = data.get("shape")
-    if value is not None and not isinstance(value, str):
-        raise ConfigError("shape in .fleet.toml must be a string")
-    return value
-
-
-def _extra_roots(data: dict[str, object]) -> tuple[str, ...]:
-    value = data.get("extra_roots", [])
-    error = ConfigError("extra_roots in .fleet.toml must be a list of top-level folder names")
-    if not isinstance(value, list):
-        raise error
-    names = set()
-    for item in value:
-        name = item.replace("\\", "/").strip("/") if isinstance(item, str) else ""
-        if not name or "/" in name:
-            raise error
-        names.add(name)
-    return tuple(sorted(names))
-
-
 def parse_config(toml_text: str) -> Config | None:
     """`[structure_ratchet]` -> `Config`, or None when the stage is not enabled.
 
@@ -218,7 +203,10 @@ def parse_config(toml_text: str) -> Config | None:
     ratio = table.get("near_limit_ratio", DEFAULT_NEAR_LIMIT_RATIO)
     if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0 < ratio < 1:
         raise ConfigError("[structure_ratchet] near_limit_ratio must be a number between 0 and 1")
-    shape = _shape(data)
+    try:
+        shape, extra_roots, extra_root_files = layout.declared(data)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
     return Config(
         baseline,
         _positive_int(table, "max_file_lines", DEFAULT_MAX_FILE_LINES),
@@ -227,8 +215,10 @@ def parse_config(toml_text: str) -> Config | None:
         _layers(table, shape),
         tuple(exclude),
         shape,
-        _extra_roots(data),
+        extra_roots,
         float(ratio),
+        extra_root_files,
+        layout.published(data),
     )
 
 
@@ -271,13 +261,14 @@ def _under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
+def excluded(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
+    """Is `path` a vendored dest, or under a built-in or configured exclude?"""
+    return any(_under(path, d) for d in vendored) or any(_glob_regex(g).match(path) for g in BUILTIN_EXCLUDES + cfg.exclude)
+
+
 def in_scope(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
     """Is `path` a file this stage measures (before the generated-file check)?"""
-    if PurePosixPath(path).suffix.lower() not in SIZE_SUFFIXES:
-        return False
-    if any(_under(path, d) for d in vendored):
-        return False
-    return not any(_glob_regex(g).match(path) for g in BUILTIN_EXCLUDES + cfg.exclude)
+    return PurePosixPath(path).suffix.lower() in SIZE_SUFFIXES and not excluded(path, cfg, vendored)
 
 
 def is_generated(raw: bytes) -> bool:
@@ -675,26 +666,16 @@ def dir_findings(paths: list[str], limit: int) -> list[Finding]:
     ]
 
 
-def layout_baselined(paths: list[str], cfg: Config) -> dict[str, Finding]:
-    """The baselined layout findings: extra root folders (`root:`) and files outside the shape's homes (`place:`)."""
+def layout_baselined(paths: list[str], cfg: Config, vendored: tuple[str, ...]) -> dict[str, Finding]:
+    """The baselined findings of the repo-shape contract (`structure_layout.baselined`); none without a `shape`."""
     if cfg.shape is None:
         return {}
-    shape_id = cfg.shape
-    found = {
-        f"root:{name}": Finding(
-            f"root:{name}", 1, f"{name}/ is an extra root, outside the {shape_id} tree",
-            "move its code under src/ or app/ (or promote the folder into the shape's preset); a justified one "
-            "is declared in `extra_roots` with its reason in docs/layout.md, and is recorded with "
-            "--update-baseline --allow-additions",
-        )
-        for name in layout.extra_root_names(paths, shape_id, cfg.extra_roots)
-    }
-    advice = layout.placement_advice(shape_id)
-    for folder, n in layout.misplaced(paths, shape_id).items():
-        found[f"place:{folder}"] = Finding(
-            f"place:{folder}", n, f"{folder}/ holds {n} file(s) outside the homes of the {shape_id} tree", advice,
-        )
-    return found
+    # A component this repo publishes, and the channel folder holding it, live at its adopters' path.
+    skipped = layout.publisher_roots(cfg.published)
+    held = [path for path in paths if not any(_under(path, root) for root in skipped)]
+    typed = [path for path in held if not excluded(path, cfg, vendored)]  # every extension, unlike the size checks
+    found = layout.baselined(paths, held, typed, cfg.shape, cfg.extra_roots, cfg.extra_root_files)
+    return {key: Finding(key, *value) for key, value in found.items()}
 
 
 def _in_band(lines: int | None, cfg: Config, band: str) -> bool:
@@ -766,11 +747,11 @@ def read_baseline(path: Path) -> dict[str, int]:
     return read_baseline_file(path)[0]
 
 
-def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | None, bool]:
-    """Baseline file -> (``{key: count}``, band counts or None before the band existed, layout recorded?).
+def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | None, frozenset[str]]:
+    """Baseline file -> (``{key: count}``, band counts or None before the band existed, layout fields present).
 
-    The recorded `root_extras` list becomes ``root:<name>`` entries; its absence means the layout
-    (extra roots and placement) was never recorded, as in a baseline written before it existed.
+    The layout fields (`root_extras`, `shape_contract`) become keyed counts; a missing one was never
+    recorded, as in a baseline written before it existed (`structure_layout.RECORD_GROUPS`).
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -786,7 +767,7 @@ def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | Non
     out: dict[str, int] = {}
     for item in raw_entries:
         key = item.get("key") if isinstance(item, dict) else None
-        if not isinstance(key, str) or _kind(key) not in KINDS:
+        if not isinstance(key, str) or _kind(key) not in KINDS or _kind(key) in layout.RECORDED_KINDS:
             raise ConfigError(f"baseline {path}: malformed entry {item!r}")
         field = KINDS[_kind(key)][0]
         value = item.get(field)
@@ -797,20 +778,20 @@ def read_baseline_file(path: Path) -> tuple[dict[str, int], dict[str, int] | Non
     if band is not None and not (isinstance(band, dict) and set(band) == set(BANDS) and all(
             isinstance(n, int) and not isinstance(n, bool) and n >= 0 for n in band.values())):
         raise ConfigError(f"baseline {path}: `band` must hold a count of zero or more for {' and '.join(BANDS)}")
-    extras = data.get("root_extras")
-    if extras is not None and not (isinstance(extras, list) and all(isinstance(n, str) and n for n in extras)):
-        raise ConfigError(f"baseline {path}: `root_extras` must be a list of root folder names")
-    out.update((f"root:{name}", 1) for name in extras or [])
-    return out, band, extras is not None
+    try:
+        records, recorded = layout.read_records(data)
+    except ValueError as exc:
+        raise ConfigError(f"baseline {path}: {exc}") from exc
+    out.update(records)
+    return out, band, recorded
 
 
 def render_baseline(counts: dict[str, int], layout_recorded: bool = False) -> str:
     """Sorted, one entry per line, no line numbers, so a baseline diff reviews cleanly.
 
-    `band:` counts go in `band`, `root:` names in `root_extras` (written whenever the layout was checked).
+    `band:` counts go in `band`, the layout kinds in their own fields (written whenever the layout was checked).
     """
-    entries = {key: n for key, n in counts.items() if _kind(key) not in ("band", "root")}
-    extras = sorted(key[5:] for key in counts if _kind(key) == "root")
+    entries = {key: n for key, n in counts.items() if _kind(key) not in ("band", *layout.RECORDED_KINDS)}
     lines = [
         "    " + json.dumps({"key": key, KINDS[_kind(key)][0]: entries[key]}, ensure_ascii=False)
         for key in sorted(entries)
@@ -818,7 +799,7 @@ def render_baseline(counts: dict[str, int], layout_recorded: bool = False) -> st
     body = "[\n" + ",\n".join(lines) + "\n  ]" if lines else "[]"
     band = {b: counts[f"band:{b}"] for b in BANDS if f"band:{b}" in counts}
     head = f'\n  "band": {json.dumps(band)},' if band else ""
-    head += f'\n  "root_extras": {json.dumps(extras, ensure_ascii=False)},' if layout_recorded else ""
+    head += layout.render_records(counts) if layout_recorded else ""
     return f'{{\n  "version": {BASELINE_VERSION},{head}\n  "entries": {body}\n}}\n'
 
 
@@ -838,7 +819,8 @@ def summarize(counts: dict[str, int]) -> str:
             if "band:files" in counts else "")
     return (f"{kinds['size']} file(s), {kinds['fn']} function(s), {kinds['dir']} directory(s), "
             f"{kinds['layer']} layer import(s), {kinds['unmeasured']} unmeasured file(s), "
-            f"{kinds['root']} extra root(s), {kinds['place']} misplaced folder(s){near}")
+            f"{kinds['root']} extra root(s), {kinds['place']} misplaced folder(s), {kinds['rootfile']} root file(s), "
+            f"{kinds['type']} mistyped folder(s), {kinds['redundant']} redundant exception(s){near}")
 
 
 def band_findings(members: dict[str, list[str]], cfg: Config) -> dict[str, Finding]:
@@ -868,13 +850,13 @@ def _report_rose(rose: list[str], found: dict[str, Finding], baseline: dict[str,
         print(f"      {finding.advice}. See {LAYOUT_DOC}#{anchor}")
 
 
-def _read_or_refuse(path: Path, cfg: Config, init: bool) -> tuple[dict[str, int], dict[str, int] | None, bool] | int:
+def _read_or_refuse(path: Path, cfg: Config, init: bool) -> tuple[dict[str, int], dict[str, int] | None, frozenset[str]] | int:
     """The baseline (empty for --init), or the exit code that refuses the run."""
     if init:
         if path.exists():
             print(f"structure ratchet: {cfg.baseline} already exists; --init never overwrites it")
             return EXIT_CONFIG
-        return {}, None, True
+        return {}, None, frozenset(layout.RECORD_GROUPS)
     if not path.is_file():
         print(f"structure ratchet: FAIL: baseline {cfg.baseline} is missing -- "
               "run `python scripts/structure_ratchet.py --init`")
@@ -932,7 +914,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     loaded = _read_or_refuse(baseline_path, cfg, init)
     if isinstance(loaded, int):
         return loaded
-    baseline, band_base, layout_recorded = loaded
+    baseline, band_base, recorded = loaded
 
     members = near_band.empty_members()
     try:
@@ -943,7 +925,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("  (the tree could not be measured, so it is neither a pass nor a clean tree; the warning band is unknown)")
         return EXIT_NOT_CONFIRMED
     found.update(band_findings(members, cfg))
-    found.update(layout_baselined(paths, cfg))
+    found.update(layout_baselined(paths, cfg, vendored))
     current = {key: f.value for key, f in found.items()}
 
     if init:
@@ -957,10 +939,11 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print(f"structure ratchet: the near-limit band is not recorded in {cfg.baseline} yet -- "
               "`--update-baseline` records it, and from then on it may only shrink")
     baseline.update((f"band:{b}", n) for b, n in band_base.items())
-    if not layout_recorded and cfg.shape:  # same upgrade rule for the extra roots and placement
-        baseline.update((k, f.value) for k, f in found.items() if _kind(k) in ("root", "place"))
-        print(f"structure ratchet: the extra roots and placement are not recorded in {cfg.baseline} yet -- "
-              "`--update-baseline` records them, and from then on they may only shrink")
+    for group, kinds in layout.RECORD_GROUPS.items():  # the same upgrade rule per layout field; a recorded count stays
+        if group not in recorded and cfg.shape:
+            baseline.update((k, f.value) for k, f in found.items() if _kind(k) in kinds and k not in baseline)
+            print(f"structure ratchet: the {layout.GROUP_TITLES[group]} are not recorded in {cfg.baseline} yet -- "
+                  "`--update-baseline` records them, and from then on they may only shrink")
     if not update:
         print("\n".join(near_band.warning_lines(members, cfg.near_limit_ratio)))  # informational: never the exit code
         return _check(paths, cfg, found, baseline)

@@ -157,7 +157,7 @@ class TestFallbackInfo:
 
 
 class TestFetchRates:
-    @patch("src.fx_rates.requests.get")
+    @patch("src.fx_rates.pooled_request")
     def test_fetch_rates_range(self, mock_get, fx_db):
         from src.fx_rates import fetch_rates_range
 
@@ -174,7 +174,7 @@ class TestFetchRates:
         assert "2025-01-15" in rates
         assert rates["2025-01-15"]["USD"] == 1.028
 
-    @patch("src.fx_rates.requests.get")
+    @patch("src.fx_rates.pooled_request")
     def test_fetch_single_date(self, mock_get, fx_db):
         from src.fx_rates import fetch_single_date
 

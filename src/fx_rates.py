@@ -11,6 +11,7 @@ import requests
 
 from src.database import get_connection, _get_table_columns, _create_fx_rates_table, parse_locked_fields
 from src.logger import get_logger
+from src.pooled_http import pooled_request
 
 log = get_logger(__name__)
 
@@ -71,7 +72,7 @@ def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30
     for base in FRANKFURTER_BASES:
         url = f"{base}/{path.lstrip('/')}"
         try:
-            resp = requests.get(url, params=params, timeout=timeout_s)
+            resp = pooled_request("GET", url, params=params, timeout=timeout_s)
             resp.raise_for_status()
             return resp
         except Exception as exc:

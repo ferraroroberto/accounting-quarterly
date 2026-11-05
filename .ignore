@@ -2,6 +2,7 @@
 /scripts/box_lock_gate.ps1
 /scripts/comment_ratchet.py
 /scripts/conventions_ratchet.py
+/scripts/conventions_readers.py
 /scripts/dead_code_ratchet.py
 /scripts/doc_refs_ratchet.py
 /scripts/docs_ratchet.py
@@ -12,4 +13,5 @@
 /scripts/structure_band.py
 /scripts/structure_layout.py
 /scripts/structure_ratchet.py
+/src/pooled_http.py
 # END vendored-copies

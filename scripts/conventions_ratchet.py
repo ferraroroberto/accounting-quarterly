@@ -1,4 +1,4 @@
-"""Ratchet on fleet conventions that one AST rule can check in every repo.
+"""Ratchet on fleet conventions that one AST or markup rule can check in every repo.
 
 The global instructions carry a handful of rules that each repo used to guard
 with its own one-off test (no-window spawns, one constant-time secret compare,
@@ -23,11 +23,23 @@ The rules (each one quotes its global-instruction line in docs/conventions-ratch
   * `secret-compare` -- a `hmac.compare_digest` / `secrets.compare_digest` call
     outside the repo's declared helper (`secret_helpers`);
   * `git-wrapper` -- a spawn whose program is literally `git` outside the
-    repo's declared wrapper (`git_wrappers`).
+    repo's declared wrapper (`git_wrappers`);
+  * `password-input-vendored` -- a password input (`type="password"`,
+    `type: 'password'`, `.type = 'password'`, `setAttribute('type', 'password')`)
+    in a web file (`.html`, `.htm`, `.js`, `.mjs`, `.cjs`, `.ts`, `.jsx`, `.tsx`,
+    `.vue`, `.svelte`, `.jinja`, `.jinja2`, `.j2`) outside a `_vendored/sign-in/`
+    folder: every app's sign-in goes through the one vendored component. It is
+    the only rule that reads web files, and it reads no `.py`;
+  * `login-lockout` -- a FastAPI password route (`@<x>.post(".../login")`) in a
+    module that does not import the vendored `login_lockout`, or whose handler
+    never calls `retry_after(...)`: every password route answers `429` with
+    `Retry-After` after repeated wrong passwords.
 
-Test modules are skipped by every rule except `no-window`. A single call keeps
-its exception with a `# <rule>-exempt: <reason>` comment on its own lines or in
-the comment block right above it; a marker with no reason exempts nothing.
+Test modules (and every file under a `tests/` or `test/` folder) are skipped by
+every rule except `no-window`. A single call keeps its exception with a
+`# <rule>-exempt: <reason>` comment on its own lines or in the comment block
+right above it (in a web file the comment is `<!-- ... -->`, `// ...` or
+`/* ... */`); a marker with no reason exempts nothing.
 
 Opt-in, per adopter, in its own `.fleet.toml`:
 
@@ -42,7 +54,8 @@ Opt-in, per adopter, in its own `.fleet.toml`:
 
 Exit codes: 0 pass or not enabled; 1 a count rose, or the baseline is missing /
 a mode was refused; 2 bad configuration, baseline or arguments; 3 NOT CONFIRMED
-(`git` unusable, a tracked `.py` file that does not parse or cannot be read) --
+(`git` unusable, a tracked `.py` file that does not parse, or a scanned file
+that cannot be read) --
 the gate fails on it. Modes: `check`, `--init`, `--update-baseline` (shrink
 only), `--update-baseline --allow-additions` (shows in review).
 
@@ -74,9 +87,21 @@ DEFAULT_PRINT_PATHS = ("app/", "src/")
 BUILTIN_EXCLUDES = ("**/node_modules/**", "**/.venv/**", "**/venv/**")
 GIT_TIMEOUT_S = 120
 
-RULES = ("no-window", "logging-not-print", "no-drive-path", "secret-compare", "git-wrapper")
+RULES = ("no-window", "logging-not-print", "no-drive-path", "secret-compare", "git-wrapper",
+         "password-input-vendored", "login-lockout")
 #: The rules a test module is held to; fixtures legitimately spell drive paths, raw compares and raw git.
 TEST_RULES = frozenset({"no-window"})
+#: The rules read from web files rather than Python source.
+WEB_RULES = frozenset({"password-input-vendored"})
+WEB_SUFFIXES = (".html", ".htm", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".vue", ".svelte",
+                ".jinja", ".jinja2", ".j2")
+#: The one folder a password input may live in: the vendored sign-in component, wherever it was copied.
+SIGN_IN_DIR = "_vendored/sign-in"
+_PASSWORD_INPUT = re.compile(
+    r"""\btype\s*[=:]\s*(["'`]?)password\1(?![\w-])"""
+    r"""|setAttribute\(\s*["'`]type["'`]\s*,\s*["'`]password["'`]""",
+    re.IGNORECASE,
+)
 #: The config key a rule cannot run without, because it names the repo's own helper.
 REQUIRED_KEYS = {"secret-compare": "secret_helpers", "git-wrapper": "git_wrappers"}
 
@@ -97,6 +122,8 @@ _DRIVE_ROOT = re.compile(r"[A-Za-z]:[\\/]?\Z")
 _CLI_MODULES = frozenset({"argparse", "click", "typer", "fire", "optparse"})
 _PLATFORM_EXPRS = frozenset({"sys.platform", "os.name", "platform.system"})
 _GIT_PROGRAMS = frozenset({"git", "git.exe"})
+#: The vendored lock-out module's name, wherever the app copied it.
+LOCKOUT_MODULE = "login_lockout"
 
 EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 
@@ -247,12 +274,20 @@ def _under(path: str, prefix: str) -> bool:
 
 
 def in_scope(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
-    """Is `path` a Python file this stage scans? A vendored copy's debt belongs to the repo it came from."""
-    if not path.endswith(".py"):
+    """Is `path` a Python or web file this stage scans? A vendored copy's debt belongs to the repo it came from."""
+    if not (path.endswith(".py") or is_web_file(path)):
         return False
     if any(_under(path, d) for d in vendored):
         return False
     return not matches_any(path, BUILTIN_EXCLUDES + cfg.exclude)
+
+
+def is_web_file(path: str) -> bool:
+    return path.lower().endswith(WEB_SUFFIXES)
+
+
+def in_sign_in_component(path: str) -> bool:
+    return path.startswith(SIGN_IN_DIR + "/") or f"/{SIGN_IN_DIR}/" in path
 
 
 def is_test_module(path: str) -> bool:
@@ -266,6 +301,12 @@ def is_test_module(path: str) -> bool:
 def rules_for(path: str, cfg: Config) -> frozenset[str]:
     """The enabled rules that apply to one in-scope file."""
     rules = set(cfg.rules)
+    if is_web_file(path):
+        rules &= WEB_RULES
+        if in_sign_in_component(path):
+            rules.discard("password-input-vendored")
+    else:
+        rules -= WEB_RULES
     if is_test_module(path):
         rules &= TEST_RULES
     if not any(_under(path, p) for p in cfg.print_paths):
@@ -355,6 +396,40 @@ def _program(call: ast.Call) -> str:
     return ""
 
 
+def _is_login_route(decorator: ast.expr) -> bool:
+    """`@<x>.post("/api/login")`, by position or `path=`: the route a password is posted to."""
+    if not (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "post"):
+        return False
+    paths = [*decorator.args[:1], *(kw.value for kw in decorator.keywords if kw.arg == "path")]
+    return any(isinstance(p, ast.Constant) and isinstance(p.value, str)
+               and p.value.rstrip("/").rsplit("/", 1)[-1] == "login" for p in paths)
+
+
+def _calls_retry_after(handler: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if (isinstance(func, ast.Attribute) and func.attr == "retry_after") or (
+                    isinstance(func, ast.Name) and func.id == "retry_after"):
+                return True
+    return False
+
+
+def _login_lockout_hits(scanner: _Scanner) -> list[tuple[ast.AST, str, str]]:
+    """A login route with no lock-out: the module never imports it, or the handler never checks it."""
+    found: list[tuple[ast.AST, str, str]] = []
+    for decorator, handler in scanner.login_routes:
+        if not scanner.imports_lockout:
+            message = f"login route `{handler.name}` in a module that does not import {LOCKOUT_MODULE}"
+        elif not _calls_retry_after(handler):
+            message = f"login route `{handler.name}` never calls retry_after() before the password check"
+        else:
+            continue
+        found.append((decorator, "login-lockout", message))
+    return found
+
+
 def _writes_to_a_file(call: ast.Call) -> bool:
     """`print(x, file=fh)` writes data, not a log line; `file=sys.stdout/stderr` is still console output."""
     for kw in call.keywords:
@@ -373,6 +448,8 @@ class _Scanner(ast.NodeVisitor):
         self.print_shadowed = False
         self.cli = False  # a `__main__` guard or a CLI-parser import: the module prints its output
         self.posix_depth = 0  # inside a branch that never runs on Windows
+        self.imports_lockout = False
+        self.login_routes: list[tuple[ast.expr, ast.FunctionDef | ast.AsyncFunctionDef]] = []
 
     def _resolve(self, func: ast.expr) -> str:
         dotted = _dotted(func)
@@ -388,11 +465,17 @@ class _Scanner(ast.NodeVisitor):
                 self.aliases[alias.asname or alias.name] = alias.name
             if alias.name.split(".")[0] in _CLI_MODULES:
                 self.cli = True
+            if alias.name.split(".")[-1] == LOCKOUT_MODULE:
+                self.imports_lockout = True
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if (node.module or "").split(".")[0] in _CLI_MODULES:
             self.cli = True
+        if (node.module or "").split(".")[-1] == LOCKOUT_MODULE:
+            self.imports_lockout = True
         for alias in node.names:
+            if alias.name == LOCKOUT_MODULE:
+                self.imports_lockout = True
             if node.module in _TRACKED_MODULES:
                 self.aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
             if (alias.asname or alias.name) == "print":
@@ -407,6 +490,8 @@ class _Scanner(ast.NodeVisitor):
         self._visit_def(node)
 
     def _visit_def(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        if "login-lockout" in self.rules:
+            self.login_routes.extend((d, node) for d in node.decorator_list if _is_login_route(d))
         for expr in [*node.decorator_list, node.args, *([node.returns] if node.returns else [])]:
             self.visit(expr)
         self._visit_block(node.body, posix=False)
@@ -463,10 +548,38 @@ def _window(node: ast.AST, lines: list[str]) -> list[str]:
     return lines[above:end]
 
 
-def _exempt(rule: str, window: list[str]) -> bool:
+def _exempt(rule: str, window: list[str], punct: str = " :#\t") -> bool:
     """A `# <rule>-exempt: <reason>` marker in the window; a bare marker exempts nothing."""
     marker = f"{rule}-exempt"
-    return any(line.split(marker, 1)[1].strip(" :#\t") for line in window if marker in line)
+    return any(line.split(marker, 1)[1].strip(punct) for line in window if marker in line)
+
+
+def _web_comment_line(text: str) -> bool:
+    """A line that opens a comment, or ends one it did not open (`... -->`): code with a trailing comment is not."""
+    text = text.strip()
+    if text.startswith(("//", "/*", "*", "<!--")):
+        return True
+    return text.endswith(("-->", "*/")) and "<!--" not in text and "/*" not in text
+
+
+def scan_web(source: bytes | str, path: str, rules: frozenset[str]) -> list[Hit]:
+    """Hits of the web rules in one HTML or JS file, read line by line."""
+    if "password-input-vendored" not in rules:
+        return []
+    text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+    lines = text.splitlines()
+    hits = []
+    for number, line in enumerate(lines, start=1):
+        if not _PASSWORD_INPUT.search(line):
+            continue
+        above = number - 1
+        while above > 0 and _web_comment_line(lines[above - 1]):
+            above -= 1
+        # A web marker sits in `<!-- ... -->` or `/* ... */`: the closing punctuation is not a reason.
+        if not _exempt("password-input-vendored", lines[above:number], " :#/*-<>!\t"):
+            hits.append(Hit(path, number, "password-input-vendored",
+                            f"password input outside the vendored sign-in component ({SIGN_IN_DIR}/)"))
+    return hits
 
 
 def scan_source(source: bytes | str, path: str, rules: frozenset[str]) -> list[Hit]:
@@ -485,7 +598,7 @@ def scan_source(source: bytes | str, path: str, rules: frozenset[str]) -> list[H
     text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
     lines = text.splitlines()
     hits = []
-    for node, rule, message in scanner.hits:
+    for node, rule, message in [*scanner.hits, *_login_lockout_hits(scanner)]:
         if rule == "logging-not-print" and (scanner.print_shadowed or scanner.cli or is_cli_path(path)):
             continue
         if not _exempt(rule, _window(node, lines)):
@@ -519,10 +632,10 @@ def tracked_files(root: Path) -> list[str]:
 
 
 def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, list[Hit]]:
-    """Hits per in-scope tracked `.py` file (only files with at least one).
+    """Hits per in-scope tracked `.py` or web file (only files with at least one).
 
-    Only Python source is read: a baseline, this stage's or any other ratchet's,
-    is JSON and never counts as a hit or as evidence against one.
+    Only Python source and web files are read: a baseline, this stage's or any
+    other ratchet's, is JSON and never counts as a hit or as evidence against one.
     """
     found: dict[str, list[Hit]] = {}
     for path in tracked_files(root):
@@ -534,7 +647,8 @@ def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, l
             continue  # tracked but deleted in the working tree: nothing to read
         except OSError as exc:
             raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
-        hits = scan_source(source, path, rules_for(path, cfg))
+        rules = rules_for(path, cfg)
+        hits = scan_web(source, path, rules) if is_web_file(path) else scan_source(source, path, rules)
         if hits:
             found[path] = hits
     return found

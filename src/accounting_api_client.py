@@ -9,6 +9,7 @@ import requests
 
 from src.config import load_config
 from src.logger import get_logger
+from src.pooled_http import pooled_request
 
 log = get_logger(__name__)
 
@@ -67,9 +68,9 @@ class AccountingAPIClient:
     def _request(self, method: str, path: str, *, headers: Optional[dict[str, str]] = None, **kwargs) -> Any:
         url = f"{self.cfg.base_url}{path}"
         try:
-            resp = requests.request(
-                method=method,
-                url=url,
+            resp = pooled_request(
+                method,
+                url,
                 headers=headers or self._headers(),
                 timeout=self.timeout_s,
                 **kwargs,

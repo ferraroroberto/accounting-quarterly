@@ -25,7 +25,9 @@ structure_band = { src = "scripts/structure_band.py", sha = "3b708fd3c54ab7b93b0
 box_lock_gate = { src = "scripts/box_lock_gate.ps1", sha = "98cdb1b7727d12a5c233580478e6fae40d98e6f3", dest = "scripts/box_lock_gate.ps1" }
 static_ratchet = { src = "scripts/static_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/static_ratchet.py" }
 comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "41ca8abd5a2755a06bd8a620a72967211161d58e", dest = "scripts/comment_ratchet.py" }
-conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "41ca8abd5a2755a06bd8a620a72967211161d58e", dest = "scripts/conventions_ratchet.py" }
+conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "8e66d3f9565ce79eaaa64ec006ed3283dad06a69", dest = "scripts/conventions_ratchet.py" }
+conventions_readers = { src = "scripts/conventions_readers.py", sha = "8e66d3f9565ce79eaaa64ec006ed3283dad06a69", dest = "scripts/conventions_readers.py" }
+pooled_http = { src = "src/pooled_http.py", sha = "8e66d3f9565ce79eaaa64ec006ed3283dad06a69", dest = "src/pooled_http.py" }
 runtime_write_ratchet = { src = "scripts/runtime_write_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/runtime_write_ratchet.py" }
 runtime_write_resolve = { src = "scripts/runtime_write_resolve.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/runtime_write_resolve.py" }
 
@@ -134,6 +136,13 @@ baseline = ".docstring-ratchet-baseline.json"
 enabled  = true
 baseline = ".conventions-ratchet-baseline.json"
 rules    = ["no-window", "logging-not-print", "no-drive-path"]
+
+# Outbound HTTP goes through the pooled session, not a bare requests call.
+[[conventions_ratchet.must_use]]
+call   = ["requests.get", "requests.post", "requests.put", "requests.patch", "requests.delete", "requests.head", "requests.request"]
+helper = ["src/pooled_http.py"]
+why    = "CLAUDE.md: outbound-connection discipline, one pooled session"
+paths  = ["app/", "src/"]
 
 # [runtime_write_ratchet] -- scripts/runtime_write_ratchet.py fails when a tracked
 # Python file gains a write target (open for writing, Path.write_*, mkdir, a log

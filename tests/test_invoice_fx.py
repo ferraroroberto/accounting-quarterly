@@ -308,7 +308,7 @@ class TestBackfill:
         assert set(SUPPORTED_CURRENCIES) <= set(found)
         assert "AUD" in found
 
-    @patch("src.fx_rates.requests.get")
+    @patch("src.fx_rates.pooled_request")
     def test_backfill_to_today_stores_rates_for_currencies_in_use(self, mock_get, db):
         from src.fx_rates import backfill_to_today
 
@@ -325,7 +325,7 @@ class TestBackfill:
     def test_backfill_never_raises_on_network_failure(self, db):
         from src.fx_rates import backfill_to_today
 
-        with patch("src.fx_rates.requests.get", side_effect=Exception("offline")):
+        with patch("src.fx_rates.pooled_request", side_effect=Exception("offline")):
             stored = backfill_to_today(db_path=db)
         assert stored == 0
 

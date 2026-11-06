@@ -9,16 +9,12 @@ Where code goes in this repo. The repo's shape is `streamlit` (declared in `.fle
 - `scripts/` — operator CLIs (`close_quarter.py`) and the gate. `app/` never imports from here.
 - `tests/` — the pytest suite, one `test_<module>.py` per module under test.
 - `docs/` — durable reference, one file per feature, plus the architecture diagram.
-- `data/` — runtime input and output. Contents are git-ignored; only the `.gitkeep` placeholders are tracked.
+- `data/` — runtime input and output (the rotating log in `data/logs/` included). Contents are git-ignored; only the `.gitkeep` placeholders are tracked.
 - `.claude/` — the project's agent commands and skills.
 
 ## Subpackages
 
 `app/views/` holds one module per view, each exposing `render()`; `app/` keeps the entry point and the helpers the views share. `src/database/` is the SQLite layer, split by table group (`connection`, `schema`, `transactions`, `invoices`, `tax`) behind an `__init__` that re-exports every name. `tests/tax/` holds the tax engine's tests, which leaves `tests/` at 36 modules. `src/returns/` holds the tax-return engines, one module per AEAT model plus the OSS return. `src/close/` holds the quarter-close pipeline's shared types (`context`) and its Stripe report and gestor pack (`gestor_pack`); `src/close_pipeline.py` keeps the steps and `run_all` and re-exports those names. `src/` holds 40 modules, at the 40-module limit, so it takes no new module. New logic goes in a `src/<domain>/` subpackage (for example `src/<domain>/<module>.py`), and a new test in `tests/<domain>/` mirroring it.
-
-## Declared exceptions
-
-- `logs/` is a declared extra root (`extra_roots` in `.fleet.toml`). It keeps a tracked `.gitkeep` so the runtime log folder exists in a fresh clone; `src/logger.py` also creates it on first use, and everything else in it is git-ignored.
 
 ## Known deviations from the shape
 

@@ -107,7 +107,7 @@ Stripe API (live charges)
 
 Transaction data is fetched from the Stripe API and stored in the local SQLite database (`data/accounting.db`). On subsequent loads the dashboard reads pre-classified data directly from the database — the classifier only runs when new data is fetched from the API, or when you run `scripts/close_quarter.py reclassify` after a rule change. Non-EUR amounts are converted to EUR using ECB exchange rates, fetched from the Frankfurter API when a date's rate is missing.
 
-Layout: `src/` holds the business logic (no Streamlit), `app/` the Streamlit tabs, `scripts/close_quarter.py` the quarter-close CLI, `tests/` the pytest suite, and `data/`, `tmp/` and `logs/` the git-ignored runtime output. The module-by-module tree is [`docs/project-structure.md`](docs/project-structure.md); the structure diagram is [`docs/architecture.mmd`](docs/architecture.mmd). Where new code goes is in [`docs/layout.md`](docs/layout.md).
+Layout: `src/` holds the business logic (no Streamlit), `app/` the Streamlit tabs, `scripts/close_quarter.py` the quarter-close CLI, `tests/` the pytest suite, and `data/` (logs in `data/logs/`) and `tmp/` the git-ignored runtime output. The module-by-module tree is [`docs/project-structure.md`](docs/project-structure.md); the structure diagram is [`docs/architecture.mmd`](docs/architecture.mmd). Where new code goes is in [`docs/layout.md`](docs/layout.md).
 
 ---
 

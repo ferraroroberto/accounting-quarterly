@@ -30,6 +30,12 @@ first segment is not a tracked root folder (another repo's tree reads the same
 as a typo). `allow_refs` lists
 intentional pointers as globs over the reported reference.
 
+A repo can also list names it has retired (`retired`): a removed `--flag`, a
+`/skill`, an env var, a config key. Each occurrence of such a term, on word
+boundaries in prose, code spans and fenced blocks alike, is a hit that prints
+its `why`. With `retired` set, `SKILL.md` files and the Markdown files they link
+to are read for retired terms too (and for nothing else). Off while the list is empty.
+
 Opt-in, per adopter, in its own `.fleet.toml`:
 
     [doc_refs_ratchet]
@@ -38,6 +44,7 @@ Opt-in, per adopter, in its own `.fleet.toml`:
     include    = ["README.md", "CLAUDE.md", "docs/"] # path prefixes; the default
     exclude    = ["docs/reports/**"]                 # globs
     allow_refs = ["docs/layout.md", ":8000"]         # globs over the reported text
+    retired    = [{ term = "--old-flag", why = "flag removed; use --new-flag" }]
 
 Exit codes: 0 pass or not enabled; 1 a new dangling reference, or the baseline is
 missing / a mode was refused; 2 bad configuration, baseline or arguments; 3 NOT
@@ -60,6 +67,7 @@ import sys
 import tomllib
 from collections import Counter
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote
 
@@ -82,7 +90,12 @@ EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 # would not resolve in a consumer tree), the documented exception.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "allow_refs"}
+_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "allow_refs", "retired"}
+_RETIRED_KEYS = {"term", "why"}
+#: A retired term matches only as a whole name: a longer word or kebab-case name containing it is another name.
+_NAME_CHARS = r"\w-"
+SKILL_FILE = "SKILL.md"
+RETIRED_PREFIX = "retired:"
 
 _FENCE_OPEN = re.compile(r"^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE = re.compile(r"^[ \t>]*(`{3,}|~{3,})[ \t]*$")
@@ -116,19 +129,27 @@ class NotConfirmed(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Retired:
+    term: str
+    why: str
+
+
+@dataclass(frozen=True)
 class Config:
     baseline: str
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     allow_refs: tuple[str, ...]
+    retired: tuple[Retired, ...] = ()
 
 
 @dataclass(frozen=True)
 class Ref:
     line: int
-    kind: str  # "path", "link", "module" or "port"
-    key: str  # what is resolved and recorded: a repo-relative path, `-m <module>` or `:<port>`
+    kind: str  # "path", "link", "module", "port" or "retired"
+    key: str  # what is resolved and recorded: a repo-relative path, `-m <module>`, `:<port>` or `retired:<term>`
     text: str  # the line it sits on, for messages
+    why: str = ""  # a retired term's replacement, printed with the hit
 
 
 @dataclass(frozen=True)
@@ -150,6 +171,28 @@ def _str_list(table: dict[str, object], name: str, default: tuple[str, ...]) -> 
     if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
         raise ConfigError(f"[doc_refs_ratchet] {name} must be a list of non-empty strings")
     return tuple(value)
+
+
+def _retired_list(table: dict[str, object]) -> tuple[Retired, ...]:
+    value = table.get("retired", [])
+    if not isinstance(value, list):
+        raise ConfigError("[doc_refs_ratchet] retired must be a list of { term, why } tables")
+    out: list[Retired] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ConfigError(f"[doc_refs_ratchet] retired entry {item!r} must be a {{ term, why }} table")
+        unknown = sorted(set(item) - _RETIRED_KEYS)
+        if unknown:
+            raise ConfigError(f"[doc_refs_ratchet] retired entry: unknown key(s) {', '.join(unknown)}")
+        term, why = item.get("term"), item.get("why")
+        if not isinstance(term, str) or not term.strip():
+            raise ConfigError(f"[doc_refs_ratchet] retired entry {item!r} needs a non-empty `term`")
+        if not isinstance(why, str) or not why.strip():
+            raise ConfigError(f"[doc_refs_ratchet] retired term {term!r} needs a non-empty `why` (what to use instead)")
+        if any(r.term == term for r in out):
+            raise ConfigError(f"[doc_refs_ratchet] retired term {term!r} is listed twice")
+        out.append(Retired(term, why))
+    return tuple(out)
 
 
 def parse_config(toml_text: str) -> Config | None:
@@ -180,6 +223,7 @@ def parse_config(toml_text: str) -> Config | None:
         _str_list(table, "include", DEFAULT_INCLUDE),
         _str_list(table, "exclude", ()),
         _str_list(table, "allow_refs", ()),
+        _retired_list(table),
     )
 
 
@@ -255,15 +299,18 @@ def _under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + "/")
 
 
-def in_scope(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
-    """Is `path` a Markdown file this stage reads?"""
+def _readable_markdown(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
+    """A Markdown file that is neither vendored nor excluded, wherever it sits."""
     if PurePosixPath(path).suffix.lower() != ".md":
-        return False
-    if not any(_under(path, p) for p in cfg.include):
         return False
     if any(_under(path, d) for d in vendored):
         return False
     return not matches_any(path, BUILTIN_EXCLUDES + cfg.exclude)
+
+
+def in_scope(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
+    """Is `path` a Markdown file this stage reads for every kind of reference?"""
+    return _readable_markdown(path, cfg, vendored) and any(_under(path, p) for p in cfg.include)
 
 
 def is_generated(text: str) -> bool:
@@ -399,9 +446,29 @@ def _port_refs(spans: list[str], prose: str) -> list[int]:
     return ports
 
 
+@lru_cache(maxsize=8)
+def _retired_patterns(retired: tuple[Retired, ...]) -> tuple[tuple[Retired, re.Pattern[str]], ...]:
+    return tuple(
+        (r, re.compile(rf"(?<![{_NAME_CHARS}]){re.escape(r.term)}(?![{_NAME_CHARS}])")) for r in retired
+    )
+
+
+def _retired_refs(no: int, text: str, retired: tuple[Retired, ...], context: str) -> list[Ref]:
+    """One `Ref` per whole-name occurrence of a retired term in `text` (fences and code spans included)."""
+    return [
+        Ref(no, "retired", RETIRED_PREFIX + r.term, context, r.why)
+        for r, pattern in _retired_patterns(retired)
+        for _ in pattern.finditer(text)
+    ]
+
+
 def scan_text(text: str, doc_path: str, top_dirs: frozenset[str], root_py: frozenset[str] = frozenset(),
-              check_ports: bool = True) -> list[Ref]:
-    """Every reference in one Markdown file; raises `NotConfirmed` on an unclosed block."""
+              check_ports: bool = True, retired: tuple[Retired, ...] = (), check_refs: bool = True) -> list[Ref]:
+    """Every reference in one Markdown file; raises `NotConfirmed` on an unclosed block.
+
+    `retired` terms are read everywhere outside HTML comments, fenced blocks included.
+    `check_refs=False` reads nothing else (the `SKILL.md` files a repo adds for retired terms only).
+    """
     refs: list[Ref] = []
     parent = str(PurePosixPath(doc_path).parent)
     doc_dir = "" if parent == "." else parent
@@ -410,6 +477,7 @@ def scan_text(text: str, doc_path: str, top_dirs: frozenset[str], root_py: froze
     prev_tail = ""
     for no, raw in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
         if fence:
+            refs.extend(_retired_refs(no, raw, retired, raw.strip()))
             close = _FENCE_CLOSE.match(raw)
             if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= fence[1]:
                 fence = None
@@ -418,15 +486,19 @@ def scan_text(text: str, doc_path: str, top_dirs: frozenset[str], root_py: froze
             opener = _FENCE_OPEN.match(raw)
             if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
                 fence = (opener.group(1)[0], len(opener.group(1)), no)
+                refs.extend(_retired_refs(no, raw, retired, raw.strip()))
                 continue
         line, inside = _blank_html_comments(raw, comment_opened is not None)
         if inside and comment_opened is None:
             comment_opened = no
         elif not inside:
             comment_opened = None
+        context = raw.strip()
+        refs.extend(_retired_refs(no, line, retired, context))
+        if not check_refs:
+            continue
         located, prose = split_code_spans(line)
         spans = [span for _, span in located]
-        context = raw.strip()
         for start, span in located:
             if not _is_qualified(line[:start], prev_tail):
                 refs.extend(Ref(no, kind, key, context) for kind, key in _code_refs(span, top_dirs, root_py))
@@ -496,6 +568,8 @@ def build_tree(files: list[str], port: int | None) -> Tree:
 
 
 def resolves(ref: Ref, tree: Tree) -> bool:
+    if ref.kind == "retired":
+        return False  # a retired name has no resolution; removing the text is the only fix
     if ref.kind == "port":
         return tree.port is None or ref.key == f":{tree.port}"
     if ref.kind == "module":
@@ -512,29 +586,56 @@ def resolves(ref: Ref, tree: Tree) -> bool:
     return bool(dot) and "/" in module and (f"{module}.py" in tree.files or f"{module}/__init__.py" in tree.files)
 
 
+def _read_doc(root: Path, path: str) -> str | None:
+    """The text of one tracked doc; None when it is deleted in the working tree or generated."""
+    try:
+        raw = (root / path).read_bytes()
+    except FileNotFoundError:
+        return None  # tracked but deleted in the working tree: nothing to read
+    except OSError as exc:
+        raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise NotConfirmed(f"{path}: is not valid UTF-8: {exc}") from exc
+    return None if is_generated(text) else text
+
+
+def skill_scope(root: Path, files: list[str], cfg: Config, vendored: tuple[str, ...], tree: Tree,
+                root_py: frozenset[str]) -> set[str]:
+    """Every `SKILL.md` plus the Markdown files each links to, where retired names linger."""
+    known = set(files)
+    picked = {p for p in files if PurePosixPath(p).name == SKILL_FILE and _readable_markdown(p, cfg, vendored)}
+    for skill in sorted(picked):
+        text = _read_doc(root, skill)
+        if text is None:
+            continue
+        try:
+            links = scan_text(text, skill, tree.top_dirs, root_py, check_ports=False)
+        except NotConfirmed as exc:
+            raise NotConfirmed(f"{skill}: {exc}") from exc
+        picked |= {r.key for r in links
+                   if r.kind == "link" and r.key in known and _readable_markdown(r.key, cfg, vendored)}
+    return picked
+
+
 def dangling_tree(root: Path, cfg: Config, vendored: tuple[str, ...], port: int | None) -> dict[str, list[Ref]]:
     """Dangling, non-allowed references per in-scope file (only files with at least one)."""
     files = tracked_files(root)
     tree = build_tree(files, port)
     root_py = frozenset(f[:-3] for f in files if "/" not in f and f.endswith(".py"))
+    retired_only = skill_scope(root, files, cfg, vendored, tree, root_py) if cfg.retired else set()
     candidates: dict[str, list[Ref]] = {}
     for path in files:
-        if not in_scope(path, cfg, vendored):
+        full = in_scope(path, cfg, vendored)
+        if not full and path not in retired_only:
+            continue
+        text = _read_doc(root, path)
+        if text is None:
             continue
         try:
-            raw = (root / path).read_bytes()
-        except FileNotFoundError:
-            continue  # tracked but deleted in the working tree: nothing to read
-        except OSError as exc:
-            raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
-        try:
-            text = raw.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise NotConfirmed(f"{path}: is not valid UTF-8: {exc}") from exc
-        if is_generated(text):
-            continue
-        try:
-            refs = scan_text(text, path, tree.top_dirs, root_py, check_ports=port is not None)
+            refs = scan_text(text, path, tree.top_dirs, root_py, check_ports=port is not None,
+                             retired=cfg.retired, check_refs=full)
         except NotConfirmed as exc:
             raise NotConfirmed(f"{path}: {exc}") from exc
         bad = [r for r in refs if not resolves(r, tree) and not matches_any(r.key, cfg.allow_refs)]
@@ -617,7 +718,11 @@ def _report_added(added: dict[str, Counter[str]], found: dict[str, list[Ref]]) -
         for ref in found[path]:
             if extra[ref.key] > 0:
                 extra[ref.key] -= 1
-                print(f"  {path}:{ref.line}: {ref.kind} `{ref.key}` does not exist  | {ref.text[:140]}")
+                if ref.kind == "retired":
+                    name = ref.key[len(RETIRED_PREFIX):]
+                    print(f"  {path}:{ref.line}: retired name `{name}`: {ref.why}  | {ref.text[:140]}")
+                else:
+                    print(f"  {path}:{ref.line}: {ref.kind} `{ref.key}` does not exist  | {ref.text[:140]}")
 
 
 def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
@@ -678,7 +783,8 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     if added:
         _report_added(added, found)
         print("  Point the reference at what exists now, or drop it. An intentional pointer (another repo's path, "
-              "a file an adopter creates) goes in [doc_refs_ratchet] allow_refs; or (reviewed) raise the baseline "
+              "a file an adopter creates) goes in [doc_refs_ratchet] allow_refs (`retired:<term>` for a retired "
+              "name); or (reviewed) raise the baseline "
               "with `--update-baseline --allow-additions`.")
         return EXIT_RISE
     ports = f"; port :{port}" if port is not None else "; no port declared, ports unchecked"

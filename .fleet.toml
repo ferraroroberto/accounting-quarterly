@@ -17,7 +17,7 @@ extra_roots = ["logs"]
 [vendored]
 docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/docs_ratchet.py" }
 dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/dead_code_ratchet.py" }
-doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/doc_refs_ratchet.py" }
+doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "dedb86e0f212d66f247f4aacb6c15d13b1154651", dest = "scripts/doc_refs_ratchet.py" }
 instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/instruction_ratchet.py" }
 structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "bf11a867c5678c6a4869a6265bf6cecf1d12d1a2", dest = "scripts/structure_ratchet.py" }
 structure_layout = { src = "scripts/structure_layout.py", sha = "701616d3ac1b8a34640b60f7186ca1fd8e50a19f", dest = "scripts/structure_layout.py" }

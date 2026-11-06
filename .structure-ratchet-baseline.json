@@ -1,7 +1,7 @@
 {
   "version": 1,
   "band": {"files": 0, "functions": 6},
-  "root_extras": ["logs"],
+  "root_extras": [],
   "shape_contract": {
     "root_files": [],
     "redundant": [],

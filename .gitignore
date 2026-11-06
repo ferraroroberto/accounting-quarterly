@@ -5,9 +5,8 @@
 __pycache__
 *.pyc
 
-# ── Runtime logs (keep folder structure via .gitkeep) ─────────────────────────
-/logs/*
-!/logs/.gitkeep
+# ── Runtime logs (src/logger.py creates data/logs on first use) ─────────────────────────
+/data/logs/
 
 # ── Data folders – ignore all files, keep folder structure via .gitkeep ───────
 /data/raw/*

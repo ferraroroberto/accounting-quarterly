@@ -26,7 +26,7 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
                 pass  # Never crash the app over a log rotation failure
 
 
-def get_logger(name: str, logs_dir: str = "logs") -> logging.Logger:
+def get_logger(name: str, logs_dir: str = "data/logs") -> logging.Logger:
     Path(logs_dir).mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(name)
 

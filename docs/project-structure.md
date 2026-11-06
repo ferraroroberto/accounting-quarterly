@@ -141,6 +141,7 @@
 │   ├── accounting.db              # SQLite database (git-ignored)
 │   ├── processed/                 # Generated Excel reports
 │   ├── cache/                     # Temporary cache files
+│   ├── logs/                      # Rotating daily log files (git-ignored)
 │   └── invoices/
 │       ├── in/                    # Invoices received (PDFs)
 │       └── out/                   # Invoices produced (PDFs)
@@ -151,5 +152,4 @@
 │   └── close_quarter/             # Output of scripts/close_quarter.py (git-ignored)
 │       ├── invoice_copy_log.json  # Cumulative "already swept" invoice manifest
 │       └── <year>_Q<quarter>/     # Swept invoices, Stripe report, reconciliation/filing sheet .md, accountant's notes + draft email
-└── logs/                          # Rotating daily log files
 ```

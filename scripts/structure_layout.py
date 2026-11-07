@@ -59,6 +59,7 @@ TYPES: dict[str, frozenset[str] | None] = {
     "css": frozenset({".css"}),
     "js": frozenset({".js", ".mjs"}),
     "tooling": _CODE | _SHELL | _CONFIG | {".md", ".html", ".txt"},
+    "patch": frozenset({".patch"}),
     "any": None,
 }
 #: A file with this name is allowed in every typed folder: a package's own readme.
@@ -132,7 +133,7 @@ SHAPES = {
         ("skills", "tests"), ("hooks", "scripts", "architecture"), homes=("skills/*/",),
         root_files=("install.ps1",), folder_types=(("skills", "tooling"), ("hooks", "tooling")),
     ),
-    "node": Shape(("src",), ("test", "scripts"), folder_types=(("test", "code"),)),
+    "node": Shape(("src",), ("test", "scripts", "patches"), folder_types=(("test", "code"), ("patches", "patch"))),
     "static-site": Shape(
         (), ("css", "js", "assets", "games", "content", "site", "scripts"),
         root_files=("*.html",), folder_types=(("css", "css"), ("js", "js")),

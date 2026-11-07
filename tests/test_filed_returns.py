@@ -18,6 +18,7 @@ import sqlite3
 
 import pytest
 
+from src import filed_reference
 from src.database import get_connection
 from src.filed_returns import (
     FiledReturnParseError,
@@ -32,7 +33,6 @@ from src.filed_returns import (
     parse_pdf,
     period_to_quarter,
 )
-from src import filed_reference
 
 T, V = "F1", "F2"  # template font (Helvetica), value font (Courier)
 PAGE_H = 842

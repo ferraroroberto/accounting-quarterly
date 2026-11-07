@@ -8,10 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from app.data_loader import first_data_year
-from app.year_picker import year_choices
 from app.excel_download import render_excel_download
-from src.payments_loader import get_classified_for_period
-from src.periods import quarter_datetime_bounds
+from app.year_picker import year_choices
 from src.aggregator import (
     build_monthly_table,
     calculate_grand_totals,
@@ -20,6 +18,8 @@ from src.aggregator import (
 )
 from src.classifier import eur_default_foreign_warning, validate_classifications
 from src.excel_exporter import generate_report_filename
+from src.payments_loader import get_classified_for_period
+from src.periods import quarter_datetime_bounds
 
 
 @dataclass

@@ -53,6 +53,7 @@ from src.database import (
     get_invoices,
     load_tax_snapshots_for_period,
 )
+from src.filed_reference import find_filing, load_reference_filings
 from src.filing_sheet import render_filing_sheet
 from src.fx_rates import (
     FX_CROSS_CHECK_THRESHOLD_PCT,
@@ -83,6 +84,7 @@ from src.reconciliation import (
     result_boxes,
     to_markdown,
 )
+from src.returns.oss_return import compute_eu_b2c_threshold
 from src.social_security import (
     bank_export_kwargs,
     get_ss_payments,
@@ -90,10 +92,8 @@ from src.social_security import (
     upsert_ss_payments,
 )
 from src.stripe_client import backfill_billing_details_from_raw_source
-from src.returns.oss_return import compute_eu_b2c_threshold
 from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
-from src.filed_reference import find_filing, load_reference_filings
 from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
 
 log = get_logger(__name__)

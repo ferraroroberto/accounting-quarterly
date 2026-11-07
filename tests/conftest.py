@@ -13,7 +13,6 @@ import src.vendor_registry as vendor_registry
 from src._json_store import JsonCache
 from src.models import Payment
 
-
 APPTEST_TIMEOUT_S = 30
 """Script-run timeout for every AppTest in the suite. Streamlit's 3 s default is
 shorter than a heavy page needs on a loaded machine, so a correct page fails."""

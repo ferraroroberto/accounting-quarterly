@@ -7,33 +7,33 @@ from typing import Any
 
 import streamlit as st
 
-from app.views.annual_pack import render as render_annual_pack
 from app.flash import flash, show_flash
+from app.views.annual_pack import render as render_annual_pack
 from app.year_picker import year_choices
 from src.config import reload_config
 from src.database import (
     add_tax_entry,
     delete_tax_entry,
+    get_connection,
     get_tax_entries,
     load_tax_snapshots_for_period,
     upsert_filing_status,
-    get_connection,
 )
 from src.declared_reports import get_declared_report
 from src.returns.oss_return import compute_eu_b2c_threshold
 from src.tax_deadlines import SHEET_MODELS
 from src.tax_engine import compute_and_persist_tax_snapshots, get_tax_calendar
-from src.tax_snapshot_codec import decode_snapshot
 from src.tax_models import (
-    EUB2CThresholdResult,
     MODELO130_BOX_LABELS,
     MODELO303_BOX_LABELS,
+    EUB2CThresholdResult,
     Modelo130Result,
     Modelo303Result,
     Modelo347Result,
     Modelo349Result,
     OSSReturnResult,
 )
+from src.tax_snapshot_codec import decode_snapshot
 
 _DISCLAIMER = (
     "> **This tool pre-fills tax data for review purposes only. It does not constitute tax advice. "

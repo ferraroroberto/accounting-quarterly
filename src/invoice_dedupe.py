@@ -38,7 +38,6 @@ from datetime import date
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Optional
 
-from src.periods import quarter_iso_bounds
 from src.database import (
     get_connection,
     get_invoices,
@@ -46,6 +45,7 @@ from src.database import (
     set_invoice_exclusion,
 )
 from src.logger import get_logger
+from src.periods import quarter_iso_bounds
 
 log = get_logger(__name__)
 

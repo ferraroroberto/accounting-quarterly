@@ -18,7 +18,12 @@ if str(ROOT) not in sys.path:
 
 import src.database as database  # noqa: E402
 import src.database.connection as db_connection  # noqa: E402
-from src.database import get_invoice_by_filename, init_db, update_invoice_fields, upsert_invoice  # noqa: E402
+from src.database import (  # noqa: E402
+    get_invoice_by_filename,
+    init_db,
+    update_invoice_fields,
+    upsert_invoice,
+)
 from src.fixed_assets import (  # noqa: E402
     ASSET_CLASSES,
     FixedAsset,

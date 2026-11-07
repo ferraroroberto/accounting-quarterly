@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from src.database.connection import get_connection
 from src.logger import get_logger
 from src.tax_codes import (
     EXCLUDED_REASONS,
@@ -17,7 +18,6 @@ from src.tax_codes import (
     legacy_vat_treatment_for,
     normalize_vat_id,
 )
-from src.database.connection import get_connection
 
 log = get_logger(__name__)
 

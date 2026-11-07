@@ -10,7 +10,6 @@ from src.database import get_uploaded_files, init_db, record_upload
 from src.exceptions import ConfigError, StaleClassificationError
 from src.tax_codes import derive_geo_region_from_nif
 
-
 # --- Greek VAT prefix -------------------------------------------------------
 
 @pytest.mark.parametrize("vat", ["EL123456789", "el123456789", "GR123456789"])

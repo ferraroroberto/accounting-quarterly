@@ -27,8 +27,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Any, Iterable, Optional
 
-from src.periods import quarter_date_bounds
 from src.logger import get_logger
+from src.periods import quarter_date_bounds
 
 log = get_logger(__name__)
 

@@ -7,10 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from src.logger import get_logger
-from src.models import ClassifiedPayment, Payment
 from src.database.connection import get_connection
 from src.database.schema import _ensure_transactions_schema, _get_table_columns
+from src.logger import get_logger
+from src.models import ClassifiedPayment, Payment
 
 log = get_logger(__name__)
 

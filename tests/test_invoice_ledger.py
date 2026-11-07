@@ -17,6 +17,9 @@ from src.database import (
     update_invoice_fields,
     upsert_invoice,
 )
+from src.returns.modelo_130 import compute_modelo_130
+from src.returns.modelo_303 import compute_modelo_303
+from src.returns.modelo_347 import compute_modelo_347
 from src.tax_codes import (
     EXCLUDED_REASONS,
     TAX_TREATMENTS_IN,
@@ -24,9 +27,6 @@ from src.tax_codes import (
     derive_tax_treatment_for_invoice,
     normalize_vat_id,
 )
-from src.returns.modelo_130 import compute_modelo_130
-from src.returns.modelo_303 import compute_modelo_303
-from src.returns.modelo_347 import compute_modelo_347
 
 # Synthetic, structurally valid ids — not real taxpayers.
 ES_CIF = "B00000000"

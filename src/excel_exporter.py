@@ -7,7 +7,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from src.aggregator import GEO_REGIONS, build_monthly_table, calculate_grand_totals, calculate_regional_totals
+from src.aggregator import (
+    GEO_REGIONS,
+    build_monthly_table,
+    calculate_grand_totals,
+    calculate_regional_totals,
+)
 from src.exceptions import StaleClassificationError
 from src.logger import get_logger
 from src.models import ClassifiedPayment

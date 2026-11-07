@@ -7,7 +7,14 @@ import json
 import shutil
 from pathlib import Path
 
-from src.close.context import CloseContext, StepResult, is_in_quarter, quarter_payments, same_file, write_if_changed
+from src.close.context import (
+    CloseContext,
+    StepResult,
+    is_in_quarter,
+    quarter_payments,
+    same_file,
+    write_if_changed,
+)
 from src.database import get_invoices
 from src.declared_reports import (
     declared_vs_live_drift,

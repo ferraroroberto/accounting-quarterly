@@ -92,12 +92,13 @@ from src.close_pipeline import (  # noqa: E402
     STEP_ORDER,
     CloseContext,
     StepResult,
+    freeze_sent_stripe_report,
     run_all,
+    step_archive,
     step_compute,
     step_dedupe,
     step_fx,
     step_gestor_pack,
-    step_archive,
     step_ocr,
     step_reconcile,
     step_reta,
@@ -105,7 +106,6 @@ from src.close_pipeline import (  # noqa: E402
     step_stripe,
     step_sweep,
     step_vendors,
-    freeze_sent_stripe_report,
     write_stripe_report,
 )
 from src.database import init_db  # noqa: E402

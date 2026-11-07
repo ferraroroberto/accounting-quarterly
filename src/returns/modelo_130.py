@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Optional
 
-from src.fixed_assets import DepreciationResult, capital_asset_invoice_ids, depreciation_for_period
+from src.fixed_assets import (
+    DepreciationResult,
+    capital_asset_invoice_ids,
+    depreciation_for_period,
+)
 from src.logger import get_logger
 from src.periods import quarter_iso_bounds
 from src.tax_data import (
@@ -25,7 +29,7 @@ from src.tax_data import (
     net_amount,
     tax_settings,
 )
-from src.tax_models import AuditEntry, MODELO130_BOX_FIELDS, Modelo130Result
+from src.tax_models import MODELO130_BOX_FIELDS, AuditEntry, Modelo130Result
 
 log = get_logger(__name__)
 

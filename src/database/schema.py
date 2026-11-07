@@ -5,6 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from src.database import connection
+from src.database.connection import get_connection
 from src.logger import get_logger
 from src.tax_codes import (
     derive_geo_region_from_nif,
@@ -12,8 +14,6 @@ from src.tax_codes import (
     derive_vat_treatment_for_invoice,
     normalize_vat_id,
 )
-from src.database import connection
-from src.database.connection import get_connection
 
 log = get_logger(__name__)
 

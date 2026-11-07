@@ -18,8 +18,8 @@ from src.database import (
     upsert_invoice,
 )
 from src.vendor_registry import (
-    ACTIVITY_IAE,
     ACTIVITIES,
+    ACTIVITY_IAE,
     Vendor,
     VendorRegistry,
     apply_vendor_registry,

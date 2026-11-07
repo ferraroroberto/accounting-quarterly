@@ -23,9 +23,13 @@ from pathlib import Path
 from typing import Optional
 
 from src.logger import get_logger
-from src.returns.modelo_347 import Modelo347PurchasesResult, compute_modelo_347, compute_modelo_347_purchases
-from src.returns.modelo_390 import MODELO390_LABELS, Modelo390Result, compute_modelo_390
 from src.pl_by_activity import ACTIVITY_LABELS, PLByActivity, compute_pl_by_activity
+from src.returns.modelo_347 import (
+    Modelo347PurchasesResult,
+    compute_modelo_347,
+    compute_modelo_347_purchases,
+)
+from src.returns.modelo_390 import MODELO390_LABELS, Modelo390Result, compute_modelo_390
 from src.tax_data import load_app_config
 from src.tax_models import Modelo347Result
 
@@ -178,6 +182,7 @@ def to_markdown(pack: AnnualPack) -> str:
 def write_pack(pack: AnnualPack, out_dir: str | Path) -> list[Path]:
     """Write the markdown and the CSVs into ``out_dir``; returns the written paths."""
     target = Path(out_dir)
+    # runtime-write-exempt: the caller-supplied pack output folder
     target.mkdir(parents=True, exist_ok=True)
     y = pack.year
     files = {
@@ -190,6 +195,7 @@ def write_pack(pack: AnnualPack, out_dir: str | Path) -> list[Path]:
     written = []
     for name, text in files.items():
         path = target / name
+        # runtime-write-exempt: a file inside the caller-supplied pack output folder
         path.write_text(text, encoding="utf-8")
         written.append(path)
     log.info("ℹ️ Annual pack %s written to %s (%d files)", y, target, len(written))

@@ -14,8 +14,11 @@ import pytest
 
 from src.database import init_db, load_classified_payments, upsert_payments
 from src.models import Payment
-from src.stripe_client import backfill_billing_details_from_raw_source, backfill_fee_split, fetch_charges
-
+from src.stripe_client import (
+    backfill_billing_details_from_raw_source,
+    backfill_fee_split,
+    fetch_charges,
+)
 
 # ---------------------------------------------------------------------------
 # fetch_charges: billing_details fallback

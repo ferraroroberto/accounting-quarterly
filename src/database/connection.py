@@ -5,13 +5,14 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "accounting.db"
 
 
 def get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
     path = Path(db_path) if db_path else _DB_PATH
+    # runtime-write-exempt: the db_path argument, defaulting to the data/ database
     path.parent.mkdir(parents=True, exist_ok=True)
+    # runtime-write-exempt: the db_path argument, defaulting to the data/ database
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

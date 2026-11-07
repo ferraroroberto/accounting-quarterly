@@ -7,7 +7,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from src.aggregator import GEO_REGIONS, build_monthly_table, calculate_grand_totals, calculate_regional_totals
+from src.aggregator import (
+    GEO_REGIONS,
+    build_monthly_table,
+    calculate_grand_totals,
+    calculate_regional_totals,
+)
 from src.exceptions import StaleClassificationError
 from src.logger import get_logger
 from src.models import ClassifiedPayment
@@ -238,6 +243,7 @@ def create_excel_report(
     _write_import_sheet(ws_import, payments)
 
     output_path = Path(output_path)
+    # runtime-write-exempt: the caller-supplied report path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_path)
     log.info("ℹ️ Excel report saved: %s", output_path)

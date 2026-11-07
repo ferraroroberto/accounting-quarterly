@@ -5,9 +5,9 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from src.logger import get_logger
 from src.database.connection import get_connection
 from src.database.schema import SNAPSHOT_COMPUTED, SNAPSHOT_FILED, _ensure_audit_schema
+from src.logger import get_logger
 
 log = get_logger(__name__)
 

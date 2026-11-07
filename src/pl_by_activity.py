@@ -38,6 +38,7 @@ from typing import Any, Callable, Optional
 
 from src.fixed_assets import capital_asset_invoice_ids, depreciation_for_period
 from src.logger import get_logger
+from src.returns.modelo_130 import compute_modelo_130
 from src.tax_data import (
     get_tax_entries_total,
     get_vat_base,
@@ -48,7 +49,6 @@ from src.tax_data import (
     load_expense_invoices_ytd,
     load_income_invoices_ytd,
 )
-from src.returns.modelo_130 import compute_modelo_130
 from src.vendor_registry import ACTIVITIES, ACTIVITY_IAE
 
 log = get_logger(__name__)

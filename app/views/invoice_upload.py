@@ -8,14 +8,14 @@ import pandas as pd
 import streamlit as st
 
 from app.flash import flash, show_flash
-from src.config import load_config
-from src.database import get_uploaded_files, record_upload
-from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.accounting_api_client import (
     AccountingAPIClient,
     AccountingAPIError,
     load_accounting_api_config,
 )
+from src.config import load_config
+from src.database import get_uploaded_files, record_upload
+from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
 
 log = get_logger(__name__)
@@ -49,6 +49,7 @@ def _render_upload_panel(
     st.caption(f"Directory: `{invoice_dir}`")
 
     dir_path = resolve_invoice_dir(direction)
+    # runtime-write-exempt: the configured invoice folder, user data outside the code tree
     dir_path.mkdir(parents=True, exist_ok=True)
 
     all_files = [str(p.relative_to(dir_path)) for p in scan_invoice_pdfs(direction)]

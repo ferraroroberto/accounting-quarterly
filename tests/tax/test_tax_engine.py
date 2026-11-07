@@ -18,7 +18,6 @@ from src.returns.oss_return import compute_oss_return
 from src.tax_engine import compute_and_persist_tax_snapshots
 from src.tax_snapshot_codec import decode_snapshot
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

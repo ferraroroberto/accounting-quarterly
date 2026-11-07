@@ -16,13 +16,19 @@ from pathlib import Path
 import pytest
 
 import src.database.connection as db_connection
+import src.filed_reference as filed_reference
 import src.fx_rates as fx_rates
 import src.invoice_ingest as invoice_ingest
-import src.filed_reference as filed_reference
 from src import close_pipeline as cp
 from src.classifier import classify_payment
 from src.close_pipeline import CloseContext, StepResult
-from src.database import get_invoices, init_db, upsert_classified, upsert_invoice, upsert_payments
+from src.database import (
+    get_invoices,
+    init_db,
+    upsert_classified,
+    upsert_invoice,
+    upsert_payments,
+)
 from src.declared_reports import get_declared_report
 from src.filed_returns import FiledReturn, store_filed_return
 from src.models import Payment

@@ -75,6 +75,7 @@ class CloseContext:
     @property
     def quarter_dir(self) -> Path:
         d = self.out_root / f"{self.year}_Q{self.quarter}"
+        # runtime-write-exempt: a folder under the caller-chosen close output root
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -103,7 +104,9 @@ def write_if_changed(path: Path, text: str) -> bool:
     """Write ``text`` to ``path`` unless it already holds exactly that. True if written."""
     if path.exists() and path.read_text(encoding="utf-8") == text:
         return False
+    # runtime-write-exempt: a caller-supplied file under the close output root
     path.parent.mkdir(parents=True, exist_ok=True)
+    # runtime-write-exempt: a caller-supplied file under the close output root
     path.write_text(text, encoding="utf-8")
     return True
 

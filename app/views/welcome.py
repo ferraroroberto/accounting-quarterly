@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-
 # The dashboard tabs after Welcome, in display order: the one place the tab names live
 # (``streamlit_app.py`` builds its ``st.tabs`` from ``TAB_NAMES``), so this guide cannot drift from them.
 TAB_GUIDE: list[tuple[str, str]] = [

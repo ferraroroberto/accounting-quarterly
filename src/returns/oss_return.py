@@ -17,7 +17,12 @@ from src.tax_data import (
     load_classified_for_quarter,
     load_classified_ytd,
 )
-from src.tax_models import AuditEntry, EUB2CThresholdResult, OSSCountryRow, OSSReturnResult
+from src.tax_models import (
+    AuditEntry,
+    EUB2CThresholdResult,
+    OSSCountryRow,
+    OSSReturnResult,
+)
 from src.vat_rules import (
     EU_B2C_THRESHOLD_EUR,
     EU_B2C_TREATMENTS,

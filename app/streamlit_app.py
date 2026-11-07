@@ -8,10 +8,19 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 
-from src.database import get_invoice_stats, get_latest_stripe_sync_at, get_transaction_count_db, init_db
-from src.fx_rates import backfill_to_today, get_latest_fx_sync_at, get_rate_count, init_fx_table
+from src.database import (
+    get_invoice_stats,
+    get_latest_stripe_sync_at,
+    get_transaction_count_db,
+    init_db,
+)
+from src.fx_rates import (
+    backfill_to_today,
+    get_latest_fx_sync_at,
+    get_rate_count,
+    init_fx_table,
+)
 from src.social_security import get_ss_count
-
 
 # ── One-shot startup initialisation ─────────────────────────────────────────
 # Streamlit re-executes the whole script on every widget interaction. Without
@@ -100,24 +109,24 @@ from app.views.welcome import TAB_NAMES
  tab_filing_sheet, tab_validation, tab_audit) = st.tabs(TAB_NAMES)
 
 # --- Tab imports and rendering ---
-from app.views.welcome import render as render_welcome
+from app.views.configuration import render as render_configuration
+from app.views.currency import render as render_currency
+from app.views.filing_sheet import render as render_filing_sheet
+from app.views.fixed_assets import render as render_fixed_assets
+from app.views.history import render as render_history
+from app.views.invoice_dedupe import render as render_invoice_dedupe
+from app.views.invoice_explorer import render as render_invoice_explorer
+from app.views.invoice_ledger import render as render_invoice_ledger
+from app.views.invoice_ocr import render as render_invoice_ocr
+from app.views.invoice_upload import render as render_invoice_upload
 from app.views.quarter_report import render as render_quarter_report
 from app.views.social_security import render as render_social_security
-from app.views.tax_obligations import render as render_tax_obligations
-from app.views.transaction_browser import render as render_transaction_browser
-from app.views.history import render as render_history
-from app.views.currency import render as render_currency
-from app.views.configuration import render as render_configuration
-from app.views.invoice_upload import render as render_invoice_upload
-from app.views.invoice_ocr import render as render_invoice_ocr
-from app.views.invoice_ledger import render as render_invoice_ledger
-from app.views.invoice_dedupe import render as render_invoice_dedupe
-from app.views.vendor_registry import render as render_vendor_registry
-from app.views.fixed_assets import render as render_fixed_assets
-from app.views.invoice_explorer import render as render_invoice_explorer
-from app.views.filing_sheet import render as render_filing_sheet
-from app.views.tax_validation import render as render_tax_validation
 from app.views.tax_audit import render as render_tax_audit
+from app.views.tax_obligations import render as render_tax_obligations
+from app.views.tax_validation import render as render_tax_validation
+from app.views.transaction_browser import render as render_transaction_browser
+from app.views.vendor_registry import render as render_vendor_registry
+from app.views.welcome import render as render_welcome
 
 with tab_welcome:
     render_welcome()

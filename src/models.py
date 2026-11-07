@@ -5,7 +5,6 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
-
 ActivityType = Literal["COACHING", "NEWSLETTER", "ILLUSTRATIONS", "UNKNOWN"]
 GeoRegion = Literal["SPAIN", "EU_NOT_SPAIN", "OUTSIDE_EU", "UNKNOWN"]
 

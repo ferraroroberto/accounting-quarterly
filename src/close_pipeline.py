@@ -53,6 +53,7 @@ from src.database import (
     get_invoices,
     load_tax_snapshots_for_period,
 )
+from src.filed_reference import find_filing, load_reference_filings
 from src.filing_sheet import render_filing_sheet
 from src.fx_rates import (
     FX_CROSS_CHECK_THRESHOLD_PCT,
@@ -83,6 +84,7 @@ from src.reconciliation import (
     result_boxes,
     to_markdown,
 )
+from src.returns.oss_return import compute_eu_b2c_threshold
 from src.social_security import (
     bank_export_kwargs,
     get_ss_payments,
@@ -90,10 +92,8 @@ from src.social_security import (
     upsert_ss_payments,
 )
 from src.stripe_client import backfill_billing_details_from_raw_source
-from src.returns.oss_return import compute_eu_b2c_threshold
 from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
-from src.filed_reference import find_filing, load_reference_filings
 from src.vendor_registry import apply_vendor_registry, find_unmatched_invoices
 
 log = get_logger(__name__)
@@ -136,12 +136,15 @@ def step_sweep(ctx: CloseContext) -> StepResult:
             rel = str(pdf.relative_to(base))
             if rel in known[direction] or rel in already:
                 continue
+            # runtime-write-exempt: the quarter sweep folder under the close output root
             shutil.copy2(pdf, dest / flat_sweep_name(prefix, rel))
             copied.append(rel)
             res.changes.append(f"copied {prefix:<3} {rel}")
         manifest[direction] = sorted(already | set(copied))
     manifest["last_run_at"] = datetime.now().isoformat(timespec="seconds")
+    # runtime-write-exempt: the manifest folder under the close output root
     ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    # runtime-write-exempt: the manifest file under the close output root
     ctx.manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     res.info.append(f"Folder: {dest}")
@@ -599,15 +602,19 @@ def step_archive(ctx: CloseContext) -> StepResult:
         target = dest / f.relative_to(src_dir)
         if same_file(f, target):
             continue
+        # runtime-write-exempt: the archive folder configured as app.archive_dir
         target.parent.mkdir(parents=True, exist_ok=True)
+        # runtime-write-exempt: the archive folder configured as app.archive_dir
         shutil.copy2(f, target)
         res.changes.append(f"copied {f.relative_to(src_dir)}")
     snapshot = dest / "database" / f"accounting_{date.today():%Y%m%d}.db"
     if not snapshot.exists():
+        # runtime-write-exempt: the database snapshot folder inside the configured archive
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         conn = ctx.connect()
         try:
             # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
+            # runtime-write-exempt: the database snapshot file inside the configured archive
             with sqlite3.connect(snapshot) as out:
                 conn.backup(out)
         finally:

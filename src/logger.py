@@ -18,8 +18,10 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
             super().rotate(source, dest)
         except PermissionError:
             try:
+                # runtime-write-exempt: the rotated log file of a handler under the configured logs folder
                 shutil.copy2(source, dest)
                 # Truncate the source so new entries start fresh
+                # runtime-write-exempt: the rotated log file of a handler under the configured logs folder
                 with open(source, "w", encoding="utf-8"):
                     pass
             except Exception:
@@ -27,6 +29,7 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
 
 
 def get_logger(name: str, logs_dir: str = "data/logs") -> logging.Logger:
+    # runtime-write-exempt: the logs_dir argument, defaulting to data/logs
     Path(logs_dir).mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(name)
 

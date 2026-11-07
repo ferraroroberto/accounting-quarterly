@@ -13,15 +13,19 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from app.views.fixed_assets import render_register_from_invoice
 from app.flash import flash, show_flash
+from app.views.fixed_assets import render_register_from_invoice
 from src.database import (
     get_invoices,
     parse_locked_fields,
     unlock_invoice_fields,
     update_invoice_fields,
 )
-from src.fx_rates import FX_CROSS_CHECK_THRESHOLD_PCT, get_exchange_differences, record_exchange_difference
+from src.fx_rates import (
+    FX_CROSS_CHECK_THRESHOLD_PCT,
+    get_exchange_differences,
+    record_exchange_difference,
+)
 from src.logger import get_logger
 from src.tax_codes import EXCLUDED_REASONS, TAX_TREATMENTS_IN, TAX_TREATMENTS_OUT
 from src.vendor_registry import load_registry

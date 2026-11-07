@@ -1,6 +1,6 @@
-"""One-off cleanup for accounting-quarterly#191: reset non-activity `invoices.activity_type` to NULL.
+"""One-off cleanup: reset non-activity `invoices.activity_type` to NULL.
 
-Before #191 `upsert_invoice` copied the OCR expense `category` (SOFTWARE, TRAINING, ...)
+Older versions of `upsert_invoice` copied the OCR expense `category` (SOFTWARE, TRAINING, ...)
 into `activity_type` when no activity was given, so old rows mix two vocabularies. The
 column now holds IAE activities only (COACHING | NEWSLETTER | ILLUSTRATIONS). The copied
 value is still in the row's `category` column, so nothing is lost by clearing it.

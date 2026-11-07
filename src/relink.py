@@ -182,9 +182,11 @@ def backup_database(db_path: Optional[str | Path] = None, label: str = "pre-reli
     try:
         src_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
         dest_dir = src_file.parent / "backups"
+        # runtime-write-exempt: the backups folder beside the live database
         dest_dir.mkdir(exist_ok=True)
         dest = dest_dir / f"accounting_{datetime.now():%Y%m%d-%H%M%S}_{label}.db"
         # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
+        # runtime-write-exempt: a backup file in the folder beside the live database
         with sqlite3.connect(dest) as out:
             conn.backup(out)
     finally:

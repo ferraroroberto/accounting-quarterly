@@ -9,11 +9,15 @@ import streamlit as st
 
 from app.data_loader import first_data_year
 from app.excel_download import render_excel_download
-from src.payments_loader import get_classified_for_period
-from src.periods import quarter_datetime_bounds
-from src.aggregator import calculate_grand_totals, calculate_regional_totals, get_transaction_count
+from src.aggregator import (
+    calculate_grand_totals,
+    calculate_regional_totals,
+    get_transaction_count,
+)
 from src.database import get_transaction_date_bounds
 from src.excel_exporter import generate_report_filename
+from src.payments_loader import get_classified_for_period
+from src.periods import quarter_datetime_bounds
 
 
 def _quarters_to_load() -> list[tuple[int, int]]:

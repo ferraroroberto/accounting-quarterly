@@ -20,8 +20,8 @@ from src.database import (
 )
 from src.fx_rates import (
     SUPPORTED_CURRENCIES,
-    get_exchange_differences,
     get_currencies_in_use,
+    get_exchange_differences,
     recompute_stored_invoice_fx,
     record_exchange_difference,
     resolve_invoice_amounts,

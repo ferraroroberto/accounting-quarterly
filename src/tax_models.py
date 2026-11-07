@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, Optional
 
-
 # COMPUTED / FILED are also the ``tax_computation_snapshots.status`` values.
 FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "COMPUTED", "FILED"]
 

@@ -13,7 +13,11 @@ from datetime import datetime
 import openpyxl
 import pytest
 
-from src.classifier import classify_payment, eur_default_foreign_warning, foreign_customer_hint
+from src.classifier import (
+    classify_payment,
+    eur_default_foreign_warning,
+    foreign_customer_hint,
+)
 from src.database import init_db, load_classified_payments, upsert_payments
 from src.declared_reports import (
     DeclaredLine,
@@ -37,7 +41,6 @@ from src.returns.modelo_303 import compute_modelo_303
 from src.returns.modelo_349 import compute_modelo_349
 from src.returns.oss_return import compute_eu_b2c_threshold, compute_oss_return
 from src.vat_rules import vat_amount_on_base, vat_base_from_inclusive, vat_treatment
-
 
 # ---------------------------------------------------------------------------
 # Helpers

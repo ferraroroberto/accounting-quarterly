@@ -9,7 +9,12 @@ from typing import Optional
 
 import requests
 
-from src.database import get_connection, _get_table_columns, _create_fx_rates_table, parse_locked_fields
+from src.database import (
+    _create_fx_rates_table,
+    _get_table_columns,
+    get_connection,
+    parse_locked_fields,
+)
 from src.logger import get_logger
 from src.pooled_http import pooled_request
 

@@ -10,14 +10,14 @@ import streamlit as st
 
 from app.data_loader import invalidate_cache
 from app.year_picker import year_choices
-from src.payments_loader import get_classified_for_period
-from src.periods import quarter_datetime_bounds
 from src.classifier import eur_default_foreign_warning
 from src.database import (
     get_transaction_count_db,
     search_transactions_raw,
 )
 from src.models import ClassifiedPayment
+from src.payments_loader import get_classified_for_period
+from src.periods import quarter_datetime_bounds
 from src.rules_engine import load_rules, save_rules
 
 

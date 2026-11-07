@@ -207,6 +207,7 @@ def main(argv: list[str]) -> int:
             if baseline_path.exists():
                 print(f"docstring ratchet: {args.baseline} already exists; --init never overwrites it")
                 return 2
+            # runtime-write-exempt: the baseline file named by --baseline
             baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
             print(f"docstring ratchet: wrote {args.baseline} with {sum(1 for c in current.values() if c)} "
                   f"file(s), {sum(current.values())} reference(s)")
@@ -225,6 +226,7 @@ def main(argv: list[str]) -> int:
                 print("docstring ratchet: nothing written -- remove the references, "
                       "or raise the baseline with --allow-additions")
                 return 1
+            # runtime-write-exempt: the baseline file named by --baseline
             baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
             print(f"docstring ratchet: {args.baseline} now has {sum(1 for c in current.values() if c)} "
                   f"file(s), {sum(current.values())} reference(s)")

@@ -57,6 +57,7 @@ class JsonCache:
 
     def save(self, data: dict[str, Any], path: str | Path | None = None) -> None:
         resolved = Path(path) if path else self._default_path
+        # runtime-write-exempt: the store's caller-supplied or configured JSON file
         with open(resolved, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         self._cache = data

@@ -7,7 +7,14 @@ import json
 import shutil
 from pathlib import Path
 
-from src.close.context import CloseContext, StepResult, is_in_quarter, quarter_payments, same_file, write_if_changed
+from src.close.context import (
+    CloseContext,
+    StepResult,
+    is_in_quarter,
+    quarter_payments,
+    same_file,
+    write_if_changed,
+)
 from src.database import get_invoices
 from src.declared_reports import (
     declared_vs_live_drift,
@@ -171,6 +178,7 @@ def _pack_stripe_report(ctx: CloseContext, freeze: bool, res: StepResult) -> tup
     else:
         create_excel_report(payments, dest, ctx.year, ctx.quarter, f"Q{ctx.quarter}_{ctx.year}")
         state["report_digest"] = digest
+        # runtime-write-exempt: the state file inside the quarter output folder
         state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
         res.changes.append(f"wrote draft {dest} ({len(payments)} transactions)")
     res.warnings.append("the Stripe report is NOT frozen — rerun `gestor-pack --freeze` once it is the "
@@ -228,6 +236,7 @@ def _pack_invoices(ctx: CloseContext, res: StepResult) -> dict[str, int]:
     of invoices actually in the pack.
     """
     pack = ctx.quarter_dir / PACK_INVOICES_DIR
+    # runtime-write-exempt: the pack folder inside the quarter output folder
     pack.mkdir(exist_ok=True)
     wanted: dict[str, Path] = {}
     counts = {"in": 0, "out": 0}
@@ -255,6 +264,7 @@ def _pack_invoices(ctx: CloseContext, res: StepResult) -> dict[str, int]:
         res.changes.append(f"removed {PACK_INVOICES_DIR}/{stale.name} (no longer in the quarter's ledger)")
     for name, source in sorted(wanted.items()):
         if not same_file(source, pack / name):
+            # runtime-write-exempt: a file inside the quarter output pack folder
             shutil.copy2(source, pack / name)
             res.changes.append(f"copied {PACK_INVOICES_DIR}/{name}")
     res.info.append(f"Invoices: {counts['in']} received + {counts['out']} issued in {pack}"

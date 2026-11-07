@@ -41,6 +41,10 @@ The rules (each one quotes its global-instruction line in docs/conventions-ratch
     runs. An absolute path to a real install, and `shell: pwsh`, are not hits.
     It reads text lines, so a line that only names the stub to forbid it carries
     the marker on the same line or the line right above;
+  * `subprocess-timeout` -- a `subprocess.run/call/check_call/check_output` call with no
+    `timeout=` keyword (and no `**kwargs`, which may carry it): an unattended run that
+    hangs on the child never reports it. `Popen` and `asyncio.create_subprocess_*` are
+    not hits, because their lifetime is managed by the caller;
   * `must-use` -- a call to a dotted name (`sqlite3.connect`, `requests.get`) outside
     the file(s) the repo declares as the one home for that job. The repo lists one
     `[[conventions_ratchet.must_use]]` table per helper (`call`, `helper`, `why`,
@@ -148,7 +152,8 @@ BUILTIN_EXCLUDES = ("**/node_modules/**", "**/.venv/**", "**/venv/**")
 GIT_TIMEOUT_S = 120
 
 RULES = ("no-window", "logging-not-print", "no-drive-path", "secret-compare", "git-wrapper",
-         "password-input-vendored", "login-lockout", "no-pwsh-stub", "must-use")
+         "password-input-vendored", "login-lockout", "no-pwsh-stub", "must-use",
+         "subprocess-timeout")
 #: The rules a test module is held to; fixtures legitimately spell drive paths, raw compares and raw git.
 TEST_RULES = frozenset({"no-window"})
 #: The rules read from web files rather than Python source.
@@ -165,6 +170,8 @@ SPAWNS = frozenset({
     "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call", "subprocess.check_output",
     "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell",
 })
+#: The spawns that wait for the child to exit; `Popen` returns at once and its lifetime is managed elsewhere.
+BLOCKING_SPAWNS = frozenset({"subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output"})
 SECRET_COMPARES = frozenset({"hmac.compare_digest", "secrets.compare_digest"})
 #: Modules whose imports are always followed; a `must_use` entry adds its own call's module.
 _TRACKED_MODULES = frozenset({"subprocess", "asyncio", "hmac", "secrets"})
@@ -584,6 +591,9 @@ class _Scanner(ast.NodeVisitor):
             flagged = splat or any(kw.arg == "creationflags" for kw in node.keywords)
             if "no-window" in self.rules and not flagged and not self.posix_depth:
                 self.hits.append((node, "no-window", f"`{name}(...)` passes no creationflags="))
+            if ("subprocess-timeout" in self.rules and name in BLOCKING_SPAWNS
+                    and not any(kw.arg in (None, "timeout") for kw in node.keywords)):  # `**kw` may carry it
+                self.hits.append((node, "subprocess-timeout", f"`{name}(...)` passes no timeout= and can hang forever"))
         elif (isinstance(node.func, ast.Name) and node.func.id == "print" and "logging-not-print" in self.rules
               and not _writes_to_a_file(node)):
             self.hits.append((node, "logging-not-print", "`print(...)` in app code; use `logging`"))

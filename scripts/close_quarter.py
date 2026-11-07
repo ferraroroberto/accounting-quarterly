@@ -3,7 +3,7 @@
 Run from the repo root with the project venv:
     .venv/Scripts/python.exe scripts/close_quarter.py <subcommand> [options]
 
-Pipeline (issue #102) — run in this order, or all at once with `all`. Every
+Pipeline — run in this order, or all at once with `all`. Every
 step is idempotent and prints what it changed ("no changes" on a re-run):
     sweep         Copy new invoice PDFs (received + sent) not yet copied or
                   catalogued into tmp/close_quarter/<year>_Q<quarter>/, and
@@ -45,7 +45,7 @@ Other subcommands:
                   eur_default charges, EU B2C threshold).
                   --backfill-fee-split [--from D --to D] [--dry-run] instead
                   re-fetches the range (default: the quarter) and fills only
-                  the stored rows' Stripe / platform fee split (#135).
+                  the stored rows' Stripe / platform fee split.
     add-override  Add a geographic classification override (name/email
                   substring -> region) to classification_rules.json.
     reclassify    Re-run the classifier over STORED transactions from a date
@@ -67,7 +67,7 @@ Other subcommands:
                   snapshot into app.archive_dir/<year>T<quarter>/ (runbook step 19).
     relink        After moving or renaming invoice PDFs: re-point the stored
                   invoice records at their files (--manifest move records,
-                  content-hash fallback). Dry run unless --apply (#151).
+                  content-hash fallback). Dry run unless --apply.
 
 All outputs are written under tmp/, which is git-ignored.
 """
@@ -377,7 +377,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
 
 
 def cmd_relink(args: argparse.Namespace) -> int:
-    """Re-point invoice records at moved/renamed PDFs (#151). Exit 1 while anything is unresolved."""
+    """Re-point invoice records at moved/renamed PDFs. Exit 1 while anything is unresolved."""
     from src.relink import apply_relink, load_manifests, plan_relink
 
     init_db()
@@ -391,7 +391,7 @@ def cmd_relink(args: argparse.Namespace) -> int:
 
 
 def cmd_fx_backfill(args: argparse.Namespace) -> int:
-    """Fetch and store ECB rates from the last stored date up to today (#93).
+    """Fetch and store ECB rates from the last stored date up to today.
 
     Idempotent — safe to rerun at every close-quarter. Uses every currency
     seen in stored invoices/transactions, not just the hard-coded default list.
@@ -404,7 +404,7 @@ def cmd_fx_backfill(args: argparse.Namespace) -> int:
 
 
 def cmd_fx_recompute(args: argparse.Namespace) -> int:
-    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate (#93 follow-up).
+    """Re-resolve stored non-EUR invoices' EUR figures at the ECB rate.
 
     Invoices stored before the FX resolver existed (or before its most recent
     fix) still carry whatever EUR figure the LLM guessed. Writes unless

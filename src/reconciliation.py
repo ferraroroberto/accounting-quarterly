@@ -449,6 +449,7 @@ def save_catalogue(entries: Iterable[dict[str, Any]], path: Optional[str | Path]
     target = Path(path) if path is not None else CATALOGUE_PATH
     payload = {"divergences": [d.to_dict() for d in parsed]}
     tmp = target.with_suffix(target.suffix + ".tmp")
+    # runtime-write-exempt: the catalogue path argument; a sibling temp file for an atomic replace
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp.replace(target)
     log.info("ℹ️ Saved %d divergence catalogue entr%s to %s",

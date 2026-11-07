@@ -1,19 +1,4 @@
 {
   "version": 1,
-  "entries": [
-    {"key": "app/views/invoice_upload.py", "counts": {"unresolved": 1}},
-    {"key": "scripts/docstring_ratchet.py", "counts": {"unresolved": 2}},
-    {"key": "src/_json_store.py", "counts": {"unresolved": 1}},
-    {"key": "src/annual_pack.py", "counts": {"unresolved": 2}},
-    {"key": "src/close/context.py", "counts": {"unresolved": 3}},
-    {"key": "src/close/gestor_pack.py", "counts": {"unresolved": 3}},
-    {"key": "src/close_pipeline.py", "counts": {"unresolved": 7}},
-    {"key": "src/config.py", "counts": {"unresolved": 1}},
-    {"key": "src/database/connection.py", "counts": {"unresolved": 2}},
-    {"key": "src/excel_exporter.py", "counts": {"unresolved": 1}},
-    {"key": "src/logger.py", "counts": {"unresolved": 3}},
-    {"key": "src/reconciliation.py", "counts": {"unresolved": 1}},
-    {"key": "src/relink.py", "counts": {"unresolved": 2}},
-    {"key": "src/vendor_registry.py", "counts": {"unresolved": 1}}
-  ]
+  "entries": []
 }

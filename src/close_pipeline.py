@@ -136,12 +136,15 @@ def step_sweep(ctx: CloseContext) -> StepResult:
             rel = str(pdf.relative_to(base))
             if rel in known[direction] or rel in already:
                 continue
+            # runtime-write-exempt: the quarter sweep folder under the close output root
             shutil.copy2(pdf, dest / flat_sweep_name(prefix, rel))
             copied.append(rel)
             res.changes.append(f"copied {prefix:<3} {rel}")
         manifest[direction] = sorted(already | set(copied))
     manifest["last_run_at"] = datetime.now().isoformat(timespec="seconds")
+    # runtime-write-exempt: the manifest folder under the close output root
     ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    # runtime-write-exempt: the manifest file under the close output root
     ctx.manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     res.info.append(f"Folder: {dest}")
@@ -599,15 +602,19 @@ def step_archive(ctx: CloseContext) -> StepResult:
         target = dest / f.relative_to(src_dir)
         if same_file(f, target):
             continue
+        # runtime-write-exempt: the archive folder configured as app.archive_dir
         target.parent.mkdir(parents=True, exist_ok=True)
+        # runtime-write-exempt: the archive folder configured as app.archive_dir
         shutil.copy2(f, target)
         res.changes.append(f"copied {f.relative_to(src_dir)}")
     snapshot = dest / "database" / f"accounting_{date.today():%Y%m%d}.db"
     if not snapshot.exists():
+        # runtime-write-exempt: the database snapshot folder inside the configured archive
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         conn = ctx.connect()
         try:
             # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
+            # runtime-write-exempt: the database snapshot file inside the configured archive
             with sqlite3.connect(snapshot) as out:
                 conn.backup(out)
         finally:

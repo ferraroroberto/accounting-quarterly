@@ -49,6 +49,7 @@ def _render_upload_panel(
     st.caption(f"Directory: `{invoice_dir}`")
 
     dir_path = resolve_invoice_dir(direction)
+    # runtime-write-exempt: the configured invoice folder, user data outside the code tree
     dir_path.mkdir(parents=True, exist_ok=True)
 
     all_files = [str(p.relative_to(dir_path)) for p in scan_invoice_pdfs(direction)]

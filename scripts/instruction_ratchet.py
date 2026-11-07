@@ -5,8 +5,8 @@ session that reads an instruction file. The weekly prompt audit finds those a we
 refuses a new one at ship time, per file and per rule, against a committed baseline: it fails only when
 a count *rises*.
 
-It counts the audit's lint-tier rules (`RULES`; rule text and fix shapes in fleet-config's
-`.claude/skills/prompt-audit/rules.md`) over the root `CLAUDE.md` and `AGENTS.md`, `.claude/rules/*.md`,
+It counts the audit's lint-tier rules (`RULES`; what each one catches is tabled in
+docs/instruction-ratchet.md "What is counted") over the root `CLAUDE.md` and `AGENTS.md`, `.claude/rules/*.md`,
 `<skill_dir>/*/SKILL.md`, `extra_files` and the `.md` files a skill references (scope is `git ls-files
 --cached --others --exclude-standard`). Only hits that reach *violation* for the file's reader count: a
 single-vendor rule is advisory in an agent-neutral file. R-14 is the size cap (`SIZE_CAPS`); an over-cap
@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -30,6 +32,28 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+    try:
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print(f"instruction ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor the siblings "
+              "with it (manifest keys instruction_ratchet, instruction_frontmatter and instruction_repeats)")
+        sys.exit(3)
+
+
+_frontmatter = _load_sibling("instruction_frontmatter")
+frontmatter_error = _frontmatter.frontmatter_error
+frontmatter_field = _frontmatter.frontmatter_field
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -43,7 +67,8 @@ EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 # Vendor-verbatim: derives the flag locally, as `src/no_window.py` would not resolve in a consumer tree.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_CONFIG_KEYS = {"enabled", "baseline", "skill_dirs", "extra_files"}
+_CONFIG_KEYS = {"enabled", "baseline", "skill_dirs", "extra_files", "ci_expectations", "agents_pointer",
+                "claude_md_max_lines", "repeated_text_words", "repeated_text_global"}
 
 #: R-14 -- (unit, limit) per file kind; a skill reference doc has no cap.
 SIZE_CAPS: dict[str, tuple[str, int]] = {
@@ -52,7 +77,7 @@ SIZE_CAPS: dict[str, tuple[str, int]] = {
 }
 ALWAYS_ON_KINDS = frozenset({"claude-md", "agents-md", "rules"})
 
-#: Enforced rules -> (vendor tag, file scope, title), as tagged in rules.md.
+#: Enforced rules -> (vendor tag, file scope, title), as tagged in the prompt audit's rule list.
 RULES: dict[str, tuple[str, str, str]] = {
     "R-01": ("anthropic", "any", "No ALL-CAPS pressure"),
     "R-02": ("anthropic", "any", "No blanket tool defaults"),
@@ -83,6 +108,18 @@ NOT_ENFORCED: dict[str, str] = {
     "R-37": "its vocabulary is every qualified tool name across the whole fleet's skills, so a "
             "commit in another repo could fail this one; it is not decidable from one tree",
 }
+
+#: File-shape rules, each opt-in through its own `[instruction_ratchet]` key (off by default, so a
+#: re-vendor never turns an adopter red). Counted per file like a lint rule; not in the prompt audit.
+SHAPE_RULES: dict[str, str] = {
+    "S-01": "A CI expectations section beside .github/workflows/",
+    "S-02": "AGENTS.md is a short pointer to CLAUDE.md",
+    "S-03": "CLAUDE.md lines over the app cap",
+    "S-04": "CLAUDE.md text repeated from docs/ or the global instructions",
+}
+POINTER_MAX_LINES = 10  # non-blank lines; the fleet's pointer is one, a heading and a sentence is two
+REPEAT_MIN_WORDS = 5  # the floor for `repeated_text_words`: below it a shared run is a common phrase, not a copy
+_CI_HEADING = re.compile(r"^#{1,6}\s+CI expectations\b", re.I)
 
 NEUTRAL = "neutral"
 
@@ -171,6 +208,11 @@ class Config:
     baseline: str
     skill_dirs: tuple[str, ...]
     extra_files: tuple[str, ...]
+    ci_expectations: bool = False  # S-01
+    agents_pointer: bool = False  # S-02
+    claude_md_max_lines: int | None = None  # S-03: the root CLAUDE.md of an app repo
+    repeated_text_words: int | None = None  # S-04: a run of this many shared words is one hit
+    repeated_text_global: bool = False  # S-04: also compare against the owner's global CLAUDE.md
 
 
 @dataclass(frozen=True)
@@ -238,7 +280,19 @@ def parse_config(toml_text: str) -> Config | None:
         if kind_of(path) is None:
             raise ConfigError(f"[instruction_ratchet] extra_files: {path} is not an instruction file "
                               "(a *CLAUDE.md, AGENTS.md, .claude/rules/*.md or SKILL.md)")
-    return Config(baseline, _str_list(table, "skill_dirs", DEFAULT_SKILL_DIRS), extra)
+    flags = {k: table.get(k, False) for k in ("ci_expectations", "agents_pointer")}
+    if not all(isinstance(v, bool) for v in flags.values()):
+        raise ConfigError("[instruction_ratchet] ci_expectations and agents_pointer must be true or false")
+    cap = table.get("claude_md_max_lines")
+    if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
+        raise ConfigError("[instruction_ratchet] claude_md_max_lines must be a whole number of lines, 1 or more")
+    words, use_global = table.get("repeated_text_words"), table.get("repeated_text_global", False)
+    if words is not None and (isinstance(words, bool) or not isinstance(words, int) or words < REPEAT_MIN_WORDS):
+        raise ConfigError(f"[instruction_ratchet] repeated_text_words must be a whole number of words, {REPEAT_MIN_WORDS} or more")
+    if not isinstance(use_global, bool) or (use_global and words is None):
+        raise ConfigError("[instruction_ratchet] repeated_text_global must be true or false, and needs repeated_text_words")
+    return Config(baseline, _str_list(table, "skill_dirs", DEFAULT_SKILL_DIRS), extra,
+                  bool(flags["ci_expectations"]), bool(flags["agents_pointer"]), cap, words, use_global)
 
 
 def load_config(root: Path) -> Config | None:
@@ -315,147 +369,6 @@ def paragraphs(lines: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     if cur:
         paras.append(cur)
     return paras
-
-
-# ------------------------------------------------------------- frontmatter
-
-_KEY_LINE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]*):(?: +(.*))?$")
-_BLOCK_SCALAR_HEADER = re.compile(r"^[|>][1-9+-]{0,2}\s*(?:#.*)?$")
-# A plain scalar cannot open with one of these (YAML 1.2 c-indicator); `-`, `?`
-# and `:` are indicators only when followed by whitespace.
-_FORBIDDEN_FIRST = set(",]}#&*!|>'\"%@`")
-_BARE_INDICATOR = re.compile(r"^[-?:](?:\s|$)")
-
-
-def _quoted_error(value: str) -> str | None:
-    quote = value[0]
-    i = 1
-    while i < len(value):
-        ch = value[i]
-        if quote == '"' and ch == "\\":
-            i += 2
-            continue
-        if ch == quote:
-            if quote == "'" and value[i + 1:i + 2] == "'":
-                i += 2  # '' is an escaped quote inside a single-quoted scalar
-                continue
-            rest = value[i + 1:]
-            if rest.strip() and not re.match(r"^\s+#", rest):
-                return f"text after the closing {quote} quote"
-            return None
-        i += 1
-    return f"{quote}-quoted value is not closed on its own line"
-
-
-def _flow_error(value: str) -> str | None:
-    closers = {"[": "]", "{": "}"}
-    stack: list[str] = []
-    quote: str | None = None
-    for i, ch in enumerate(value):
-        if quote:
-            if ch == quote:
-                quote = None
-            continue
-        if ch in "'\"":
-            quote = ch
-        elif ch in closers:
-            stack.append(closers[ch])
-        elif ch in "]}":
-            if not stack or stack.pop() != ch:
-                return f"unbalanced {ch!r} in flow collection"
-            if not stack:
-                rest = value[i + 1:]
-                if rest.strip() and not re.match(r"^\s+#", rest):
-                    return "text after the flow collection"
-                return None
-    return "flow collection is not closed on its own line"
-
-
-def _plain_error(value: str) -> str | None:
-    if value[0] in _FORBIDDEN_FIRST or _BARE_INDICATOR.match(value):
-        return f"unquoted value starts with the YAML indicator {value[0]!r}"
-    if re.search(r":\s", value) or value.endswith(":"):
-        return "unquoted value contains ': ' (a YAML mapping indicator)"
-    if re.search(r"\s#", value):
-        return "unquoted value is cut off at ' #' (a YAML comment)"
-    return None
-
-
-def _value_error(key: str, value: str) -> str | None:
-    if value[0] in "[{":
-        if key == "description":
-            return "`description` is a YAML flow collection, not text"
-        return _flow_error(value)
-    if value[0] in "'\"":
-        return _quoted_error(value)
-    return _plain_error(value)
-
-
-def frontmatter_error(text: str) -> str | None:
-    """Why `text`'s `---` frontmatter would not parse as written, or None (also for no frontmatter).
-
-    Checks the narrow YAML subset a SKILL.md uses -- top-level `key: value` lines
-    with single-line scalars or flow collections; block scalars and nested blocks
-    are accepted unread. A value a YAML loader would reject or silently truncate
-    loses the skill's routing text, so it is reported, never read past.
-    """
-    if not text.startswith("---"):
-        return None
-    lines = text.split("\n")
-    if lines[0].rstrip() != "---":
-        return "opening '---' line carries trailing text"
-    close = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
-    if close is None:
-        return "frontmatter has no closing '---' line"
-    seen: set[str] = set()
-    nested_ok = False  # indented lines are content of the previous key
-    plain_key: str | None = None  # previous key held a plain scalar
-    for n, raw in enumerate(lines[1:close], start=2):
-        line = raw.rstrip("\r")
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if line[0] in " \t":
-            if line[0] == "\t":
-                return f"line {n}: tab indentation is not allowed in YAML"
-            if plain_key is not None:
-                return f"line {n}: unquoted `{plain_key}:` value continues onto the next line"
-            if not nested_ok:
-                return f"line {n}: indented line does not belong to any key"
-            continue
-        m = _KEY_LINE.match(line)
-        if not m:
-            return f"line {n}: not a `key: value` entry"
-        key, value = m.group(1), (m.group(2) or "").strip()
-        if key in seen:
-            return f"line {n}: duplicate key `{key}`"
-        seen.add(key)
-        nested_ok, plain_key = False, None
-        if not value or value.startswith("#"):
-            nested_ok = True
-            continue
-        if value[0] in "|>":
-            if not _BLOCK_SCALAR_HEADER.match(value):
-                return f"line {n}: malformed block scalar header"
-            nested_ok = True
-            continue
-        error = _value_error(key, value)
-        if error:
-            return f"line {n}: `{key}`: {error}"
-        if value[0] not in "'\"[{":
-            plain_key = key
-    return None
-
-
-def frontmatter_field(text: str, name: str) -> str | None:
-    """The `<name>:` value of a `---` block, or None; an empty value or `>`/`|` header takes the indented lines below."""
-    m = text.startswith("---") and re.search(
-        rf"^{re.escape(name)}:[ \t]*(.*)((?:\n(?:[ \t].*)?)*)", text[3:].split("\n---", 1)[0], re.MULTILINE)
-    if not m:
-        return None
-    value, rest = m.group(1).strip(), m.group(2)
-    if value and not _BLOCK_SCALAR_HEADER.match(value):
-        return value
-    return ("\n" if value.startswith("|") else " ").join(s.strip() for s in rest.split("\n") if s.strip()) or None
 
 
 # --------------------------------------------------------- files + readers
@@ -788,6 +701,72 @@ class Scan:
     sizes: dict[str, int]  # measured R-14 size per capped file
 
 
+def shape_hits(root: Path, cfg: Config) -> dict[str, list[Hit]]:
+    """S-01..S-03 findings per file, for the options `cfg` turns on; a finding's text names its fix."""
+    out: dict[str, list[Hit]] = {}
+
+    def add(path: str, rule: str, count: int, text: str) -> None:
+        out.setdefault(path, []).append(Hit(rule, 1, count, text, "violation"))
+
+    claude = _read_text(root, "CLAUDE.md") if (root / "CLAUDE.md").is_file() else None
+    if cfg.ci_expectations and any(p.startswith(".github/workflows/") for p in tracked_files(root)):
+        if claude is None or not any(_CI_HEADING.match(line) for _, line in unfenced_lines(claude)):
+            add("CLAUDE.md", "S-01", 1, ("CLAUDE.md is missing; " if claude is None else "") + "add a `## CI expectations` "
+                "section (workflow, typical duration, flaky leg, e2e surface): /issue-finish reads it to decide whether to wait for CI")
+    if cfg.agents_pointer:
+        agents = _read_text(root, "AGENTS.md") if (root / "AGENTS.md").is_file() else None
+        fix = "make AGENTS.md a short pointer to CLAUDE.md (one line: See `CLAUDE.md`.)"
+        if agents is None:
+            add("AGENTS.md", "S-02", 1, f"AGENTS.md is missing; {fix}")
+        elif "CLAUDE.md" not in agents:
+            add("AGENTS.md", "S-02", 1, f"AGENTS.md does not name CLAUDE.md; {fix}")
+        elif sum(1 for line in agents.splitlines() if line.strip()) > POINTER_MAX_LINES:
+            add("AGENTS.md", "S-02", 1, f"AGENTS.md is longer than {POINTER_MAX_LINES} lines, a copy rather than a pointer; {fix}")
+    if cfg.claude_md_max_lines is not None and claude is not None:
+        total = len(claude.splitlines())
+        if total > cfg.claude_md_max_lines:
+            add("CLAUDE.md", "S-03", total - cfg.claude_md_max_lines, f"CLAUDE.md is {total} lines, over the "
+                f"{cfg.claude_md_max_lines}-line cap for an app repo; move scoped detail into a skill, a .claude/rules file or a docs/ page")
+    return out
+
+
+def global_instructions_path() -> Path:
+    """The owner's user-scope CLAUDE.md, the source `repeated_text_global` compares against."""
+    return Path.home() / ".claude" / "CLAUDE.md"
+
+
+def repeat_hits(root: Path, cfg: Config, docs: list[Doc]) -> dict[str, list[Hit]]:
+    """S-04 findings: runs of `repeated_text_words` words a CLAUDE.md shares with `docs/` (or the global file)."""
+    n = cfg.repeated_text_words
+    claude = [d for d in docs if d.kind == "claude-md"]
+    if n is None or not claude:
+        return {}
+    repeats = _load_sibling("instruction_repeats")
+    skip = {d.path for d in docs}  # an instruction file under docs/ is compared, never a source
+    sources: dict[str, list[tuple[int, str]]] = {}
+    for p in tracked_files(root):
+        if p.startswith("docs/") and p.endswith(".md") and p not in skip and (root / p).is_file():
+            try:
+                sources[p] = instruction_lines(_read_text(root, p))
+            except NotConfirmed as exc:
+                raise NotConfirmed(f"{p}: {exc}") from exc
+    index = repeats.index_sources(sources, n)
+    with_global, own = index, None
+    if cfg.repeated_text_global:
+        where = global_instructions_path()
+        if not where.is_file():
+            raise NotConfirmed(f"repeated_text_global is set but the global instructions file {where} cannot be read")
+        own = where
+        with_global = repeats.index_sources({**sources, "the global CLAUDE.md": instruction_lines(_read_text(where.parent, where.name))}, n)
+    out: dict[str, list[Hit]] = {}
+    for doc in claude:
+        is_global = own is not None and (root / doc.path).exists() and os.path.samefile(root / doc.path, own)
+        for run in repeats.repeated_runs(instruction_lines(doc.text), index if is_global else with_global, n):
+            out.setdefault(doc.path, []).append(Hit("S-04", run.line, 1, f"{run.words} words repeated from {run.source}; "
+                                                    "point to it instead of restating it", "violation"))
+    return out
+
+
 def scan_tree(root: Path, cfg: Config) -> Scan:
     docs = inventory(root, cfg)
     hits: dict[str, list[Hit]] = {}
@@ -802,6 +781,8 @@ def scan_tree(root: Path, cfg: Config) -> Scan:
             hits[doc.path] = violations
         if size is not None:
             sizes[doc.path] = size
+    for path, found_shape in [*shape_hits(root, cfg).items(), *repeat_hits(root, cfg, docs).items()]:
+        hits.setdefault(path, []).extend(found_shape)
     return Scan(len(docs), hits, sizes)
 
 
@@ -825,7 +806,7 @@ def _entry_from(item: object, where: str) -> tuple[str, Entry]:
         raise ConfigError(f"{where}: malformed entry {item!r}")
     hits, size = item.get("hits", {}), item.get("size")
     if not isinstance(hits, dict) or not all(
-        k in RULES and k != "R-14" and isinstance(v, int) and not isinstance(v, bool) and v > 0 for k, v in hits.items()
+        (k in SHAPE_RULES or k in RULES and k != "R-14") and isinstance(v, int) and not isinstance(v, bool) and v > 0 for k, v in hits.items()
     ):
         raise ConfigError(f"{where}: malformed hits in {item!r}")
     if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 1):
@@ -898,7 +879,7 @@ def _report_rose(rose: list[str], scan: Scan, current: dict[str, Entry], baselin
     for path in rose:
         cur, base = current[path], baseline.get(path, Entry())
         for rule in risen_rules(cur, base):
-            title = RULES[rule][2]
+            title = SHAPE_RULES[rule] if rule in SHAPE_RULES else RULES[rule][2]
             if rule == "R-14":
                 was = f"baseline {base.size}" if base.size is not None else "not baselined"
                 print(f"  {path}: {rule} {title}: {cur.size} ({was})")
@@ -968,9 +949,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
 
     if rose:
         _report_rose(rose, scan, current, baseline)
-        print("  Each rule's reason and fix shape: fleet-config's .claude/skills/prompt-audit/rules.md. Over a size "
-              "cap, move scoped detail into a skill, rule or referenced doc (an @import does not shrink it); or "
-              "(reviewed) raise the baseline with `--update-baseline --allow-additions`.")
+        print("  What an R-rule catches: docs/instruction-ratchet.md \"What is counted\"; an S-rule's line names "
+              "its fix. Over a size cap, move scoped detail into a skill, rule or referenced doc (an @import does not "
+              "shrink it); or (reviewed) raise the baseline with `--update-baseline --allow-additions`.")
         return EXIT_RISE
     print(f"instruction ratchet: PASS ({_total(current)} hit(s) in {len(current)} of {scan.files} file(s), none above the baseline)")
     if shrank:

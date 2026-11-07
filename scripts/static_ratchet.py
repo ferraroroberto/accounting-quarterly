@@ -5,7 +5,7 @@ re-finds them. This stage turns that into structure: it computes the current
 set of findings, compares it with a committed baseline, and fails only on a
 finding that is *new* -- so existing debt never blocks work but cannot grow.
 
-Three detectors, one key space:
+Four detectors, one baseline file:
 
   * **Duplicate blocks** (Python and JS together) -- `jscpd`, pinned to an exact
     version and run through `npx`. One tool covers both languages; a stdlib JS
@@ -18,12 +18,16 @@ Three detectors, one key space:
     ruff `B` (flake8-bugbear) and `S` (flake8-bandit) codes, `DEFAULT_RULES`,
     run in the same ruff call. Each code is one a reviewer fixes rather than
     argues with; the codes left out, and why, are in docs/static-ratchet.md.
+  * **Import order** (Python only) -- ruff `I001`, in the same call: the global
+    "stdlib, third-party, local" rule, auto-fixable with `ruff check --select
+    I001 --fix`, so a repo can burn its baseline to zero in one pass.
 
 Findings are reduced to line-number-free keys so the baseline survives edits
 above a finding: a duplicate is `dup:<sha1 of the whitespace-normalised
 fragment>:<file>|<file>` (strict: editing the cloned block reads as one hit
 gone plus one new), an unused name is `unused:<rule>:<file>:<symbol>`, a bug or
-security finding is `lint:<rule>:<file>:<stripped source line>`; repeats of one
+security finding is `lint:<rule>:<file>:<stripped source line>`, an unsorted
+import block is `order:I001:<file>:<its first line>`; repeats of one
 key in a file get a `#2`, `#3`... ordinal. jscpd reports a clone as an
 ordered pair, and the fragment hashed is the first file's, so the key is stable
 for as long as that order is -- it is deterministic for an unchanged tree.
@@ -37,7 +41,15 @@ repo that has not opted in:
     min_lines  = 10                                  # default
     min_tokens = 100                                 # default
     exclude    = ["**/_vendored/**"]                 # added to the built-in set
-    ruff_rules = ["B006", "S113"]                    # replaces DEFAULT_RULES; [] = none
+    ruff_rules = ["B006", "S113", "I001"]            # replaces DEFAULT_RULES; [] = none
+    duplicates = true                                # default; false = no jscpd, no Node needed
+    ruff       = true                                # default; false = no ruff detectors
+
+`duplicates = false` / `ruff = false` turn one half off where its tool cannot
+run (a locked-down machine with no Node or no network for `npx`). An off check
+is reported as OFF on every run, never as clean, and its baselined entries are
+kept untouched -- switching a check off must not read as having paid its debt.
+Both off is a configuration error: nothing would be checked.
 
 Every `dest` in the repo's own `[vendored]` table is excluded as well: a
 vendor-verbatim copy is checked once, where it lives, and an adopter cannot edit
@@ -48,8 +60,8 @@ Exit codes (a state is never folded into a pass):
   0  pass, or the stage is not enabled (declared, not inferred)
   1  a new finding, or the baseline file is missing / a mode was refused
   2  bad configuration, baseline or arguments -- fail loud
-  3  NOT CONFIRMED: a detector could not run (no Node, no network on first
-     `npx`, ruff missing, unparseable output). The gate fails on it.
+  3  NOT CONFIRMED: an enabled detector could not run (no Node, no network on
+     first `npx`, ruff missing, unparseable output). The gate fails on it.
 
 Modes: `check` (default; what the gate runs), `--init` (write the first
 baseline, refuses to overwrite), `--update-baseline` (drop stale entries; exits 1
@@ -97,8 +109,10 @@ BUILTIN_EXCLUDES = (
 JSCPD_FORMATS = "python,javascript"
 #: Always selected: the unused-name detector, keyed `unused:`.
 UNUSED_RULES = ("F401", "F841")
-#: Bug (flake8-bugbear) and security (flake8-bandit) codes run unless the
-#: adopter's `ruff_rules` replaces them, keyed `lint:`.
+#: The import-order code, keyed `order:` and reported in its own category.
+IMPORT_ORDER_RULE = "I001"
+#: Bug (flake8-bugbear) and security (flake8-bandit) codes, keyed `lint:`, plus
+#: the import-order code, run unless the adopter's `ruff_rules` replaces them.
 DEFAULT_RULES = (
     "B002",  # `++n` is two unary pluses, not an increment
     "B003",  # rebinding `os.environ` does not reach child processes
@@ -133,6 +147,7 @@ DEFAULT_RULES = (
     "S604",  # the same, through a non-subprocess call taking `shell=True`
     "S605",  # `os.system`/`os.popen` always go through a shell
     "S701",  # Jinja2 with autoescape off renders HTML injection
+    IMPORT_ORDER_RULE,  # stdlib, third-party, local: the global import rule, auto-fixable
 )
 #: In tests, running code or a shell command is the test's own job on fixture
 #: input, not an injection path, so these codes are not reported there.
@@ -147,7 +162,9 @@ EXIT_PASS, EXIT_NEW, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 # would not resolve in a consumer tree), the documented exception.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_FLEET_KEYS = {"enabled", "baseline", "min_lines", "min_tokens", "exclude", "ruff_rules"}
+_FLEET_KEYS = {"enabled", "baseline", "min_lines", "min_tokens", "exclude", "ruff_rules", "duplicates", "ruff"}
+#: Which detector produced a key, by its prefix: the half a `duplicates`/`ruff` switch owns.
+_RUFF_PREFIXES = ("unused:", "lint:", "order:")
 
 
 class ConfigError(RuntimeError):
@@ -165,12 +182,21 @@ class Config:
     min_tokens: int
     exclude: tuple[str, ...]
     ruff_rules: tuple[str, ...] = DEFAULT_RULES
+    duplicates: bool = True
+    ruff: bool = True
+
+    def owns(self, key: str) -> bool:
+        """True when `key` belongs to a detector this config runs."""
+        return self.ruff if key.startswith(_RUFF_PREFIXES) else self.duplicates
+
+    def off_checks(self) -> list[str]:
+        return [name for name, on in (("duplicates", self.duplicates), ("ruff", self.ruff)) if not on]
 
 
 @dataclass(frozen=True)
 class Finding:
     key: str
-    kind: str  # "dup" | "unused" | "lint"
+    kind: str  # "dup" | "unused" | "lint" | "order"
     files: tuple[str, ...]
     detail: str  # snippet or symbol, for the failure message only
 
@@ -212,7 +238,17 @@ def parse_config(toml_text: str) -> Config | None:
     rules = table.get("ruff_rules", list(DEFAULT_RULES))
     if not isinstance(rules, list) or not all(isinstance(r, str) and _RULE_CODE.match(r) for r in rules):
         raise ConfigError('[static_ratchet] ruff_rules must be a list of ruff rule codes such as "S113"')
-    return Config(baseline, ints["min_lines"], ints["min_tokens"], tuple(exclude), tuple(rules))
+    switches: dict[str, bool] = {}
+    for name in ("duplicates", "ruff"):
+        value = table.get(name, True)
+        if not isinstance(value, bool):
+            raise ConfigError(f"[static_ratchet] {name} must be true or false")
+        switches[name] = value
+    if not any(switches.values()):
+        raise ConfigError("[static_ratchet] duplicates and ruff are both false -- nothing would be checked; "
+                          "set enabled = false instead")
+    return Config(baseline, ints["min_lines"], ints["min_tokens"], tuple(exclude), tuple(rules),
+                  switches["duplicates"], switches["ruff"])
 
 
 def vendored_globs(toml_text: str) -> tuple[str, ...]:
@@ -327,7 +363,7 @@ _SYMBOL = re.compile(r"`([^`]+)`")
 
 
 def parse_ruff(items: object, root: Path, excludes: tuple[str, ...]) -> list[Finding]:
-    """`ruff --output-format json` -> unused-name and bug/security findings."""
+    """`ruff --output-format json` -> unused-name, bug/security and import-order findings."""
     if not isinstance(items, list):
         raise NotConfirmed("ruff output is not a JSON list")
     raw: list[tuple[str, int, Finding]] = []
@@ -346,8 +382,9 @@ def parse_ruff(items: object, root: Path, excludes: tuple[str, ...]) -> list[Fin
                 continue
             # The source line, not the message: one message repeats for every hit.
             line = _source_line(root / filename, row) or message
-            key = f"lint:{rule}:{filename}:{line}"
-            raw.append((key, row, Finding(key, "lint", (filename,), f"{rule} {message}: {line}")))
+            kind = "order" if rule == IMPORT_ORDER_RULE else "lint"
+            key = f"{kind}:{rule}:{filename}:{line}"
+            raw.append((key, row, Finding(key, kind, (filename,), f"{rule} {message}: {line}")))
             continue
         match = _SYMBOL.search(message)
         symbol = match.group(1) if match else _source_line(root / filename, row)
@@ -429,7 +466,7 @@ def run_ruff(root: Path, cfg: Config) -> list[Finding]:
 
 
 def collect(root: Path, cfg: Config) -> dict[str, Finding]:
-    found = run_jscpd(root, cfg) + run_ruff(root, cfg)
+    found = (run_jscpd(root, cfg) if cfg.duplicates else []) + (run_ruff(root, cfg) if cfg.ruff else [])
     return {f.key: f for f in found}
 
 
@@ -490,11 +527,22 @@ def render_baseline(findings: dict[str, Finding], tools: dict[str, str]) -> str:
     )
 
 
-def diff(current: dict[str, Finding], baseline: dict[str, tuple[str, ...]]) -> tuple[list[Finding], list[str]]:
-    """(new findings, baselined keys no longer found), both sorted."""
+def diff(
+    current: dict[str, Finding], baseline: dict[str, tuple[str, ...]], cfg: Config | None = None,
+) -> tuple[list[Finding], list[str]]:
+    """(new findings, baselined keys no longer found), both sorted.
+
+    A baselined key owned by a check that is off was not looked for, so it is
+    never "gone".
+    """
     new = [current[k] for k in sorted(current.keys() - baseline.keys())]
-    gone = sorted(baseline.keys() - current.keys())
+    gone = sorted(k for k in baseline.keys() - current.keys() if cfg is None or cfg.owns(k))
     return new, gone
+
+
+def kept_entries(baseline: dict[str, tuple[str, ...]], cfg: Config) -> dict[str, Finding]:
+    """Baselined entries of an off check, carried over unchanged on a rewrite."""
+    return {k: Finding(k, "kept", files, "") for k, files in baseline.items() if not cfg.owns(k)}
 
 
 # -------------------------------------------------------------------- CLI
@@ -503,9 +551,11 @@ def _report_new(new: list[Finding]) -> None:
     print(f"static ratchet: {len(new)} NEW finding(s) not in the baseline:")
     for f in new:
         where = " <-> ".join(f.files)
-        label = {"dup": "duplicate block", "unused": "unused", "lint": "bug/security"}[f.kind]
+        label = {"dup": "duplicate block", "unused": "unused", "lint": "bug/security", "order": "import order"}[f.kind]
         print(f"  [{label}] {where}")
         print(f"      {f.detail}")
+        if f.kind == "order":
+            print(f"      fix: ruff check --select {IMPORT_ORDER_RULE} --fix {f.files[0]}")
 
 
 def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
@@ -521,6 +571,8 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("static ratchet: not enabled (no [static_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
     baseline_path = root / cfg.baseline
+    for name in cfg.off_checks():
+        print(f"static ratchet: {name}: OFF ({name} = false in .fleet.toml) -- not checked, not clean")
 
     baseline: dict[str, tuple[str, ...]] = {}
     if init:
@@ -549,12 +601,13 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print(f"static ratchet: wrote {cfg.baseline} with {len(current)} baselined finding(s)")
         return EXIT_PASS
 
-    new, gone = diff(current, baseline)
+    new, gone = diff(current, baseline, cfg)
     if update:
         if new and not allow_additions:
             _report_new(new)
             print("static ratchet: nothing written -- fix them, or add them to the baseline with --allow-additions")
             return EXIT_NEW
+        current = {**kept_entries(baseline, cfg), **current}
         baseline_path.write_text(render_baseline(current, tool_versions()), encoding="utf-8", newline="\n")
         print(f"static ratchet: {cfg.baseline} now has {len(current)} entr(ies) "
               f"({len(gone)} dropped, {len(new)} added)")
@@ -565,7 +618,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("  Remove the duplication / unused name / flagged pattern, or (reviewed) re-baseline with "
               "`--update-baseline --allow-additions`.")
         return EXIT_NEW
-    print(f"static ratchet: PASS ({len(current)} baselined finding(s), none new)")
+    off = cfg.off_checks()
+    scope = f"; {', '.join(off)} OFF" if off else ""
+    print(f"static ratchet: PASS ({len(current)} baselined finding(s), none new{scope})")
     if gone:
         print(f"  {len(gone)} baselined finding(s) are gone -- run "
               f"`python scripts/static_ratchet.py --update-baseline` to shrink the baseline")

@@ -17,8 +17,8 @@ step is idempotent and prints what it changed ("no changes" on a re-run):
                   when the quarter is FILED); list its unknown vendors (⚠).
                   --all-periods re-applies it everywhere, with per-period counts.
     dedupe        Duplicate / receipt / out-of-period groups (out-of-period =
-                  swept files dated outside the quarter), numbered #1, #2...
-                  Writes only with --apply; --apply --group N writes group #N
+                  swept files dated outside the quarter), numbered from 1.
+                  Writes only with --apply; --apply --group N writes group number N
                   only. A shared invoice number with a different total or date
                   is a numbering warning, never excluded.
     fx            Backfill ECB rates to today, then re-resolve the quarter's

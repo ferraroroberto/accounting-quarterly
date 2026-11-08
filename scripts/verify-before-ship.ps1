@@ -13,17 +13,11 @@
                          detector could not run) is NOT CONFIRMED and fails, never a
                          pass.
       3. comment ratchet - a #NNN issue reference in a product-code comment (py, js,
-                         css, ps1; tests and vendored files left out) that raises a
-                         file's count above .comment-ratchet-baseline.json fails.
+                         css, ps1) or Python docstring, or a curated history phrase
+                         (tests and vendored files left out), that raises a file's
+                         count above .comment-ratchet-baseline.json fails.
                          Whole tree, never routed; exit 3 (a file could not be
                          scanned) is NOT CONFIRMED and fails, never a pass.
-      3b. docstring ratchet - repo-local (not vendored): a #NNN issue reference
-                         inside a Python module/class/function docstring -- the
-                         vendored comment ratchet's documented blind spot -- that
-                         raises a file's count above .docstring-ratchet-baseline.json
-                         fails. Tracked .py files, tests and vendored files left out;
-                         exit 3 (git unusable, a file unreadable or unparseable) is
-                         NOT CONFIRMED and fails, never a pass.
       4. conventions ratchet - a file whose count of no-window (a subprocess spawn
                          without creationflags), logging-not-print (print() in app/
                          or src/ library code) or no-drive-path (a hardcoded drive
@@ -102,9 +96,6 @@ Invoke-Stage "byte-compile"  { & $py -m compileall -q app src scripts tests }
 Invoke-Stage "static ratchet" { & $py "scripts/static_ratchet.py" }
 # Not path-routed: a count per file needs the whole tree. Exit 3 fails here the same way.
 Invoke-Stage "comment ratchet" { & $py "scripts/comment_ratchet.py" }
-# Repo-local script (not vendored): covers the vendored comment ratchet's documented
-# docstring blind spot. Not path-routed; exit 3 fails here the same way.
-Invoke-Stage "docstring ratchet" { & $py "scripts/docstring_ratchet.py" }
 # Not path-routed: a rule added to `rules` must see the whole tree. Exit 3 fails here too.
 Invoke-Stage "conventions ratchet" { & $py "scripts/conventions_ratchet.py" }
 Invoke-Stage "runtime write ratchet" { & $py "scripts/runtime_write_ratchet.py" }

@@ -64,6 +64,11 @@ baseline = ".structure-ratchet-baseline.json"
 [instruction_ratchet]
 enabled  = true
 baseline = ".instruction-ratchet-baseline.json"
+# File-shape and repeated-text rules (docs/instruction-ratchet.md in project-scaffolding).
+ci_expectations     = true
+agents_pointer      = true
+claude_md_max_lines = 120
+repeated_text_words = 12
 
 # [doc_refs_ratchet] -- the scaffold's stale-reference ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/doc_refs_ratchet.py, which fails when
@@ -107,20 +112,10 @@ baseline = ".static-ratchet-baseline.json"
 # scanned) is NOT CONFIRMED; the gate stage fails on any non-zero exit. Procedure:
 # project-scaffolding docs/comment-ratchet.md.
 [comment_ratchet]
-enabled  = true
-baseline = ".comment-ratchet-baseline.json"
-
-# [docstring_ratchet] -- repo-local, NOT vendored (there is no project-scaffolding
-# source for it). The gate (scripts/verify-before-ship.ps1) runs
-# scripts/docstring_ratchet.py, which counts #NNN issue references inside Python
-# module/class/function docstrings -- the vendored comment ratchet's own documented
-# blind spot ("Docstrings ... are out of scope") -- per tracked file, and fails when a
-# file's count rises above .docstring-ratchet-baseline.json. Tests and vendored
-# destinations are left out by the script. Exit 3 (git unusable, a file that cannot be
-# read or parsed) is NOT CONFIRMED; the gate stage fails on any non-zero exit.
-[docstring_ratchet]
-enabled  = true
-baseline = ".docstring-ratchet-baseline.json"
+enabled         = true
+baseline        = ".comment-ratchet-baseline.json"
+docstrings      = true   # #NNN inside Python docstrings
+history_phrases = true   # curated history phrases in comments and docstrings
 
 # [conventions_ratchet] -- the scaffold's fleet-convention ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/conventions_ratchet.py, which counts

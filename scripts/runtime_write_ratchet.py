@@ -463,6 +463,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     current = current_counts(found)
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"runtime write ratchet: wrote {cfg.baseline} with {_total(current)} hit(s) in {len(current)} file(s)")
         return EXIT_PASS
@@ -474,6 +475,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             print("runtime write ratchet: nothing written -- fix the code, or raise the baseline with "
                   "--allow-additions")
             return EXIT_RISE
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"runtime write ratchet: {cfg.baseline} now has {_total(current)} hit(s) in {len(current)} file(s) "
               f"({gone} dropped, {_total(added)} added)")
@@ -514,6 +516,7 @@ def snapshot(root: Path, out: Path) -> int:
     except NotConfirmed as exc:
         print(f"runtime write probe: NOT CONFIRMED: {exc}")
         return EXIT_NOT_CONFIRMED
+    # runtime-write-exempt: snapshot file the caller names with --snapshot
     out.write_text(json.dumps({"version": SNAPSHOT_VERSION, "paths": files}), encoding="utf-8")
     print(f"runtime write probe: snapshot of {len(files)} untracked/ignored file(s) under "
           f"{', '.join(cfg.code_folders)}")

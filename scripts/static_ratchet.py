@@ -597,6 +597,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         return EXIT_NOT_CONFIRMED
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current, tool_versions()), encoding="utf-8", newline="\n")
         print(f"static ratchet: wrote {cfg.baseline} with {len(current)} baselined finding(s)")
         return EXIT_PASS
@@ -608,6 +609,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             print("static ratchet: nothing written -- fix them, or add them to the baseline with --allow-additions")
             return EXIT_NEW
         current = {**kept_entries(baseline, cfg), **current}
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current, tool_versions()), encoding="utf-8", newline="\n")
         print(f"static ratchet: {cfg.baseline} now has {len(current)} entr(ies) "
               f"({len(gone)} dropped, {len(new)} added)")

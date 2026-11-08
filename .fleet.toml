@@ -12,20 +12,20 @@ depends_on  = ["local-llm-hub"]
 # Vendored byte-for-byte from project-scaffolding. sha = the source repo commit
 # the copy was taken from; /propagate-vendored hash-verifies + bumps.
 [vendored]
-docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/docs_ratchet.py" }
-dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/dead_code_ratchet.py" }
-doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "dedb86e0f212d66f247f4aacb6c15d13b1154651", dest = "scripts/doc_refs_ratchet.py" }
-instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/instruction_ratchet.py" }
-structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "bf11a867c5678c6a4869a6265bf6cecf1d12d1a2", dest = "scripts/structure_ratchet.py" }
+docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/docs_ratchet.py" }
+dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/dead_code_ratchet.py" }
+doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/doc_refs_ratchet.py" }
+instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/instruction_ratchet.py" }
+structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/structure_ratchet.py" }
 structure_layout = { src = "scripts/structure_layout.py", sha = "1563f834338bcb5d6612dfbc2bdf2953b973fba2", dest = "scripts/structure_layout.py" }
 structure_band = { src = "scripts/structure_band.py", sha = "3b708fd3c54ab7b93b08d489406c405762c83c41", dest = "scripts/structure_band.py" }
 box_lock_gate = { src = "scripts/box_lock_gate.ps1", sha = "98cdb1b7727d12a5c233580478e6fae40d98e6f3", dest = "scripts/box_lock_gate.ps1" }
-static_ratchet = { src = "scripts/static_ratchet.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/static_ratchet.py" }
-comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/comment_ratchet.py" }
-conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/conventions_ratchet.py" }
+static_ratchet = { src = "scripts/static_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/static_ratchet.py" }
+comment_ratchet = { src = "scripts/comment_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/comment_ratchet.py" }
+conventions_ratchet = { src = "scripts/conventions_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/conventions_ratchet.py" }
 conventions_readers = { src = "scripts/conventions_readers.py", sha = "8e66d3f9565ce79eaaa64ec006ed3283dad06a69", dest = "scripts/conventions_readers.py" }
 pooled_http = { src = "src/pooled_http.py", sha = "8e66d3f9565ce79eaaa64ec006ed3283dad06a69", dest = "src/pooled_http.py" }
-runtime_write_ratchet = { src = "scripts/runtime_write_ratchet.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/runtime_write_ratchet.py" }
+runtime_write_ratchet = { src = "scripts/runtime_write_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/runtime_write_ratchet.py" }
 runtime_write_resolve = { src = "scripts/runtime_write_resolve.py", sha = "5505185c5f4b10eea5ab268e7b6676c6c54340c4", dest = "scripts/runtime_write_resolve.py" }
 instruction_frontmatter = { src = "scripts/instruction_frontmatter.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/instruction_frontmatter.py" }
 instruction_repeats = { src = "scripts/instruction_repeats.py", sha = "e55de9619b9625c5499e1b9077350f9860e6037b", dest = "scripts/instruction_repeats.py" }

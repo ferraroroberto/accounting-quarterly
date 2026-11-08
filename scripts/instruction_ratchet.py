@@ -932,6 +932,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     current = current_entries(scan)
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"instruction ratchet: wrote {cfg.baseline} with {len(current)} file(s), {_total(current)} hit(s)")
         return EXIT_PASS
@@ -942,6 +943,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             _report_rose(rose, scan, current, baseline)
             print("instruction ratchet: nothing written -- fix the lines, or raise the baseline with --allow-additions")
             return EXIT_RISE
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"instruction ratchet: {cfg.baseline} now has {len(current)} file(s), {_total(current)} hit(s) "
               f"({len(shrank)} lowered or dropped, {len(rose)} raised or added)")

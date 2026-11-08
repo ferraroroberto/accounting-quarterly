@@ -544,6 +544,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     current = current_entries(scan, cfg)
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"docs ratchet: wrote {cfg.baseline} with {len(current)} file(s), {_total(current)} marker(s)")
         return EXIT_PASS
@@ -555,6 +556,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             print("docs ratchet: nothing written -- remove the markers or shrink the README, "
                   "or raise the baseline with --allow-additions")
             return EXIT_RISE
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"docs ratchet: {cfg.baseline} now has {len(current)} file(s), {_total(current)} marker(s) "
               f"({len(shrank)} lowered or dropped, {len(rose)} raised or added)")

@@ -929,6 +929,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     current = {key: f.value for key, f in found.items()}
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current, cfg.shape is not None), encoding="utf-8", newline="\n")
         print(f"structure ratchet: wrote {cfg.baseline}: {summarize(current)}")
         return EXIT_PASS
@@ -953,6 +954,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("structure ratchet: nothing written -- fix the findings, "
               "or raise the baseline with --allow-additions")
         return EXIT_RISE
+    # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
     baseline_path.write_text(render_baseline(current, cfg.shape is not None), encoding="utf-8", newline="\n")
     print(f"structure ratchet: {cfg.baseline} now records {summarize(current)} "
           f"({len(shrank)} lowered or dropped, {len(rose)} raised or added)")

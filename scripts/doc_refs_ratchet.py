@@ -764,6 +764,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     current = current_entries(found)
 
     if init:
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"doc refs ratchet: wrote {cfg.baseline} with {_total(current)} dangling reference(s) "
               f"in {len(current)} file(s)")
@@ -775,6 +776,7 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             _report_added(added, found)
             print("doc refs ratchet: nothing written -- fix the references, or raise the baseline with --allow-additions")
             return EXIT_RISE
+        # runtime-write-exempt: the repo's own baseline file, named by the config, never a code folder
         baseline_path.write_text(render_baseline(current), encoding="utf-8", newline="\n")
         print(f"doc refs ratchet: {cfg.baseline} now has {_total(current)} reference(s) in {len(current)} file(s) "
               f"({gone} dropped, {_total(added)} added)")

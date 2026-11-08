@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from src.storage.runtime_files import open_for_write
+
 
 class JsonCache:
     """In-memory cache over a single JSON file.
@@ -57,8 +59,7 @@ class JsonCache:
 
     def save(self, data: dict[str, Any], path: str | Path | None = None) -> None:
         resolved = Path(path) if path else self._default_path
-        # runtime-write-exempt: the store's caller-supplied or configured JSON file
-        with open(resolved, "w", encoding="utf-8") as f:
+        with open_for_write(resolved, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         self._cache = data
 

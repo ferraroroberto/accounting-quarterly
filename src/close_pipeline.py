@@ -27,7 +27,6 @@ an empty list means the run was a no-op. Outputs go to the git-ignored
 from __future__ import annotations
 
 import json
-import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -91,6 +90,7 @@ from src.social_security import (
     load_bank_export,
     upsert_ss_payments,
 )
+from src.storage.runtime_files import backup_sqlite, copy_file, make_dirs, save_text
 from src.stripe_client import backfill_billing_details_from_raw_source
 from src.tax_engine import compute_and_persist_tax_snapshots, compute_tax_results
 from src.tax_snapshot_codec import decode_snapshot, encode_snapshot
@@ -136,16 +136,13 @@ def step_sweep(ctx: CloseContext) -> StepResult:
             rel = str(pdf.relative_to(base))
             if rel in known[direction] or rel in already:
                 continue
-            # runtime-write-exempt: the quarter sweep folder under the close output root
-            shutil.copy2(pdf, dest / flat_sweep_name(prefix, rel))
+            copy_file(pdf, dest / flat_sweep_name(prefix, rel))
             copied.append(rel)
             res.changes.append(f"copied {prefix:<3} {rel}")
         manifest[direction] = sorted(already | set(copied))
     manifest["last_run_at"] = datetime.now().isoformat(timespec="seconds")
-    # runtime-write-exempt: the manifest folder under the close output root
-    ctx.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    # runtime-write-exempt: the manifest file under the close output root
-    ctx.manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    make_dirs(ctx.manifest_path.parent)
+    save_text(ctx.manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False))
 
     res.info.append(f"Folder: {dest}")
     if not res.changes:
@@ -602,21 +599,15 @@ def step_archive(ctx: CloseContext) -> StepResult:
         target = dest / f.relative_to(src_dir)
         if same_file(f, target):
             continue
-        # runtime-write-exempt: the archive folder configured as app.archive_dir
-        target.parent.mkdir(parents=True, exist_ok=True)
-        # runtime-write-exempt: the archive folder configured as app.archive_dir
-        shutil.copy2(f, target)
+        make_dirs(target.parent)
+        copy_file(f, target)
         res.changes.append(f"copied {f.relative_to(src_dir)}")
     snapshot = dest / "database" / f"accounting_{date.today():%Y%m%d}.db"
     if not snapshot.exists():
-        # runtime-write-exempt: the database snapshot folder inside the configured archive
-        snapshot.parent.mkdir(parents=True, exist_ok=True)
+        make_dirs(snapshot.parent)
         conn = ctx.connect()
         try:
-            # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
-            # runtime-write-exempt: the database snapshot file inside the configured archive
-            with sqlite3.connect(snapshot) as out:
-                conn.backup(out)
+            backup_sqlite(conn, snapshot)
         finally:
             conn.close()
         res.changes.append(f"database snapshot {snapshot.name}")

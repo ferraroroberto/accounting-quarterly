@@ -35,6 +35,7 @@ from typing import Any, Optional
 from src.database import get_connection
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
+from src.storage.runtime_files import backup_sqlite, make_dirs
 
 log = get_logger(__name__)
 
@@ -182,13 +183,9 @@ def backup_database(db_path: Optional[str | Path] = None, label: str = "pre-reli
     try:
         src_file = Path(conn.execute("PRAGMA database_list").fetchone()[2])
         dest_dir = src_file.parent / "backups"
-        # runtime-write-exempt: the backups folder beside the live database
-        dest_dir.mkdir(exist_ok=True)
+        make_dirs(dest_dir)
         dest = dest_dir / f"accounting_{datetime.now():%Y%m%d-%H%M%S}_{label}.db"
-        # must-use-exempt: a backup-API destination file, not the app database; the pragmas belong to the source
-        # runtime-write-exempt: a backup file in the folder beside the live database
-        with sqlite3.connect(dest) as out:
-            conn.backup(out)
+        backup_sqlite(conn, dest)
     finally:
         conn.close()
     return dest

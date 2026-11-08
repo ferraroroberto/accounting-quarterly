@@ -16,6 +16,7 @@ from src.aggregator import (
 from src.exceptions import StaleClassificationError
 from src.logger import get_logger
 from src.models import ClassifiedPayment
+from src.storage.runtime_files import make_dirs
 
 log = get_logger(__name__)
 
@@ -243,8 +244,7 @@ def create_excel_report(
     _write_import_sheet(ws_import, payments)
 
     output_path = Path(output_path)
-    # runtime-write-exempt: the caller-supplied report path
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    make_dirs(output_path.parent)
     wb.save(output_path)
     log.info("ℹ️ Excel report saved: %s", output_path)
     return output_path

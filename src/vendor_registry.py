@@ -56,6 +56,7 @@ from src.database import (
     upsert_invoice,
 )
 from src.logger import get_logger
+from src.storage.runtime_files import save_text
 from src.tax_codes import (
     EU_VAT_PREFIXES,  # the one EU-country list; shared rather than duplicated
     TAX_TREATMENTS_IN,
@@ -342,8 +343,7 @@ def save_registry(registry: VendorRegistry, path: Optional[str | Path] = None) -
     if target == REGISTRY_PATH:
         _cache.save(data)
     else:
-        # runtime-write-exempt: the registry path argument
-        target.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        save_text(target, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     log.info("ℹ️ Vendor registry saved to %s (%d vendors)", target, len(registry.vendors))
     return target
 

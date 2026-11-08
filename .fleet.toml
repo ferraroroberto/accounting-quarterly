@@ -141,8 +141,8 @@ paths  = ["app/", "src/"]
 # A raw connect skips the WAL and foreign-key pragmas.
 [[conventions_ratchet.must_use]]
 call   = "sqlite3.connect"
-helper = ["src/database/connection.py"]
-why    = "src/database/connection.py is the one SQLite connection helper (WAL, foreign keys)"
+helper = ["src/database/connection.py", "src/storage/runtime_files.py"]
+why    = "src/database/connection.py is the one SQLite connection helper (WAL, foreign keys); src/storage/runtime_files.py opens it after the code-folder check"
 paths  = ["app/", "src/"]
 
 # [runtime_write_ratchet] -- scripts/runtime_write_ratchet.py fails when a tracked

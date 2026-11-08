@@ -1,8 +1,8 @@
 import logging
 import os
-import shutil
 from logging.handlers import TimedRotatingFileHandler
-from pathlib import Path
+
+from src.storage.runtime_files import copy_file, make_dirs, open_for_write
 
 
 class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
@@ -18,19 +18,16 @@ class _WinSafeTimedRotatingFileHandler(TimedRotatingFileHandler):
             super().rotate(source, dest)
         except PermissionError:
             try:
-                # runtime-write-exempt: the rotated log file of a handler under the configured logs folder
-                shutil.copy2(source, dest)
+                copy_file(source, dest)
                 # Truncate the source so new entries start fresh
-                # runtime-write-exempt: the rotated log file of a handler under the configured logs folder
-                with open(source, "w", encoding="utf-8"):
+                with open_for_write(source, "w", encoding="utf-8"):
                     pass
             except Exception:
                 pass  # Never crash the app over a log rotation failure
 
 
 def get_logger(name: str, logs_dir: str = "data/logs") -> logging.Logger:
-    # runtime-write-exempt: the logs_dir argument, defaulting to data/logs
-    Path(logs_dir).mkdir(parents=True, exist_ok=True)
+    make_dirs(logs_dir)
     logger = logging.getLogger(name)
 
     if logger.handlers:

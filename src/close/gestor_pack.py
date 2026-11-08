@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from pathlib import Path
 
 from src.close.context import (
@@ -28,6 +27,7 @@ from src.invoice_dedupe import flat_sweep_name
 from src.invoice_scanner import resolve_invoice_dir
 from src.models import ClassifiedPayment
 from src.reclassify import reclassify_stored
+from src.storage.runtime_files import copy_file, make_dirs, save_text
 
 PACK_INVOICES_DIR = "invoices"  # gestor-pack's copy of the quarter's ledger invoices, under the quarter folder
 
@@ -178,8 +178,7 @@ def _pack_stripe_report(ctx: CloseContext, freeze: bool, res: StepResult) -> tup
     else:
         create_excel_report(payments, dest, ctx.year, ctx.quarter, f"Q{ctx.quarter}_{ctx.year}")
         state["report_digest"] = digest
-        # runtime-write-exempt: the state file inside the quarter output folder
-        state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        save_text(state_path, json.dumps(state, indent=2))
         res.changes.append(f"wrote draft {dest} ({len(payments)} transactions)")
     res.warnings.append("the Stripe report is NOT frozen — rerun `gestor-pack --freeze` once it is the "
                         "version you will send")
@@ -236,8 +235,7 @@ def _pack_invoices(ctx: CloseContext, res: StepResult) -> dict[str, int]:
     of invoices actually in the pack.
     """
     pack = ctx.quarter_dir / PACK_INVOICES_DIR
-    # runtime-write-exempt: the pack folder inside the quarter output folder
-    pack.mkdir(exist_ok=True)
+    make_dirs(pack)
     wanted: dict[str, Path] = {}
     counts = {"in": 0, "out": 0}
     n_excluded = 0
@@ -264,8 +262,7 @@ def _pack_invoices(ctx: CloseContext, res: StepResult) -> dict[str, int]:
         res.changes.append(f"removed {PACK_INVOICES_DIR}/{stale.name} (no longer in the quarter's ledger)")
     for name, source in sorted(wanted.items()):
         if not same_file(source, pack / name):
-            # runtime-write-exempt: a file inside the quarter output pack folder
-            shutil.copy2(source, pack / name)
+            copy_file(source, pack / name)
             res.changes.append(f"copied {PACK_INVOICES_DIR}/{name}")
     res.info.append(f"Invoices: {counts['in']} received + {counts['out']} issued in {pack}"
                     + (f"; {n_excluded} excluded row(s) left out" if n_excluded else ""))

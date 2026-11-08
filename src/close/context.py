@@ -12,6 +12,7 @@ from src.database import get_connection, load_classified_payments
 from src.invoice_dedupe import SWEEP_ROOT
 from src.models import ClassifiedPayment
 from src.periods import quarter_datetime_bounds, quarter_iso_bounds
+from src.storage.runtime_files import make_dirs, save_text
 from src.tax_data import load_app_config
 
 ROOT = Path(__file__).parent.parent.parent
@@ -75,8 +76,7 @@ class CloseContext:
     @property
     def quarter_dir(self) -> Path:
         d = self.out_root / f"{self.year}_Q{self.quarter}"
-        # runtime-write-exempt: a folder under the caller-chosen close output root
-        d.mkdir(parents=True, exist_ok=True)
+        make_dirs(d)
         return d
 
     @property
@@ -104,10 +104,8 @@ def write_if_changed(path: Path, text: str) -> bool:
     """Write ``text`` to ``path`` unless it already holds exactly that. True if written."""
     if path.exists() and path.read_text(encoding="utf-8") == text:
         return False
-    # runtime-write-exempt: a caller-supplied file under the close output root
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # runtime-write-exempt: a caller-supplied file under the close output root
-    path.write_text(text, encoding="utf-8")
+    make_dirs(path.parent)
+    save_text(path, text)
     return True
 
 

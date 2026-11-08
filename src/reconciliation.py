@@ -50,6 +50,7 @@ from src.returns.modelo_130 import compute_modelo_130
 from src.returns.modelo_303 import compute_modelo_303
 from src.returns.modelo_349 import compute_modelo_349
 from src.returns.modelo_390 import MODELO390_LABELS, compute_modelo_390
+from src.storage.runtime_files import save_text
 from src.tax_data import load_app_config
 from src.tax_models import BOX_LABELS as _CANONICAL_BOX_LABELS
 
@@ -449,8 +450,7 @@ def save_catalogue(entries: Iterable[dict[str, Any]], path: Optional[str | Path]
     target = Path(path) if path is not None else CATALOGUE_PATH
     payload = {"divergences": [d.to_dict() for d in parsed]}
     tmp = target.with_suffix(target.suffix + ".tmp")
-    # runtime-write-exempt: the catalogue path argument; a sibling temp file for an atomic replace
-    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    save_text(tmp, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     tmp.replace(target)
     log.info("ℹ️ Saved %d divergence catalogue entr%s to %s",
              len(parsed), "y" if len(parsed) == 1 else "ies", target.name)

@@ -42,6 +42,8 @@
 │   │   ├── transactions.py      # Stripe transactions: upsert, load, search
 │   │   ├── invoices.py          # Upload log and invoices: upsert, edit, lock, delete, stats
 │   │   └── tax.py               # Tax entries, filing status, versioned snapshots, audit log
+│   ├── storage/                   # Guarded writers for caller-named runtime paths
+│   │   └── runtime_files.py     # make_dirs, save_text, copy_file, connect_sqlite, backup_sqlite; refuse a code-folder path
 │   ├── social_security.py         # SS cuota import from bank exports + DB query helpers
 │   ├── invoice_dedupe.py          # Duplicate/receipt/out-of-period detection + exclusion
 │   ├── periods.py                 # Quarter start/end bounds (date, ISO string, datetime) shared by the engine, dedupe, close and UI

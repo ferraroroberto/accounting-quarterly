@@ -32,6 +32,7 @@ flowchart TB
     DEDUPE["invoice_dedupe.py\nduplicate/receipt/out-of-period detectors + apply"]
     DB["database/\nSQLite read/write"]
     SHARED["models.py · config.py · _json_store.py\nshared types + cached JSON config"]
+    STORAGE["storage/runtime_files.py\nguarded writers: refuse a code-folder path"]
     NUMPARSE["numeric_parsing.py\nlocale-aware number-string parsing\n(shared by invoice_ocr.py + social_security.py, #189)"]
     AGGEXPORT["aggregator.py + excel_exporter.py\nmonthly aggregation, regional totals + Excel report"]
   end

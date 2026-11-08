@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from src._json_store import JsonCache
 from src.exceptions import ConfigError
+from src.storage.runtime_files import save_text
 
 load_dotenv()
 
@@ -54,6 +55,5 @@ def save_stripe_api_key(key: str, env_path: str | Path | None = None) -> None:
     if path.exists():
         lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not ln.startswith("STRIPE_API_KEY=")]
     lines.append(f"STRIPE_API_KEY={key}")
-    # runtime-write-exempt: the .env file path chosen by the caller
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    save_text(path, "\n".join(lines) + "\n")
     os.environ["STRIPE_API_KEY"] = key

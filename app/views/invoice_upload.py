@@ -17,6 +17,7 @@ from src.config import load_config
 from src.database import get_uploaded_files, record_upload
 from src.invoice_scanner import resolve_invoice_dir, scan_invoice_pdfs
 from src.logger import get_logger
+from src.storage.runtime_files import make_dirs
 
 log = get_logger(__name__)
 
@@ -49,8 +50,7 @@ def _render_upload_panel(
     st.caption(f"Directory: `{invoice_dir}`")
 
     dir_path = resolve_invoice_dir(direction)
-    # runtime-write-exempt: the configured invoice folder, user data outside the code tree
-    dir_path.mkdir(parents=True, exist_ok=True)
+    make_dirs(dir_path)
 
     all_files = [str(p.relative_to(dir_path)) for p in scan_invoice_pdfs(direction)]
     uploaded = _successful_uploads(get_uploaded_files(direction))

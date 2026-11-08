@@ -15,14 +15,13 @@
 ├── scripts/
 │   ├── close_quarter.py           # Quarter-close CLI over src/close_pipeline.py (see [close-quarter-cli.md](close-quarter-cli.md))
 │   ├── clean_invoice_activity_type.py  # One-off: NULL the non-activity values old rows hold in invoices.activity_type (dry run by default, --apply writes)
-│   ├── verify-before-ship.ps1     # Pre-ship gate: byte-compile, static ratchet, comment ratchet, docstring ratchet, conventions ratchet, docs ratchet, structure ratchet, instruction ratchet, doc-refs ratchet, dead-code ratchet, pytest
+│   ├── verify-before-ship.ps1     # Pre-ship gate: byte-compile, static ratchet, comment ratchet (comments, docstrings, history phrases), conventions ratchet, docs ratchet, structure ratchet, instruction ratchet, doc-refs ratchet, dead-code ratchet, pytest
 │   ├── docs_ratchet.py            # Vendored from project-scaffolding (never edited here): README size + history-marker ratchet
 │   ├── structure_ratchet.py       # Vendored from project-scaffolding (never edited here): file-size, function-length, flat-directory, src→app and root-layout ratchet
 │   ├── instruction_ratchet.py     # Vendored from project-scaffolding (never edited here): prompt-audit lint ratchet over CLAUDE.md, AGENTS.md, rules and skills
 │   ├── doc_refs_ratchet.py        # Vendored from project-scaffolding (never edited here): ratchet on README, CLAUDE.md and docs/ references to paths, modules and ports that do not exist
 │   ├── dead_code_ratchet.py       # Vendored from project-scaffolding (never edited here): ratchet on new Python definitions that nothing in the repo refers to
 │   ├── comment_ratchet.py         # Vendored from project-scaffolding (never edited here): ratchet on #NNN issue references inside product-code comments
-│   ├── docstring_ratchet.py       # Repo-local, not vendored: ratchet on #NNN issue references inside Python docstrings, the vendored comment ratchet's documented blind spot
 │   ├── conventions_ratchet.py     # Vendored from project-scaffolding (never edited here): ratchet on subprocess spawns without creationflags, print() in library code and hardcoded drive paths
 │   ├── static_ratchet.py          # Vendored from project-scaffolding (never edited here): ratchet on duplicate blocks, unused names and curated bug/security patterns
 ├── src/                           # Core business logic

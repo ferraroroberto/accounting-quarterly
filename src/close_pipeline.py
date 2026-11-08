@@ -263,7 +263,7 @@ def step_vendors(ctx: CloseContext, all_periods: bool = False) -> StepResult:
 def step_dedupe(ctx: CloseContext, apply: bool = False, groups: Optional[list[int]] = None) -> StepResult:
     """Detect duplicate / receipt / out-of-period groups; exclude the losers only with ``apply``.
 
-    Groups are numbered ``#1``, ``#2``… in the review; ``groups`` limits
+    Groups are numbered from 1 in the review; ``groups`` limits
     ``apply`` to those numbers (an unknown number applies nothing). Out-of-period
     only looks at the invoices swept into this quarter's folder. Excluded (or
     exclusion-locked) rows are never proposed again, so a second run after

@@ -52,7 +52,9 @@ The rules (each one quotes its global-instruction line in docs/conventions-ratch
     resolved through the module's imports (`import x as y`, `from x import f`), the
     way `secret-compare` and `git-wrapper` resolve theirs. Those two are the same
     check with the call set built in and the helper read from `secret_helpers` /
-    `git_wrappers`. A method on an instance (`conn.replace`) is not seen.
+    `git_wrappers`. A method on an instance (`conn.replace`) is not seen;
+  * `state-literal`, `state-set-repeat`, `state-write` -- implicit-state-machine suspects,
+    read by `conventions_state.py`; a module `[[state_machines]]` declares is never reported.
 
 Test modules (and every file under a `tests/` or `test/` folder) are skipped by
 every rule except `no-window`. A single call keeps its exception with a
@@ -79,13 +81,14 @@ Opt-in, per adopter, in its own `.fleet.toml`:
 
 Exit codes: 0 pass or not enabled; 1 a count rose, or the baseline is missing /
 a mode was refused; 2 bad configuration, baseline or arguments; 3 NOT CONFIRMED
-(`git` unusable, a tracked `.py` file that does not parse, or a scanned file
-that cannot be read) --
+(`git` unusable, a tracked `.py` file that does not parse, a scanned file
+that cannot be read, or a declared state machine that does not resolve) --
 the gate fails on it. Modes: `check`, `--init`, `--update-baseline` (shrink
 only), `--update-baseline --allow-additions` (shows in review).
 
-Vendor-verbatim (manifest key `conventions_ratchet`), stdlib-only, with its sibling
-`conventions_readers.py` (manifest key `conventions_readers`) loaded from beside it.
+Vendor-verbatim (manifest key `conventions_ratchet`), stdlib-only, with its siblings
+`conventions_readers.py` and `conventions_state.py` (manifest keys `conventions_readers`,
+`conventions_state`) loaded from beside it.
 Procedure and limits: docs/conventions-ratchet.md.
 """
 
@@ -107,6 +110,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -122,8 +126,8 @@ def _load_sibling(name: str) -> ModuleType:
         spec.loader.exec_module(module)
         return module
     except (ImportError, OSError, SyntaxError):
-        print(f"conventions ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
-              "(manifest keys conventions_ratchet and conventions_readers)")
+        print(f"conventions ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all three "
+              "(manifest keys conventions_ratchet, conventions_readers and conventions_state)")
         sys.exit(3)
 
 
@@ -143,6 +147,11 @@ _writes_to_a_file: Callable[[ast.Call], bool] = _readers._writes_to_a_file
 _exempt: Callable[..., bool] = _readers._exempt
 _web_findings: _Findings = _readers.web_findings
 _text_findings: _Findings = _readers.text_findings
+matches_any: Callable[[str, tuple[str, ...]], bool] = _readers.matches_any
+_under: Callable[[str, str], bool] = _readers._under
+_state = _load_sibling("conventions_state")  # the implicit-state-machine readers
+STATE_RULES = frozenset(_state.STATE_RULES)
+StateMachine = _state.StateMachine
 
 BASELINE_VERSION = 1
 DEFAULT_BASELINE = ".conventions-ratchet-baseline.json"
@@ -153,7 +162,7 @@ GIT_TIMEOUT_S = 120
 
 RULES = ("no-window", "logging-not-print", "no-drive-path", "secret-compare", "git-wrapper",
          "password-input-vendored", "login-lockout", "no-pwsh-stub", "must-use",
-         "subprocess-timeout")
+         "subprocess-timeout", "state-literal", "state-set-repeat", "state-write")
 #: The rules a test module is held to; fixtures legitimately spell drive paths, raw compares and raw git.
 TEST_RULES = frozenset({"no-window"})
 #: The rules read from web files rather than Python source.
@@ -226,6 +235,7 @@ class Config:
     secret_helpers: tuple[str, ...] = ()
     git_wrappers: tuple[str, ...] = ()
     must_use: tuple[MustUse, ...] = ()
+    state_machines: tuple[Any, ...] = ()  # conventions_state.StateMachine
 
 
 @dataclass(frozen=True)
@@ -305,7 +315,8 @@ def parse_config(toml_text: str) -> Config | None:
     declared it. Anything malformed raises `ConfigError` -- a typo'd key or rule
     must not quietly run with less than the adopter asked for.
     """
-    table = tomllib.loads(toml_text).get("conventions_ratchet")
+    data = tomllib.loads(toml_text)
+    table = data.get("conventions_ratchet")
     if table is None:
         return None
     if not isinstance(table, dict):
@@ -339,11 +350,19 @@ def parse_config(toml_text: str) -> Config | None:
         _str_list(table, "secret_helpers", ()),
         _str_list(table, "git_wrappers", ()),
         entries,
+        _machines(data.get("state_machines", [])),
     )
     for rule, key in REQUIRED_KEYS.items():
         if rule in cfg.rules and not getattr(cfg, key):
             raise ConfigError(f"[conventions_ratchet] rule {rule} needs {key}: the file(s) that may do it")
     return cfg
+
+
+def _machines(raw: object) -> tuple[Any, ...]:
+    try:
+        return tuple(_state.parse_machines(raw))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def vendored_dests(toml_text: str) -> tuple[str, ...]:
@@ -369,40 +388,6 @@ def load_config(root: Path) -> tuple[Config | None, tuple[str, ...]]:
         return parse_config(text), vendored_dests(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path} is not valid TOML: {exc}") from exc
-
-
-# ------------------------------------------------------------------- globs
-
-def _glob_regex(glob: str) -> re.Pattern[str]:
-    """Repo-root-anchored glob -> regex; `**/` is zero or more directories."""
-    out: list[str] = []
-    i = 0
-    while i < len(glob):
-        if glob.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif glob.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif glob[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif glob[i] == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(glob[i]))
-            i += 1
-    return re.compile("".join(out) + r"\Z")
-
-
-def matches_any(text: str, globs: tuple[str, ...]) -> bool:
-    return any(_glob_regex(g).match(text) for g in globs)
-
-
-def _under(path: str, prefix: str) -> bool:
-    prefix = prefix.replace("\\", "/").strip("/")
-    return path == prefix or path.startswith(prefix + "/")
 
 
 def in_scope(path: str, cfg: Config, vendored: tuple[str, ...]) -> bool:
@@ -458,6 +443,8 @@ def rules_for(path: str, cfg: Config) -> frozenset[str]:
         rules.discard("git-wrapper")
     if "must-use" in rules and not entries_for(path, cfg):
         rules.discard("must-use")
+    if any(path == m.module for m in cfg.state_machines):
+        rules -= STATE_RULES  # declaring the machine is what clears its module's suspects
     return frozenset(rules)
 
 
@@ -613,7 +600,10 @@ class _Scanner(ast.NodeVisitor):
 def _window(node: ast.AST, lines: list[str]) -> list[str]:
     """The node's own lines plus the contiguous comment block right above it."""
     start = getattr(node, "lineno", 1)
-    end = getattr(node, "end_lineno", start) or start
+    return _window_at(start, getattr(node, "end_lineno", start) or start, lines)
+
+
+def _window_at(start: int, end: int, lines: list[str]) -> list[str]:
     above = start - 1
     while above > 0 and lines[above - 1].lstrip().startswith("#"):
         above -= 1
@@ -631,7 +621,7 @@ def scan_text(source: bytes | str, path: str, rules: frozenset[str]) -> list[Hit
 
 
 def scan_source(source: bytes | str, path: str, rules: frozenset[str],
-                entries: tuple[MustUse, ...] = ()) -> list[Hit]:
+                entries: tuple[MustUse, ...] = (), state: object = None) -> list[Hit]:
     """Hits of the given rules in one module; raises `NotConfirmed` when it does not parse.
 
     `entries` are the `must_use` entries that bind this file (`entries_for`); `must-use` reports nothing without them.
@@ -643,12 +633,15 @@ def scan_source(source: bytes | str, path: str, rules: frozenset[str],
     except (SyntaxError, ValueError) as exc:
         where = f" (line {exc.lineno})" if isinstance(exc, SyntaxError) and exc.lineno else ""
         raise NotConfirmed(f"{path}: does not parse{where}: {exc.msg if isinstance(exc, SyntaxError) else exc}") from exc
+    text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+    lines = text.splitlines()
+    if isinstance(state, _state.Sink):  # state spellings; their hits need every module, so scan_tree reports them
+        state.collect(tree, path, lambda rule, start, end: _exempt(rule, _window_at(start, end, lines)))
+    rules -= STATE_RULES
     if not rules:
         return []
     scanner = _Scanner(path, rules, _docstring_ids(tree), entries)
     scanner.visit(tree)
-    text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
-    lines = text.splitlines()
     hits = []
     for node, rule, message in [*scanner.hits, *_login_lockout_hits(scanner)]:
         if rule == "logging-not-print" and (scanner.print_shadowed or scanner.cli or is_cli_path(path)):
@@ -691,6 +684,10 @@ def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, l
     a hit or as evidence against one, even when `.json` files are read.
     """
     found: dict[str, list[Hit]] = {}
+    sink = _state.Sink(frozenset(cfg.rules))
+    if sink.rules:
+        check_state_machines(root, cfg)
+    reported: set[str] = set()
     for path in tracked_files(root):
         if not in_scope(path, cfg, vendored):
             continue
@@ -704,12 +701,29 @@ def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, l
         if is_web_file(path):
             hits = scan_web(source, path, rules)
         elif path.endswith(".py"):
-            hits = scan_source(source, path, rules, entries_for(path, cfg) if "must-use" in rules else ())
+            # A declared module's spellings count toward the cross-module rules; only its hits are dropped.
+            collect = sink.rules and not is_test_module(path)
+            reported |= {path} if rules & sink.rules else set()
+            hits = scan_source(source, path, rules, entries_for(path, cfg) if "must-use" in rules else (),
+                               sink if collect else None)
         else:
             hits = scan_text(source, path, rules)
         if hits:
             found[path] = hits
+    for path, extra in sink.hits(reported).items():
+        found[path] = sorted([*found.get(path, []), *(Hit(path, *h) for h in extra)], key=lambda h: (h.line, h.rule))
     return found
+
+
+def check_state_machines(root: Path, cfg: Config) -> None:
+    """Every declared machine's module parses and defines its type and derive, else `NotConfirmed` (never a skip)."""
+    for m in cfg.state_machines:
+        try:
+            missing = _state.unresolved(m, ast.parse((root / m.module).read_bytes()))
+        except (OSError, SyntaxError, ValueError) as exc:
+            raise NotConfirmed(f"[[state_machines]] {m.name!r}: module {m.module} unreadable: {exc}") from exc
+        if missing:
+            raise NotConfirmed(f"[[state_machines]] {m.name!r}: {m.module} defines no {' or '.join(missing)}")
 
 
 # ---------------------------------------------------------------- baseline

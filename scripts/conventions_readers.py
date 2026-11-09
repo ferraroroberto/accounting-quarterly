@@ -185,3 +185,35 @@ def text_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int,
             hits.append((number, "`pwsh` is a 0-byte stub on the fleet's main machine; "
                                  "use C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"))
     return hits
+
+
+def _glob_regex(glob: str) -> re.Pattern[str]:
+    """Repo-root-anchored glob -> regex; `**/` is zero or more directories."""
+    out: list[str] = []
+    i = 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def matches_any(text: str, globs: tuple[str, ...]) -> bool:
+    return any(_glob_regex(g).match(text) for g in globs)
+
+
+def _under(path: str, prefix: str) -> bool:
+    prefix = prefix.replace("\\", "/").strip("/")
+    return path == prefix or path.startswith(prefix + "/")

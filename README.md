@@ -62,6 +62,8 @@ A `launch_app.bat` shortcut is provided for Windows.
 .venv/bin/pytest -v
 ```
 
+The gate's last stdout line is `GATE-RESULT: PASS` or `GATE-RESULT: FAIL` on every path, including an early terminating error, and its exit code is 0 or 1; never pipe it when the exit code matters (`| tail` reports `tail`'s status), and treat a run with no such line as not passed.
+
 The static ratchet fails on a new duplicate block (`jscpd`, Python and JS), a new unused import or variable (`ruff` F401/F841) or a new curated `ruff` bug/security hit, beyond `.static-ratchet-baseline.json`. It needs Node (`npx`) and `ruff` in `.venv` (`ruff` is in `requirements.txt`). Remove the duplication or the unused name rather than baselining it; exit 3 (a detector could not run) fails as not confirmed.
 
 The comment ratchet counts `#NNN` issue references inside comments of product code (Python, JS, CSS, PowerShell; tests and vendored files left out) per file and fails when a file's count rises above `.comment-ratchet-baseline.json`. State the present-tense why in the comment and leave the history to the issue and `git log`; exit 3 (a file that could not be scanned) fails as not confirmed.

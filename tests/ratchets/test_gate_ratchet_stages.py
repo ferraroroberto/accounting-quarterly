@@ -58,9 +58,10 @@ def _tree(tmp_path: Path, name: str, files: dict[str, str], extra_config: str = 
     (tmp_path / "scripts").mkdir()
     script = f"scripts/{name}_ratchet.py"
     (tmp_path / script).write_bytes((REPO_ROOT / script).read_bytes())
-    readers = REPO_ROOT / f"scripts/{name}_readers.py"  # the conventions ratchet loads this sibling
-    if readers.is_file():
-        (tmp_path / "scripts" / readers.name).write_bytes(readers.read_bytes())
+    for suffix in ("readers", "state"):  # the conventions ratchet loads these siblings
+        sibling = REPO_ROOT / f"scripts/{name}_{suffix}.py"
+        if sibling.is_file():
+            (tmp_path / "scripts" / sibling.name).write_bytes(sibling.read_bytes())
     config = f"[{name}_ratchet]\nenabled = true\n" + extra_config
     (tmp_path / ".fleet.toml").write_text(config, encoding="utf-8")
     baseline = f".{name}-ratchet-baseline.json"

@@ -22,7 +22,8 @@
 
     Exit 3 is the helper's "lock not taken in time" code. A gate that itself
     exits 3 would be indistinguishable from it, so a gate wrapped by this file
-    must exit only 0 or 1.
+    must exit only 0 or 1. On exit 3 the inner gate never ran, so this file
+    prints the `GATE-RESULT: FAIL` verdict line itself, after the reason.
 
     The lock is advisory and machine-local, and a gate must still run where
     fleet-config is absent. A missing helper, or one that cannot be launched,
@@ -98,6 +99,8 @@ function Enter-BoxLockGate {
     }
     if ($lockExit -eq 3) {
         Write-Host "[FAIL] box load lock not taken in time (a CPU burn holds it) - the gate did not run" -ForegroundColor Red
+        # The inner gate never ran, so its own verdict never printed; the line stays last for a piped reader.
+        Write-Host "GATE-RESULT: FAIL"
     }
     exit $lockExit
 }

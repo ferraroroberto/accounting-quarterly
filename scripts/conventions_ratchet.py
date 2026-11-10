@@ -53,8 +53,9 @@ The rules (each one quotes its global-instruction line in docs/conventions-ratch
     way `secret-compare` and `git-wrapper` resolve theirs. Those two are the same
     check with the call set built in and the helper read from `secret_helpers` /
     `git_wrappers`. A method on an instance (`conn.replace`) is not seen;
-  * `state-literal`, `state-set-repeat`, `state-write` -- implicit-state-machine suspects,
-    read by `conventions_state.py`; a module `[[state_machines]]` declares is never reported.
+  * `state-literal`, `state-set-repeat`, `state-write` -- implicit-state-machine suspects in
+    Python and JS/TS, read by `conventions_state.py`; a module `[[state_machines]]` declares is
+    never reported.
 
 Test modules (and every file under a `tests/` or `test/` folder) are skipped by
 every rule except `no-window`. A single call keeps its exception with a
@@ -145,6 +146,9 @@ _is_login_route: Callable[[ast.expr], bool] = _readers._is_login_route
 _calls_retry_after: Callable[[ast.FunctionDef | ast.AsyncFunctionDef], bool] = _readers._calls_retry_after
 _writes_to_a_file: Callable[[ast.Call], bool] = _readers._writes_to_a_file
 _exempt: Callable[..., bool] = _readers._exempt
+_window: Callable[[ast.AST, list[str]], list[str]] = _readers.window
+_window_at: Callable[[int, int, list[str]], list[str]] = _readers.window_at
+_js_marked: Callable[[list[str]], Callable[[str, int, int], bool]] = _readers.js_marked
 _web_findings: _Findings = _readers.web_findings
 _text_findings: _Findings = _readers.text_findings
 matches_any: Callable[[str, tuple[str, ...]], bool] = _readers.matches_any
@@ -419,6 +423,8 @@ def is_test_module(path: str) -> bool:
     name = parts[-1]
     if any(p in ("tests", "test") for p in parts[:-1]):
         return True
+    if _state.is_js_source(path):
+        return "__tests__" in parts[:-1] or ".test." in name or ".spec." in name
     return name == "conftest.py" or name.startswith("test_") or name.endswith("_test.py")
 
 
@@ -426,7 +432,7 @@ def rules_for(path: str, cfg: Config) -> frozenset[str]:
     """The enabled rules that apply to one in-scope file."""
     rules = set(cfg.rules)
     if is_web_file(path):
-        rules &= WEB_RULES
+        rules &= WEB_RULES | (STATE_RULES if _state.is_js_source(path) else frozenset())
         if in_sign_in_component(path):
             rules.discard("password-input-vendored")
     elif path.endswith(".py"):
@@ -597,19 +603,6 @@ class _Scanner(ast.NodeVisitor):
             self.hits.append((node, "no-drive-path", f"hardcoded drive path {shown!r}"))
 
 
-def _window(node: ast.AST, lines: list[str]) -> list[str]:
-    """The node's own lines plus the contiguous comment block right above it."""
-    start = getattr(node, "lineno", 1)
-    return _window_at(start, getattr(node, "end_lineno", start) or start, lines)
-
-
-def _window_at(start: int, end: int, lines: list[str]) -> list[str]:
-    above = start - 1
-    while above > 0 and lines[above - 1].lstrip().startswith("#"):
-        above -= 1
-    return lines[above:end]
-
-
 def scan_web(source: bytes | str, path: str, rules: frozenset[str]) -> list[Hit]:
     """Hits of the web rules in one HTML or JS file, read line by line."""
     return [Hit(path, n, "password-input-vendored", m) for n, m in _web_findings(source, rules)]
@@ -698,11 +691,14 @@ def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, l
         except OSError as exc:
             raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
         rules = rules_for(path, cfg)
+        # A declared module's spellings count toward the cross-module rules; only its hits are dropped.
+        collect = sink.rules and not is_test_module(path)
         if is_web_file(path):
             hits = scan_web(source, path, rules)
+            if collect and _state.is_js_source(path):
+                reported |= {path} if rules & sink.rules else set()
+                collect_js(sink, source, path)
         elif path.endswith(".py"):
-            # A declared module's spellings count toward the cross-module rules; only its hits are dropped.
-            collect = sink.rules and not is_test_module(path)
             reported |= {path} if rules & sink.rules else set()
             hits = scan_source(source, path, rules, entries_for(path, cfg) if "must-use" in rules else (),
                                sink if collect else None)
@@ -715,11 +711,19 @@ def scan_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> dict[str, l
     return found
 
 
+def collect_js(sink: Any, source: bytes, path: str) -> None:
+    """Add one JS/TS module's state spellings to the sink; a file the tokenizer cannot read is `NotConfirmed`."""
+    try:
+        sink.collect_js(source, path, _js_marked(source.decode("utf-8", "replace").splitlines()))
+    except ValueError as exc:
+        raise NotConfirmed(f"{path}: cannot be tokenized: {exc}") from exc
+
+
 def check_state_machines(root: Path, cfg: Config) -> None:
     """Every declared machine's module parses and defines its type and derive, else `NotConfirmed` (never a skip)."""
     for m in cfg.state_machines:
         try:
-            missing = _state.unresolved(m, ast.parse((root / m.module).read_bytes()))
+            missing = _state.unresolved(m, (root / m.module).read_bytes())
         except (OSError, SyntaxError, ValueError) as exc:
             raise NotConfirmed(f"[[state_machines]] {m.name!r}: module {m.module} unreadable: {exc}") from exc
         if missing:

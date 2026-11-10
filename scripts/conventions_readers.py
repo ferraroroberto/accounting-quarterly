@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from pathlib import PurePosixPath
 
 _PLATFORM_EXPRS = frozenset({"sys.platform", "os.name", "platform.system"})
@@ -138,6 +139,29 @@ def _exempt(rule: str, window: list[str], punct: str = " :#\t") -> bool:
     """A `# <rule>-exempt: <reason>` marker in the window; a bare marker exempts nothing."""
     marker = f"{rule}-exempt"
     return any(line.split(marker, 1)[1].strip(punct) for line in window if marker in line)
+
+
+def window(node: ast.AST, lines: list[str]) -> list[str]:
+    """A Python node's own lines plus the contiguous `#` comment block right above it."""
+    start = getattr(node, "lineno", 1)
+    return window_at(start, getattr(node, "end_lineno", start) or start, lines)
+
+
+def window_at(start: int, end: int, lines: list[str]) -> list[str]:
+    above = start - 1
+    while above > 0 and lines[above - 1].lstrip().startswith("#"):
+        above -= 1
+    return lines[above:end]
+
+
+def js_marked(lines: list[str]) -> Callable[[str, int, int], bool]:
+    """`marked(rule, first, last)` for a JS/TS file: a reasoned marker on those lines or the comment block above."""
+    def marked(rule: str, start: int, end: int) -> bool:
+        above = start - 1
+        while above > 0 and _web_comment_line(lines[above - 1]):
+            above -= 1
+        return _exempt(rule, lines[above:end], " :#/*-<>!\t")
+    return marked
 
 
 def _web_comment_line(text: str) -> bool:

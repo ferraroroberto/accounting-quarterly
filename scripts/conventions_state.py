@@ -14,11 +14,18 @@ rules flag suspects; an agent confirms each one before anything is declared:
   * `state-write` -- a boolean or `None` written to a lifecycle-named attribute or key
     (`_loading`, `is_ready`, `*_pending`, `*_started`) from more than one module.
 
+Python modules are read from their syntax tree; JavaScript and TypeScript modules (`.js` `.mjs`
+`.cjs` `.ts` `.jsx` `.tsx`) from a stdlib token stream, with the same three patterns and the same
+`[[state_machines]]` declaration, plus the JS spellings with no Python twin: `switch (x.status)`
+cases, `[...].includes(x.status)`, all-string object and `enum` bodies, and TypeScript unions of
+string literals. Both languages share one vocabulary and count toward the same cross-module sets.
+
 Code in a module that `[[state_machines]]` declares is never reported: declaring the machine
 is what clears its suspects. Its spellings still count toward the cross-module rules, so a
 second module re-spelling the declared states or writing its flag is still a hit.
 
-Nothing here reads a file, a baseline or git. `facts()` reads one parsed module; `cross_module()`
+Nothing here reads a file, a baseline or git. `facts()` reads one parsed Python module and
+`facts_js()` one JS/TS source; `cross_module()`
 turns the facts of every module into hits; `Sink` carries both through one scan of the tree;
 `parse_machines()` and `unresolved()` validate the declarations. Stdlib only.
 """
@@ -27,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -269,9 +277,18 @@ def parse_machines(raw: object) -> tuple[StateMachine, ...]:
     return tuple(machines)
 
 
-def unresolved(machine: StateMachine, tree: ast.Module) -> list[str]:
-    """The declared `type` / `derive` names the machine's parsed module does not define at its top level."""
-    defined = module_names(tree)
+def unresolved(machine: StateMachine, source: bytes | str) -> list[str]:
+    """The declared `type` / `derive` names the machine's module does not define at its top level.
+
+    The module is Python or, by its suffix, JavaScript/TypeScript; raises `SyntaxError` or
+    `ValueError` when it cannot be read.
+    """
+    if is_js_source(machine.module):
+        defined = js_module_names(source)
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # an invalid escape in the declared module is not this check's finding
+            defined = module_names(ast.parse(source))
     return [n for n in (machine.type, machine.derive) if n and n not in defined]
 
 
@@ -284,8 +301,15 @@ class Sink:
         self.exempt: dict[str, set[tuple[int, str]]] = {}
 
     def collect(self, tree: ast.Module, path: str, marked: Callable[[str, int, int], bool]) -> None:
-        """Read one module; `marked(rule, first_line, last_line)` says a site carries its exempt marker."""
-        found = self.facts[path] = facts(tree, self.rules)
+        """Read one Python module; `marked(rule, first_line, last_line)` says a site carries its exempt marker."""
+        self._add(path, facts(tree, self.rules), marked)
+
+    def collect_js(self, source: bytes | str, path: str, marked: Callable[[str, int, int], bool]) -> None:
+        """Read one JS/TS module the same way; raises `ValueError` when it cannot be tokenized."""
+        self._add(path, facts_js(source, self.rules), marked)
+
+    def _add(self, path: str, found: Facts, marked: Callable[[str, int, int], bool]) -> None:
+        self.facts[path] = found
         sites = (("state-literal", found.literals), ("state-set-repeat", found.sets), ("state-write", found.writes))
         self.exempt[path] = {(s.line, rule) for rule, group in sites for s in group if marked(rule, s.line, s.end)}
 
@@ -339,12 +363,434 @@ def cross_module(per_path: dict[str, Facts], reported: set[str]) -> dict[str, li
         f = per_path[path]
         found = [(s, "state-literal", f"lifecycle string {s.key!r} compared or stored as a state outside a "
                                       "declared machine") for s in f.literals]
+        # A JS site counts Python homes too (a frontend re-spelling its backend's states); a Python site
+        # counts Python homes only, so reading JS never changes a Python module's hits.
+        python = not is_js_source(path)
         for rule, sites, what in (("state-set-repeat", f.sets, "the state set"), ("state-write", f.writes, "flag")):
             for s in sites:
-                others = sorted(homes[(rule, s.key)] - {path})
+                others = sorted(p for p in homes[(rule, s.key)] - {path} if not (python and is_js_source(p)))
                 if others:
                     found.append((s, rule, f"{what} `{s.key}` is also spelled in {others[0]}"
                                            + (f" and {len(others) - 1} more" if len(others) > 1 else "")))
         if found:
             out[path] = found
     return out
+
+
+# ------------------------------------------------------- JavaScript and TypeScript
+#
+# The same three rules over `.js` `.mjs` `.cjs` `.ts` `.jsx` `.tsx`, read from a token stream
+# rather than a syntax tree: a stdlib tokenizer (comments, strings, template literals with their
+# `${...}` code, regex literals) plus bracket matching is enough for these patterns, and keeps the
+# vendored scripts free of Node. What a token stream cannot tell apart is listed in
+# docs/conventions-ratchet.md, "State rules in JavaScript and TypeScript".
+
+JS_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx")
+
+
+@dataclass(frozen=True)
+class Tok:
+    """One token: `name`, `str` (its text unquoted), `tmpl` (a template with `${}`), `num`, `regex` or `punct`."""
+
+    kind: str
+    text: str
+    line: int
+
+
+_PUNCT = sorted(""">>>= ... === !== **= <<= >>= >>> &&= ||= ??= => == != <= >= && || ?? ?. ++ -- += -= *= /= %=
+&= |= ^= ** << >> { } ( ) [ ] ; , < > + - * / % & | ^ ! ~ ? : = . @ #""".split(), key=len, reverse=True)
+_JS_NAME = re.compile(r"[A-Za-z_$\u0080-￿][\w$\u0080-￿]*")
+_JS_NUM = re.compile(r"\.?\d[\w.]*")
+#: After these a `/` starts a regex literal; after a value (a name, `)`, `]`, `}`) it divides.
+_REGEX_AFTER = frozenset({"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void",
+                          "throw", "instanceof", "yield", "await"})
+_JS_CMP = frozenset({"==", "===", "!=", "!=="})
+_JS_FLAG_CMP = frozenset({"==", "===", "!=", "!==", "<=", ">="})  # `<` `>` are TypeScript generics too
+_JS_CONTINUES = frozenset({".", "?.", "?", ":", "&&", "||", "??", "+", "-", "*", "/", "%", "|", "&",
+                           *_JS_FLAG_CMP})
+
+
+def _js_string(text: str, i: int, quote: str) -> int:
+    """Index just past the closing quote, or -1 when the line ends first (a JSX apostrophe, not a string)."""
+    j = i + 1
+    while j < len(text):
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == quote:
+            return j + 1
+        if c == "\n":
+            return -1
+        j += 1
+    return -1
+
+
+def _js_regex(text: str, i: int) -> int:
+    """Index just past a regex literal's flags, or -1 when the line ends first (then `/` divides)."""
+    j, in_class = i + 1, False
+    while j < len(text):
+        c = text[j]
+        if c == "\\":
+            j += 2
+            continue
+        if c == "\n":
+            return -1
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            j += 1
+            while j < len(text) and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            return j
+        j += 1
+    return -1
+
+
+def _regex_may_start(prev: Tok | None) -> bool:
+    if prev is None:
+        return True
+    if prev.kind == "name":
+        return prev.text in _REGEX_AFTER
+    return prev.kind == "punct" and prev.text not in (")", "]", "}")
+
+
+def tokenize_js(text: str) -> list[Tok]:
+    """The tokens of one JS/TS source; raises `ValueError` on an unterminated comment or template.
+
+    A template literal's `${...}` code is tokenized in place; the literal itself is one `str` token
+    when it has no `${}`, else a `tmpl` token (it is never a fixed state string).
+    """
+    toks: list[Tok] = []
+    modes: list[int] = []  # one brace depth per open `${`: when it closes, the template resumes
+    line, i, n = 1, 0, len(text)
+    if text.startswith("#!"):
+        i = text.find("\n") if "\n" in text else n
+
+    def template(start: int, first_line: int) -> int:
+        """Scan a template chunk from `start` (just past a backtick or `}`); return where code resumes."""
+        nonlocal line
+        j = start
+        while j < n:
+            c = text[j]
+            if c == "\\":
+                j += 2
+                continue
+            if c == "`":
+                return j + 1
+            if c == "$" and text.startswith("${", j):
+                modes.append(0)
+                return j + 2
+            if c == "\n":
+                line += 1
+            j += 1
+        raise ValueError(f"unterminated template literal from line {first_line}")
+
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            line += 1
+            i += 1
+        elif c in " \t\r\f\v﻿":
+            i += 1
+        elif text.startswith("//", i):
+            i = text.find("\n", i) if "\n" in text[i:] else n
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end < 0:
+                raise ValueError(f"unterminated block comment from line {line}")
+            line += text.count("\n", i, end)
+            i = end + 2
+        elif c in "'\"":
+            end = _js_string(text, i, c)
+            if end < 0:  # an apostrophe in JSX text
+                toks.append(Tok("punct", c, line))
+                i += 1
+            else:
+                toks.append(Tok("str", text[i + 1:end - 1], line))
+                i = end
+        elif c == "`":
+            start_line, start = line, i
+            resume = template(i + 1, line)
+            plain = text[resume - 1] == "`"
+            toks.append(Tok("str" if plain else "tmpl", text[start + 1:resume - 1] if plain else "", start_line))
+            i = resume
+        elif c == "}" and modes and modes[-1] == 0:
+            modes.pop()
+            i = template(i + 1, line)
+        elif c == "/" and _regex_may_start(toks[-1] if toks else None) and (end := _js_regex(text, i)) > 0:
+            toks.append(Tok("regex", text[i:end], line))
+            i = end
+        elif m := _JS_NAME.match(text, i):
+            toks.append(Tok("name", m.group(), line))
+            i = m.end()
+        elif m := _JS_NUM.match(text, i):
+            toks.append(Tok("num", m.group(), line))
+            i = m.end()
+        else:
+            p = next((p for p in _PUNCT if text.startswith(p, i)), c)
+            if modes and p in ("{", "}"):
+                modes[-1] += 1 if p == "{" else -1
+            toks.append(Tok("punct", p, line))
+            i += len(p)
+    if modes:
+        raise ValueError("unterminated template literal interpolation")
+    return toks
+
+
+def _js_pairs(toks: list[Tok]) -> dict[int, int]:
+    """Index of each bracket -> its partner; raises `ValueError` when they do not balance."""
+    pairs: dict[int, int] = {}
+    stack: list[int] = []
+    closer = {")": "(", "]": "[", "}": "{"}
+    for k, t in enumerate(toks):
+        if t.kind != "punct":
+            continue
+        if t.text in ("(", "[", "{"):
+            stack.append(k)
+        elif t.text in closer:
+            if not stack or toks[stack[-1]].text != closer[t.text]:
+                raise ValueError(f"unbalanced {t.text!r} on line {t.line}")
+            opener = stack.pop()
+            pairs[opener], pairs[k] = k, opener
+    if stack:
+        raise ValueError(f"unclosed {toks[stack[-1]].text!r} from line {toks[stack[-1]].line}")
+    return pairs
+
+
+_NO_TOK = Tok("", "", 0)
+_JS_FLAG_LITERALS = frozenset({"true", "false", "null", "undefined"})
+_UPPER = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_JS_DECLARES = frozenset({"const", "let", "var", "function", "class", "enum", "interface", "type"})
+
+
+class _JsReader:
+    """The state spellings in one tokenized JS/TS module, mirroring `_Reader`'s Python patterns."""
+
+    def __init__(self, toks: list[Tok], pairs: dict[int, int], rules: frozenset[str]) -> None:
+        self.t, self.pairs, self.rules = toks, pairs, rules
+        self.facts = Facts()
+
+    def at(self, k: int) -> Tok:
+        return self.t[k] if 0 <= k < len(self.t) else _NO_TOK
+
+    def punct(self, k: int, *texts: str) -> bool:
+        tok = self.at(k)
+        return tok.kind == "punct" and tok.text in texts
+
+    def name_before(self, k: int) -> str:
+        """The name the operand ending just before `k` is stored under: `x`, `o.x`, `o['x']`, `m.get('x')`."""
+        tok = self.at(k - 1)
+        if tok.kind == "name":
+            return tok.text
+        if self.punct(k - 1, "]", ")"):
+            opener = self.pairs[k - 1]
+            inner = self.at(opener + 1)
+            single = opener + 2 == k - 1 and inner.kind == "str"
+            if single and (tok.text == "]" or self.at(opener - 1).text == "get"):
+                return inner.text
+        return ""
+
+    def chain_after(self, k: int) -> tuple[str, int]:
+        """(stored-under name, index past the operand) for the member chain starting at `k`."""
+        if self.at(k).kind != "name":
+            return "", k
+        name, j = self.at(k).text, k + 1
+        while True:
+            if self.punct(j, ".", "?.") and self.at(j + 1).kind == "name":
+                name, j = self.at(j + 1).text, j + 2
+            elif self.punct(j, "[", "("):
+                close = self.pairs[j]
+                inner = self.at(j + 1)
+                single = close == j + 2 and inner.kind == "str"
+                name = inner.text if single and (self.at(j).text == "[" or name == "get") else ""
+                j = close + 1
+            else:
+                return name, j
+
+    def lone_str(self, k: int) -> Tok | None:
+        """The string token at `k` when it is a whole operand (not `'x'.length`, not `'a' + b`)."""
+        tok = self.at(k)
+        if tok.kind != "str" or self.punct(k + 1, ".", "?.", "[", "(", "+") or self.punct(k - 1, ".", "+"):
+            return None
+        return tok
+
+    def literal(self, line: int, tok: Tok | None) -> None:
+        if tok and tok.text.lower() in LIFECYCLE and "state-literal" in self.rules:
+            self.facts.literals.append(Site(line, max(line, tok.line), tok.text))
+
+    def strings(self, opener: int) -> list[Tok]:
+        """The items between a bracket and its partner when every one is a single string, else []."""
+        close, items, j = self.pairs[opener], [], opener + 1
+        while j < close:
+            if self.at(j).kind != "str" or not (j + 1 == close or self.punct(j + 1, ",")):
+                return []
+            items.append(self.at(j))
+            j += 2
+        return items
+
+    def entries(self, opener: int) -> list[Tok]:
+        """The values of an enum-shaped body: `enum S { A = 'v' }`, or `{ K: 'v', ... }` keyed in UPPER_CASE or by its values.
+
+        A record such as `{ answer: 'done', label: 'Done' }` is data, not a state set, so its values never count.
+        """
+        close, keys, values, j = self.pairs[opener], [], [], opener + 1
+        while j < close:
+            key, value = self.at(j), self.at(j + 2)
+            if (key.kind not in ("name", "str") or not self.punct(j + 1, ":", "=")
+                    or value.kind != "str" or not (j + 3 == close or self.punct(j + 3, ","))):
+                return []
+            keys.append(key.text)
+            values.append(value)
+            j += 4
+        is_enum = self.at(opener - 2).text == "enum" and self.at(opener - 1).kind == "name"
+        enum_keyed = all(_UPPER.match(k) for k in keys) or all(
+            k.lower() == v.text.lower() for k, v in zip(keys, values))
+        return values if is_enum or enum_keyed else []
+
+    def add_set(self, line: int, items: list[Tok]) -> None:
+        if "state-set-repeat" not in self.rules or sum(1 for i in items if i.text.lower() in LIFECYCLE) < 2:
+            return
+        key = ",".join(sorted({i.text.lower() for i in items}))
+        self.facts.sets.append(Site(line, max(i.line for i in items), key))
+
+    def is_flag_value(self, start: int) -> bool:
+        """`true`/`false`/`null`/`undefined`, a `!x`, or a comparison: what Python's `_is_flag_value` accepts."""
+        if self.punct(start, "!"):
+            return True
+        j, compared = start, False
+        while j < len(self.t):
+            tok = self.t[j]
+            if tok.kind == "punct" and tok.text in (";", ",", ")", "]", "}"):
+                break
+            if j > start and tok.line > self.t[j - 1].line and not (
+                    self.punct(j - 1, *_JS_CONTINUES) or self.punct(j, *_JS_CONTINUES)):
+                break  # a new line that does not continue the expression: automatic semicolon insertion
+            compared |= tok.kind == "punct" and tok.text in _JS_FLAG_CMP
+            j = self.pairs[j] + 1 if self.punct(j, "(", "[", "{") else j + 1
+        first = self.at(start)
+        return compared or (j == start + 1 and first.kind == "name" and first.text in _JS_FLAG_LITERALS)
+
+    def write(self, k: int) -> None:
+        """A lifecycle flag on an object or key assigned a flag value at the `=` at `k`."""
+        target = self.at(k - 1)
+        if target.kind == "name" and self.punct(k - 2, "."):
+            flag, receiver = target.text, k - 3
+        elif self.punct(k - 1, "]") and self.pairs[k - 1] + 2 == k - 1 and self.at(k - 2).kind == "str":
+            flag, receiver = self.at(k - 2).text, self.pairs[k - 1] - 1
+        else:
+            return
+        if not _FLAG.match(flag) or not self.is_flag_value(k + 1):
+            return
+        owner = self.at(self.pairs[receiver] - 1) if self.punct(receiver, ")") else self.at(receiver)
+        name = owner.text if owner.kind == "name" else "?"
+        self.facts.writes.append(Site(target.line, target.line, f"{name}.{flag.lstrip('_').lower()}"))
+
+    def run(self) -> Facts:
+        braces: list[int] = []  # the open `{` around the current token
+        switch_bodies: dict[int, bool] = {}  # a `switch (...)` body's `{` -> its subject holds a state
+        k = 0
+        while k < len(self.t):
+            tok = self.t[k]
+            if tok.kind == "punct":
+                self._punct(k, tok, braces)
+            elif tok.kind == "name":
+                self._name(k, tok, braces, switch_bodies)
+            elif tok.kind == "str" and self.punct(k + 1, "|"):
+                k = self._union(k)
+                continue
+            k += 1
+        return self.facts
+
+    def _punct(self, k: int, tok: Tok, braces: list[int]) -> None:
+        text = tok.text
+        if text == "{":
+            braces.append(k)
+            self.add_set(tok.line, self.entries(k))
+        elif text == "}" and braces:
+            braces.pop()
+        elif text == "[" and _regex_may_start(self.at(k - 1) if k else None):
+            self.add_set(tok.line, self.strings(k))  # an array literal, not an index: no value before it
+        elif text in _JS_CMP:
+            if _STATE_HOLDER.search(self.name_before(k)):
+                self.literal(tok.line, self.lone_str(k + 1))
+            if _STATE_HOLDER.search(self.chain_after(k + 1)[0]):
+                self.literal(tok.line, self.lone_str(k - 1))
+        elif text == "=":
+            if _STATE_HOLDER.search(self.name_before(k)):
+                self.literal(tok.line, self.lone_str(k + 1))
+            if "state-write" in self.rules:
+                self.write(k)
+        elif text == ":":
+            key = k - 2 if self.punct(k - 1, "?") else k - 1
+            is_key = self.at(key).kind in ("name", "str") and self.punct(key - 1, "{", ",")
+            if is_key and _STATE_HOLDER.search(self.at(key).text) and not self.punct(k + 2, "|"):
+                self.literal(tok.line, self.lone_str(k + 1))
+
+    def _name(self, k: int, tok: Tok, braces: list[int], switch_bodies: dict[int, bool]) -> None:
+        if tok.text == "switch" and self.punct(k + 1, "("):
+            close = self.pairs[k + 1]
+            if self.punct(close + 1, "{"):
+                switch_bodies[close + 1] = bool(_STATE_HOLDER.search(self.name_before(close)))
+        elif tok.text == "case" and braces and switch_bodies.get(braces[-1]) and self.punct(k + 2, ":"):
+            self.literal(tok.line, self.at(k + 1) if self.at(k + 1).kind == "str" else None)
+        elif tok.text in ("includes", "has") and self.punct(k - 1, ".", "?.") and self.punct(k + 1, "("):
+            name, end = self.chain_after(k + 2)
+            if end != self.pairs[k + 1] or not _STATE_HOLDER.search(name):
+                return
+            receiver = k - 2
+            if self.punct(receiver, ")"):  # `new Set([...]).has(x.status)`
+                opener = self.pairs[receiver]
+                receiver = receiver - 1 if self.at(opener - 1).text == "Set" and self.punct(receiver - 1, "]") else -1
+            if receiver >= 0 and self.punct(receiver, "]"):
+                for item in self.strings(self.pairs[receiver]):
+                    self.literal(tok.line, item)
+
+    def _union(self, k: int) -> int:
+        """A TypeScript union of string literals (`'idle' | 'running'`) is a state set; returns the index past it."""
+        items, j = [self.t[k]], k
+        while self.punct(j + 1, "|") and self.at(j + 2).kind == "str":
+            j += 2
+            items.append(self.t[j])
+        if len(items) > 1:
+            self.add_set(self.t[k].line, items)
+        return j + 1
+
+
+def js_parse(source: bytes | str) -> tuple[list[Tok], dict[int, int]]:
+    """Tokens and bracket pairs of one JS/TS module; raises `ValueError` when it cannot be read."""
+    text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+    toks = tokenize_js(text)
+    return toks, _js_pairs(toks)
+
+
+def facts_js(source: bytes | str, rules: frozenset[str]) -> Facts:
+    """Every state spelling in one JS/TS module, for the enabled state rules; raises `ValueError` when unreadable."""
+    toks, pairs = js_parse(source)
+    enabled = rules & frozenset(STATE_RULES)
+    return _JsReader(toks, pairs, enabled).run() if enabled else Facts()
+
+
+def js_module_names(source: bytes | str) -> set[str]:
+    """The names a JS/TS module declares at its top level: `const`, `function`, `class`, `enum`, `type`, `interface`."""
+    toks, _ = js_parse(source)
+    names: set[str] = set()
+    depth = 0
+    for k, tok in enumerate(toks):
+        if tok.kind == "punct" and tok.text in ("(", "[", "{"):
+            depth += 1
+        elif tok.kind == "punct" and tok.text in (")", "]", "}"):
+            depth -= 1
+        elif depth == 0 and tok.kind == "name" and tok.text in _JS_DECLARES:
+            nxt = k + 2 if k + 1 < len(toks) and toks[k + 1].text == "*" else k + 1
+            if nxt < len(toks) and toks[nxt].kind == "name":
+                names.add(toks[nxt].text)
+    return names
+
+
+def is_js_source(path: str) -> bool:
+    """A JS/TS module the state rules read; a minified bundle is build output, not authored code."""
+    lower = path.lower()
+    return lower.endswith(JS_SUFFIXES) and not lower.endswith((".min.js", ".min.mjs", ".min.cjs"))

@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, Optional
 
-# COMPUTED / FILED are also the ``tax_computation_snapshots.status`` values.
-FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "COMPUTED", "FILED"]
+# The values of ``src.returns.filing_state.FilingState``; a test pins the two together.
+FilingStatus = Literal["PENDING", "DUE", "OVERDUE", "COMPUTED", "FILED", "FILED_WITH_NEWER_DRAFT", "UNKNOWN"]
 
 TaxModel = Literal["303", "390", "130", "100", "347", "349", "OSS"]
 

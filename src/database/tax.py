@@ -8,6 +8,7 @@ from typing import Optional
 from src.database.connection import get_connection
 from src.database.schema import SNAPSHOT_COMPUTED, SNAPSHOT_FILED, _ensure_audit_schema
 from src.logger import get_logger
+from src.returns.filing_state import FilingObservation, derive_filing_state
 
 log = get_logger(__name__)
 
@@ -192,14 +193,30 @@ def load_tax_snapshot_versions(
 
 
 def filed_snapshot_periods(conn: sqlite3.Connection) -> set[tuple[int, int]]:
-    """(year, quarter) of every period with a FILED snapshot.
+    """(year, quarter) of every period with a filed return, as ``derive_filing_state`` classifies it.
 
-    An annual one (quarter ``TAX_SNAPSHOT_QUARTER_ANNUAL``) covers its year's four quarters.
+    The scope is the snapshot table only, whatever the model: any FILED snapshot locks its
+    quarter, and an annual one (quarter ``TAX_SNAPSHOT_QUARTER_ANNUAL``) covers its year's four
+    quarters. A filing recorded only in ``tax_filing_status`` (OSS, 347, 390) does not lock.
     """
     periods: set[tuple[int, int]] = set()
-    for year, quarter in conn.execute(
-        "SELECT DISTINCT year, quarter FROM tax_computation_snapshots WHERE status = ?", (SNAPSHOT_FILED,)
+    for row in conn.execute(
+        """SELECT s.year, s.quarter, s.status, s.snapshot_version,
+                  EXISTS (SELECT 1 FROM tax_computation_snapshots f
+                          WHERE f.year = s.year AND f.quarter = s.quarter AND f.model = s.model
+                            AND f.status = ?) AS has_filed_version
+           FROM tax_computation_snapshots s
+           WHERE s.snapshot_version = (SELECT MAX(l.snapshot_version) FROM tax_computation_snapshots l
+                                       WHERE l.year = s.year AND l.quarter = s.quarter AND l.model = s.model)""",
+        (SNAPSHOT_FILED,),
     ):
+        year, quarter, status, version, has_filed_version = row
+        observation = FilingObservation(
+            snapshot_status=status, snapshot_version=version,
+            newer_draft=status == SNAPSHOT_COMPUTED and bool(has_filed_version),
+        )
+        if not derive_filing_state(observation).state.is_filed:
+            continue
         if quarter == TAX_SNAPSHOT_QUARTER_ANNUAL:
             periods.update((year, q) for q in (1, 2, 3, 4))
         else:

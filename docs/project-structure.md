@@ -57,6 +57,7 @@
 │   │   ├── modelo_349.py          # Modelo 349 (intra-EU operations, per operator and key)
 │   │   ├── oss_return.py          # OSS quarterly return and the EU B2C distance-selling threshold watch
 │   │   ├── modelo_390.py          # Modelo 390 engine from the four 303 results (aeat_boxes, pro-rata, volume)
+│   │   ├── filing_state.py        # Declared filing state: FilingState + derive_filing_state (calendar, vendor guard)
 │   │   └── modelo_347.py          # Modelo 347: sales side (Stripe + issued invoices) and purchases side (Spanish vendors > €3,005.06, exclusions)
 │   ├── tax_engine.py              # Tax calendar and snapshot persistence; re-exports each model's compute_* function
 │   ├── tax_snapshot_codec.py      # Serialize/deserialize tax engine results for SQLite snapshot storage
@@ -110,6 +111,7 @@
 │   ├── conftest.py                # Shared fixtures
 │   ├── ratchets/                  # Pins the gate's vendored-ratchet stages (a new finding and a not-confirmed run both fail)
 │   ├── tax/                       # The tax engine's tests: Modelo 303/130/349/347/390, deadlines, the P&L
+│   │   ├── test_filing_state.py     # Filing state table test, calendar and vendor-guard readers, filed period never reopened
 │   │   ├── test_tax_deadlines.py    # Deadline rules, Easter, extra holidays, calendar vs filing sheet agreement
 │   │   ├── test_tax_engine.py       # VAT classification, Modelo 303/130, OSS, Modelo 349
 │   │   ├── test_modelo_303.py       # Modelo 303 box model: golden quarter, pro-rata, credit chain

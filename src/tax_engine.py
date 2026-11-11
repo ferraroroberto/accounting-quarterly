@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from src.logger import get_logger
+from src.returns.filing_state import FilingObservation, derive_filing_state
 from src.returns.modelo_130 import compute_modelo_130
 from src.returns.modelo_303 import compute_modelo_303
 from src.returns.modelo_347 import compute_modelo_347
@@ -21,8 +22,6 @@ from src.tax_models import TaxDeadline
 from src.vat_rules import is_oss_registered
 
 log = get_logger(__name__)
-
-_DUE_SOON_DAYS = 15
 
 
 def get_tax_calendar(
@@ -60,14 +59,9 @@ def get_tax_calendar(
             filed_lookup[key] = dict(r)
 
     def _status(ddl: date, key: str) -> str:
-        rec = filed_lookup.get(key, {})
-        if rec.get("status") == "FILED":
-            return "FILED"
-        if ddl < today:
-            return "OVERDUE"
-        if (ddl - today).days <= _DUE_SOON_DAYS:
-            return "DUE"
-        return "PENDING"
+        # The calendar reads the status table only; the snapshot facts reach the Filing Sheet.
+        obs = FilingObservation(status_row=filed_lookup.get(key, {}).get("status"), deadline=ddl, today=today)
+        return derive_filing_state(obs).state.value
 
     # Quarterly models
     for model in quarterly:

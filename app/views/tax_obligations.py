@@ -44,6 +44,7 @@ _DISCLAIMER = (
 
 _STATUS_COLOURS = {
     "FILED": "🟢",
+    "COMPUTED": "🔵",
     "DUE": "🟡",
     "OVERDUE": "🔴",
     "PENDING": "⚪",

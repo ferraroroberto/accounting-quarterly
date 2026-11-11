@@ -156,3 +156,12 @@ paths  = ["app/", "src/"]
 [runtime_write_ratchet]
 enabled  = true
 baseline = ".runtime-write-ratchet-baseline.json"
+
+# The filing state of a return: one declared type and one derive function. Code in the
+# module is not reported by the state rules; any other module that re-spells its states or
+# writes its flag is. Doc: docs/filing-state.md.
+[[state_machines]]
+name   = "filing-state"
+module = "src/returns/filing_state.py"
+type   = "FilingState"
+derive = "derive_filing_state"

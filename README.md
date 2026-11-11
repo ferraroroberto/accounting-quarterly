@@ -140,6 +140,7 @@ Each feature has one reference file under `docs/`.
 - [`docs/annual-pack.md`](docs/annual-pack.md) — Modelo 390, Modelo 347 purchases, P&L per IAE activity.
 - [`docs/reconciliation.md`](docs/reconciliation.md) — filed-vs-app comparison per box, divergence catalogue, importing AEAT receipts.
 - [`docs/filing-sheet.md`](docs/filing-sheet.md) — values to type into each AEAT form, deadlines, immutable **Mark filed** snapshots.
+- [`docs/filing-state.md`](docs/filing-state.md) — the declared filing state (pending / due / overdue / computed / filed): one derive function, who reads it.
 - [`docs/tax-audit-trail.md`](docs/tax-audit-trail.md) — the per-cell formula, inputs and records behind every figure.
 - [`docs/social-security.md`](docs/social-security.md) — importing RETA cuotas from a bank export into Modelo 130.
 

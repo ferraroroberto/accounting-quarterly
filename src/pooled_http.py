@@ -1,11 +1,11 @@
-"""Pooled, keep-alive outbound HTTP client for long-lived processes (#192).
+"""Pooled, keep-alive outbound HTTP client for long-lived processes.
 
 A bare ``requests.get``/``requests.post`` inside a poll loop, health check, or
 per-item fan-out opens a fresh TCP connection every call. On Windows each
 closed connection parks its ephemeral port in ``TIME_WAIT`` for ~120s against
 a 16,384-entry range, so a busy poller is enough to exhaust the range and
 stall every process on the machine from opening any outbound socket for
-minutes (root cause: ``fleet-config#440``). ``app-launcher#605`` measured 145
+minutes. One fleet app measured 145
 such sockets to one sibling process's port at a single sample, dropping to 0
 after adopting this pattern.
 

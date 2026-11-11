@@ -1,9 +1,9 @@
-"""Ratchet on issue references inside product-code comments (project-scaffolding#411).
+"""Ratchet on issue references inside product-code comments.
 
-A comment that cites `#1003` to carry the story of how the code got here teaches
+A comment that cites an issue number to carry the story of how the code got here teaches
 the next change to add another one. The story belongs in the issue, the PR and
 `git log`; a comment states why the code is the way it is *now*. The rule text
-is owned by fleet-config#1517; this stage enforces it structurally: it counts
+is owned by the fleet's global instructions; this stage enforces it structurally: it counts
 `#NNN` references inside comments, per file, compares them with a committed
 baseline, and fails only when a file's count *rises*. Existing debt never
 blocks work, but it cannot grow.
@@ -29,8 +29,8 @@ grepping source lines:
 
 A reference is `#` plus one to five digits, not preceded by `&` or `#` and ending
 on a word boundary; `https://...` URLs inside a comment are blanked first so an
-anchor never counts. `repo#123` counts (same smell). Known false positive: a
-digit-only CSS hex colour written inside a comment (`/* #333 */`) -- write the
+anchor never counts. `repo#NNN` counts (same smell). Known false positive: a
+digit-only CSS hex colour written inside a comment -- write the
 token name instead. Inline `<script>` / `<!-- -->` in HTML is out of scope. A
 file the scanner cannot finish (unterminated string, comment, template or
 here-string; a Python file `tokenize` rejects; undecodable bytes) is NOT

@@ -457,8 +457,11 @@ def _regex_may_start(prev: Tok | None) -> bool:
     return prev.kind == "punct" and prev.text not in (")", "]", "}")
 
 
-def tokenize_js(text: str) -> list[Tok]:
+def tokenize_js(text: str, comments: list[tuple[int, int, str]] | None = None) -> list[Tok]:
     """The tokens of one JS/TS source; raises `ValueError` on an unterminated comment or template.
+
+    Comments are not tokens; a caller that needs them passes a list and gets `(first line, last line, text)`
+    for each, in source order.
 
     A template literal's `${...}` code is tokenized in place; the literal itself is one `str` token
     when it has no `${}`, else a `tmpl` token (it is never a fixed state string).
@@ -496,11 +499,16 @@ def tokenize_js(text: str) -> list[Tok]:
         elif c in " \t\r\f\v﻿":
             i += 1
         elif text.startswith("//", i):
-            i = text.find("\n", i) if "\n" in text[i:] else n
+            end = text.find("\n", i) if "\n" in text[i:] else n
+            if comments is not None:
+                comments.append((line, line, text[i:end]))
+            i = end
         elif text.startswith("/*", i):
             end = text.find("*/", i + 2)
             if end < 0:
                 raise ValueError(f"unterminated block comment from line {line}")
+            if comments is not None:
+                comments.append((line, line + text.count("\n", i, end), text[i:end + 2]))
             line += text.count("\n", i, end)
             i = end + 2
         elif c in "'\"":
@@ -759,10 +767,13 @@ class _JsReader:
         return j + 1
 
 
-def js_parse(source: bytes | str) -> tuple[list[Tok], dict[int, int]]:
-    """Tokens and bracket pairs of one JS/TS module; raises `ValueError` when it cannot be read."""
+def js_parse(source: bytes | str, comments: list[tuple[int, int, str]] | None = None) -> tuple[list[Tok], dict[int, int]]:
+    """Tokens and bracket pairs of one JS/TS module; raises `ValueError` when it cannot be read.
+
+    `comments`, when given, is filled as `tokenize_js` documents.
+    """
     text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
-    toks = tokenize_js(text)
+    toks = tokenize_js(text, comments)
     return toks, _js_pairs(toks)
 
 
@@ -788,6 +799,69 @@ def js_module_names(source: bytes | str) -> set[str]:
             if nxt < len(toks) and toks[nxt].kind == "name":
                 names.add(toks[nxt].text)
     return names
+
+
+def _js_body_names(toks: list[Tok], pairs: dict[int, int], opener: int) -> set[str]:
+    """The member names and string values directly inside one `{...}` or `[...]`: enum, object, class body or array."""
+    close, found, j = pairs[opener], set[str](), opener + 1
+    while j < close:
+        tok, nxt = toks[j], toks[j + 1]
+        if tok.kind == "punct" and tok.text in ("(", "[", "{"):
+            j = pairs[j] + 1  # a method, a nested value: not a member of this body
+            continue
+        if tok.kind == "str" and toks[opener].text == "[":
+            found.add(tok.text)
+        elif tok.kind in ("name", "str") and nxt.kind == "punct" and nxt.text in (":", "="):
+            found.add(tok.text)
+            if toks[j + 2].kind == "str":
+                found.add(toks[j + 2].text)
+        elif tok.kind == "name" and toks[opener].text == "{" and toks[j - 1].text in ("{", ",") and (
+                j + 1 == close or nxt.text == ","):
+            found.add(tok.text)  # a bare enum member: `enum S { A, B }`
+        j += 1
+    return found
+
+
+def _js_declared_values(toks: list[Tok], pairs: dict[int, int], k: int) -> set[str]:
+    """The state names of the declaration whose keyword is at `k` and whose name follows it."""
+    keyword, j = toks[k].text, k + 2
+    if keyword == "type":  # `type S = 'a' | 'b'`: the string literals of one union
+        found = set[str]()
+        while j < len(toks) and (toks[j].kind == "str" or toks[j].text in ("=", "|")):
+            if toks[j].kind == "str":
+                found.add(toks[j].text)
+            j += 1
+        return found
+    while j < len(toks) and toks[j].text not in ("{", "[", ";"):
+        if toks[j].text in ("(", "=", ".", "new", "extends", "implements") or toks[j].kind == "name":
+            j += 1
+        else:
+            return set()  # `const S = compute(...)`: no literal body to read
+    return _js_body_names(toks, pairs, j) if j < len(toks) and toks[j].text != ";" else set()
+
+
+def js_state_names(source: bytes | str, type_name: str) -> list[str]:
+    """The lower-cased state names a JS/TS owner module gives its declared type; empty when unreadable.
+
+    Mirrors the Python reader: an `enum`, a `class`, an object or array bound by `const`, `let` or `var`
+    contributes its member names and string values, a `type` alias its string-literal union.
+    """
+    try:
+        toks, pairs = js_parse(source)
+    except ValueError:
+        return []
+    toks = [*toks, _NO_TOK, _NO_TOK, _NO_TOK]
+    found: set[str] = set()
+    depth = 0
+    for k, tok in enumerate(toks):
+        if tok.kind == "punct" and tok.text in ("(", "[", "{"):
+            depth += 1
+        elif tok.kind == "punct" and tok.text in (")", "]", "}"):
+            depth -= 1
+        elif depth == 0 and tok.kind == "name" and tok.text in _JS_DECLARES - {"function", "interface"} \
+                and toks[k + 1].kind == "name" and toks[k + 1].text == type_name:
+            found |= _js_declared_values(toks, pairs, k)
+    return sorted({s.lower() for s in found if s.isidentifier() and not s.startswith("_")})
 
 
 def is_js_source(path: str) -> bool:

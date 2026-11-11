@@ -122,15 +122,16 @@ history_phrases = true   # curated history phrases in comments and docstrings
 # (scripts/verify-before-ship.ps1) runs scripts/conventions_ratchet.py, which counts
 # per file the hits of each enabled rule (stdlib ast) and fails when a count rises above
 # .conventions-ratchet-baseline.json. Enabled rules: no-window (Windows-hosted app that
-# spawns subprocesses), logging-not-print (print() in app/ and src/ library code) and
-# no-drive-path (no hardcoded drive paths). secret-compare and git-wrapper stay off:
+# spawns subprocesses), logging-not-print (print() in app/ and src/ library code),
+# no-drive-path (no hardcoded drive paths) and subprocess-timeout (every
+# subprocess.run/call/check_call/check_output passes timeout=). secret-compare and git-wrapper stay off:
 # the repo has no constant-time-compare or git-spawn helper for them to route through.
 # Exit 3 (git unusable, a file that cannot be parsed) is NOT CONFIRMED; the gate stage
 # fails on any non-zero exit. Procedure: project-scaffolding docs/conventions-ratchet.md.
 [conventions_ratchet]
 enabled  = true
 baseline = ".conventions-ratchet-baseline.json"
-rules    = ["no-window", "logging-not-print", "no-drive-path", "state-literal", "state-set-repeat", "state-write"]
+rules    = ["no-window", "logging-not-print", "no-drive-path", "subprocess-timeout", "state-literal", "state-set-repeat", "state-write"]
 
 # Outbound HTTP goes through the pooled session, not a bare requests call.
 [[conventions_ratchet.must_use]]

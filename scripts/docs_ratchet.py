@@ -1,7 +1,7 @@
 """Ratchet on README size and history markers in Markdown docs.
 
 The README is the first file every agent reads, so its size is a per-session
-cost; and the story of how a doc got here ("added in #123", a dated walk log, a
+cost; and the story of how a doc got here ("added in #NNN", a dated walk log, a
 changelog section) goes stale while git, the PRs and the issues already hold it.
 A doc states what is true and why, in the present tense. This stage enforces
 that structurally, per file, against a committed baseline: it fails only when a
@@ -16,8 +16,8 @@ Two measures, both per file:
     shrink; a new over-budget README fails by name. Lines are not measured.
   * History markers in the root `README.md` and `docs/**/*.md`, one integer per
     file, the sum of:
-      - issue references: `#` plus one to five digits (`#123`, `repo#123`,
-        `owner/repo#123`), not preceded by `&`, `#` or `/` and not followed by a
+      - issue references: `#` plus one to five digits (`#NNN`, `repo#NNN`,
+        `owner/repo#NNN`), not preceded by `&`, `#` or `/` and not followed by a
         word character or `-`. A reference inside inline code counts: a
         backtick is not a way around the rule.
       - dated headings: an ATX heading line holding an ISO date (`2026-06-24`).
@@ -27,7 +27,7 @@ Two measures, both per file:
 Not counted: fenced code blocks (backtick and tilde; the closing fence is at
 least as long as the opener), HTML comments, bare URLs and autolinks, link and
 image targets, reference-definition URLs, `href`/`src` attribute values and
-`&#123;` entities. `[#9](https://.../9)` therefore counts once, through its text.
+numeric character entities. A link whose text is a bare reference therefore counts once, through its text.
 Indented code blocks are not detected (they cannot be told from list
 continuation); prose dates are legal, because expiry and rotation dates belong in
 the README.
@@ -41,7 +41,7 @@ repo that has not opted in:
     include         = ["README.md", "docs/"]           # path prefixes; the default
     exclude         = ["docs/reports/**"]              # globs, e.g. generated per-run reports
     readme_max_bytes = 40960                           # default: 40 KiB
-    allow_refs      = ["owner/repo#178"]               # exact text as written; default none
+    allow_refs      = ["owner/repo#NNN"]               # exact text as written; default none
 
 Scope is `git ls-files --cached --others --exclude-standard` minus files whose first lines say `DO NOT EDIT` or
 `@generated`, and every `dest` in the adopter's own `[vendored]` table.
@@ -315,7 +315,7 @@ def _blank_urls(line: str) -> str:
 
 
 def _written_ref(line: str, match: re.Match[str]) -> str:
-    """The reference as the author wrote it, repo prefix included (`owner/repo#12`)."""
+    """The reference as the author wrote it, repo prefix included (`owner/repo#NNN`)."""
     prefix = _REF_PREFIX.search(line[:match.start()])
     return (prefix.group() if prefix else "") + match.group()
 

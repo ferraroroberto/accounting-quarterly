@@ -1,4 +1,4 @@
-"""Baseline-and-ratchet static analysis for the pre-ship gate (project-scaffolding#410).
+"""Baseline-and-ratchet static analysis for the pre-ship gate.
 
 Duplicated code and unused imports/variables regrow however often an audit
 re-finds them. This stage turns that into structure: it computes the current
@@ -28,7 +28,7 @@ fragment>:<file>|<file>` (strict: editing the cloned block reads as one hit
 gone plus one new), an unused name is `unused:<rule>:<file>:<symbol>`, a bug or
 security finding is `lint:<rule>:<file>:<stripped source line>`, an unsorted
 import block is `order:I001:<file>:<its first line>`; repeats of one
-key in a file get a `#2`, `#3`... ordinal. jscpd reports a clone as an
+key in a file get a numbered ordinal (2, 3...). jscpd reports a clone as an
 ordered pair, and the fragment hashed is the first file's, so the key is stable
 for as long as that order is -- it is deterministic for an unchanged tree.
 
@@ -324,7 +324,7 @@ def _norm_path(name: str, root: Path) -> str:
 
 
 def _ordinals(raw: list[tuple[str, int, Finding]]) -> list[Finding]:
-    """Suffix repeats of one key (`#2`, `#3`...), ordered by source line."""
+    """Suffix repeats of one key (2, 3...), ordered by source line."""
     seen: Counter[str] = Counter()
     out: list[Finding] = []
     for _, _, f in sorted(raw, key=lambda r: (r[0], r[1])):

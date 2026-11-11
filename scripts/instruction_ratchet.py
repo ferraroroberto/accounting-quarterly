@@ -68,7 +68,7 @@ EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 _CONFIG_KEYS = {"enabled", "baseline", "skill_dirs", "extra_files", "ci_expectations", "agents_pointer",
-                "claude_md_max_lines", "repeated_text_words", "repeated_text_global"}
+                "claude_md_max_lines", "repeated_text_words", "repeated_text_global", "repeated_text_exclude"}
 
 #: R-14 -- (unit, limit) per file kind; a skill reference doc has no cap.
 SIZE_CAPS: dict[str, tuple[str, int]] = {
@@ -213,6 +213,7 @@ class Config:
     claude_md_max_lines: int | None = None  # S-03: the root CLAUDE.md of an app repo
     repeated_text_words: int | None = None  # S-04: a run of this many shared words is one hit
     repeated_text_global: bool = False  # S-04: also compare against the owner's global CLAUDE.md
+    repeated_text_exclude: tuple[str, ...] = ()  # S-04: docs/ files that are never a source (a deliberate copy of CLAUDE.md)
 
 
 @dataclass(frozen=True)
@@ -291,8 +292,11 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError(f"[instruction_ratchet] repeated_text_words must be a whole number of words, {REPEAT_MIN_WORDS} or more")
     if not isinstance(use_global, bool) or (use_global and words is None):
         raise ConfigError("[instruction_ratchet] repeated_text_global must be true or false, and needs repeated_text_words")
+    exclude = _str_list(table, "repeated_text_exclude", ())
+    if exclude and words is None:
+        raise ConfigError("[instruction_ratchet] repeated_text_exclude needs repeated_text_words")
     return Config(baseline, _str_list(table, "skill_dirs", DEFAULT_SKILL_DIRS), extra,
-                  bool(flags["ci_expectations"]), bool(flags["agents_pointer"]), cap, words, use_global)
+                  bool(flags["ci_expectations"]), bool(flags["agents_pointer"]), cap, words, use_global, exclude)
 
 
 def load_config(root: Path) -> Config | None:
@@ -742,7 +746,7 @@ def repeat_hits(root: Path, cfg: Config, docs: list[Doc]) -> dict[str, list[Hit]
     if n is None or not claude:
         return {}
     repeats = _load_sibling("instruction_repeats")
-    skip = {d.path for d in docs}  # an instruction file under docs/ is compared, never a source
+    skip = {d.path for d in docs} | set(cfg.repeated_text_exclude)  # an instruction file under docs/ is compared, never a source
     sources: dict[str, list[tuple[int, str]]] = {}
     for p in tracked_files(root):
         if p.startswith("docs/") and p.endswith(".md") and p not in skip and (root / p).is_file():

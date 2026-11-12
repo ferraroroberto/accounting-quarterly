@@ -495,3 +495,22 @@ class TestActivityStartNotes:
         late = {"tax": {"activity_start_date": "2025-01-01"}}
         assert "activity start" not in compute_modelo_303(YEAR, 1, conn, late).notes
 
+
+
+def test_347_threshold_has_one_source():
+    """Sales result, purchases result and the audit-tab text all read the one constant."""
+    from pathlib import Path
+
+    from src.returns.modelo_347 import Modelo347PurchasesResult
+    from src.tax_models import THRESHOLD_347_EUR, Modelo347Result
+
+    assert Modelo347Result(year=2025).threshold == THRESHOLD_347_EUR
+    assert Modelo347PurchasesResult(year=2025).threshold == THRESHOLD_347_EUR
+    root = Path(__file__).resolve().parents[2]
+    literal_sites = [
+        p.relative_to(root).as_posix()
+        for folder in ("src", "app")
+        for p in (root / folder).rglob("*.py")
+        if "3005.06" in p.read_text(encoding="utf-8")
+    ]
+    assert sorted(literal_sites) == ["src/fixed_assets.py", "src/tax_models.py"]

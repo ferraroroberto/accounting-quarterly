@@ -8,6 +8,7 @@ import streamlit as st
 
 from app.year_picker import year_input
 from src.database import load_audit_entries
+from src.tax_models import THRESHOLD_347_EUR
 
 _MODEL_LABELS = {
     "303": "Modelo 303 — IVA Trimestral",
@@ -38,7 +39,7 @@ _MODEL_DESCRIPTIONS = {
         "Per-country VAT rates applied automatically."
     ),
     "347": (
-        "Annual report of operations with Spanish counterparties exceeding €3,005.06. "
+        f"Annual report of operations with Spanish counterparties exceeding €{THRESHOLD_347_EUR:,.2f}. "
         "Quarter = 0 indicates this is an annual-only model."
     ),
 }

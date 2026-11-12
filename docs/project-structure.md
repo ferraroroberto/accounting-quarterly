@@ -78,7 +78,7 @@
 │   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"
 │   ├── tax_deadlines.py           # Filing / direct-debit deadlines + business-day rules, shared by the filing sheet and the Obligations calendar
 │   ├── vendor_registry.py         # Vendor registry: match invoices to vendors, apply tax defaults, xlsx seed/import (CLI)
-│   ├── logger.py                  # Rotating file logger
+│   ├── logger.py                  # Module loggers; one shared rotating file handler on the root logger
 │   └── exceptions.py              # Custom exception classes
 ├── app/                           # Streamlit dashboard
 │   ├── streamlit_app.py           # Entry point: welcome page and horizontal tabs

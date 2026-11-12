@@ -12,9 +12,13 @@ import sqlite3
 from typing import NamedTuple, Optional
 
 from src.declared_reports import apply_frozen_amounts
+from src.exceptions import ConfigError
+from src.logger import get_logger
 from src.periods import quarter_iso_bounds
 from src.tax_codes import derive_tax_treatment_for_invoice
 from src.vat_rules import vat_amount_on_base, vat_base_from_inclusive, vat_treatment
+
+log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # App-config plumbing
@@ -33,16 +37,19 @@ def tax_settings(config: Optional[dict]) -> dict:
 
 
 def load_app_config() -> dict:
-    """Load ``config.json`` for the engine, returning ``{}`` if unavailable.
+    """Load ``config.json`` for the engine, returning ``{}`` only when the file is missing.
 
-    Guarded so the engine never crashes on a missing/broken config file — a
-    fresh checkout with no ``config.json`` simply runs with documented defaults.
+    A fresh checkout with no ``config.json`` runs on the documented defaults and
+    logs a warning. A file that exists but does not parse raises: running a tax
+    computation on defaults (no activity-start floor, default registration flags)
+    would persist wrong snapshots without any signal.
     """
-    try:
-        from src.config import load_config
+    from src.config import load_config
 
+    try:
         return load_config()
-    except Exception:  # pragma: no cover - config is optional for the engine
+    except ConfigError as exc:
+        log.warning("⚠️ config.json not found, tax engine runs on defaults: %s", exc)
         return {}
 
 

@@ -72,3 +72,44 @@ def test_raw_json_editor_follows_rules_saved_elsewhere(monkeypatch, sample_rules
     at.run()
     assert not at.exception, at.exception
     assert json.loads(_raw_text(at))["added_elsewhere"] == "new_geo_override_rule"
+
+
+def test_unsaved_rule_edit_stays_out_of_the_cached_rules_and_other_saves(monkeypatch, sample_rules):
+    """Editing a rule without Save leaves the shared rules object alone, so another form's save cannot persist it."""
+    import app.views.configuration as tab
+
+    shared = copy.deepcopy(sample_rules)  # one object, as the real JsonCache returns
+    original_name = shared["activity_rules"][0]["name"]
+    saved: list[dict] = []
+    monkeypatch.setattr(tab, "load_config", lambda *a, **k: {"app": {}, "tax": {}})
+    monkeypatch.setattr(tab, "load_rules", lambda *a, **k: shared)
+    monkeypatch.setattr(tab, "save_rules", lambda r, *a, **k: saved.append(copy.deepcopy(r)))
+
+    at = AppTest.from_function(_configuration_page).run()
+    assert not at.exception, at.exception
+    at.text_input(key="rule_name_0").set_value("edited but never saved").run()
+    at.button(key="save_geo_defaults").click().run()
+    assert not at.exception, at.exception
+
+    assert shared["activity_rules"][0]["name"] == original_name
+    [persisted] = saved
+    assert persisted["activity_rules"][0]["name"] == original_name
+
+
+def test_save_classification_rules_persists_the_edit(monkeypatch, sample_rules):
+    import app.views.configuration as tab
+
+    shared = copy.deepcopy(sample_rules)
+    saved: list[dict] = []
+    monkeypatch.setattr(tab, "load_config", lambda *a, **k: {"app": {}, "tax": {}})
+    monkeypatch.setattr(tab, "load_rules", lambda *a, **k: shared)
+    monkeypatch.setattr(tab, "save_rules", lambda r, *a, **k: saved.append(copy.deepcopy(r)))
+    monkeypatch.setattr(tab, "invalidate_cache", lambda: None)
+
+    at = AppTest.from_function(_configuration_page).run()
+    at.text_input(key="rule_name_0").set_value("renamed").run()
+    at.button(key="save_rules").click().run()
+    assert not at.exception, at.exception
+
+    [persisted] = saved
+    assert persisted["activity_rules"][0]["name"] == "renamed"

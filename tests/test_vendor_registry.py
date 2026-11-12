@@ -23,6 +23,7 @@ from src.vendor_registry import (
     Vendor,
     VendorRegistry,
     apply_vendor_registry,
+    expense_vendor_identity,
     find_unmatched_invoices,
     invoice_folder,
     load_registry,
@@ -85,6 +86,15 @@ def test_vat_id_then_name(registry):
     assert registry.match(vendor_nif="W0000000J").vendor.key == "gadget store"  # ES-prefixed alt id
     m = registry.match("loose.pdf", vendor_nif=None, vendor_name="SAMPLE AI INC")
     assert (m.vendor.key, m.signal) == ("sample ai", "name")
+
+
+def test_expense_vendor_identity_prefers_invoice_then_registry(registry):
+    own = {"filename": "x.pdf", "vendor_nif": "ie0000000xx", "vendor_name": "Billed As Ltd"}
+    assert expense_vendor_identity(own, registry) == ("IE0000000XX", "Example Cloud Ireland Limited")
+    stored = {"vendor_vat_id_norm": "DE123", "vendor_name": "Unknown GmbH"}
+    assert expense_vendor_identity(stored, registry) == ("DE123", "Unknown GmbH")
+    assert expense_vendor_identity({"filename": "examplecloud/x.pdf"}, registry)[0] == "IE0000000XX"
+    assert expense_vendor_identity({"vendor_name": "Nobody"}, None) == (None, "Nobody")
 
 
 def test_name_match_is_whole_token(registry):

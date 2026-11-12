@@ -73,6 +73,7 @@
 │   ├── close_pipeline.py          # Quarter-close pipeline steps (sweep … gestor pack), each idempotent, and run_all
 │   ├── close/                     # Quarter-close building blocks behind close_pipeline.py
 │   │   ├── context.py             # StepResult, CloseContext and the shared file/quarter helpers
+│   │   ├── classification_review.py  # The Stripe classification review shared by the stripe step and stripe-fetch
 │   │   └── gestor_pack.py         # Stripe report (+ freeze, freeze-sent) and the gestor pack
 │   ├── relink.py                  # Re-point invoice records after PDFs move/rename (move record, then content hash)
 │   ├── filing_sheet.py            # Filing sheet (AEAT form order, credit chain, deadlines) + immutable "mark filed"

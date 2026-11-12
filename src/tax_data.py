@@ -13,6 +13,7 @@ from typing import NamedTuple, Optional
 
 from src.declared_reports import apply_frozen_amounts
 from src.exceptions import ConfigError
+from src.fixed_assets import capital_asset_invoice_ids
 from src.logger import get_logger
 from src.periods import quarter_iso_bounds
 from src.tax_codes import derive_tax_treatment_for_invoice
@@ -301,6 +302,43 @@ def load_income_invoices_for_quarter(
     """
     start, end = quarter_iso_bounds(year, quarter)
     return _load_income_invoices_range(clamp_start(start, config), end, conn)
+
+
+def split_capital_invoices(
+    invoices: list[dict], conn: sqlite3.Connection
+) -> tuple[list[dict], list[dict]]:
+    """(expensed, capital) invoices: capital assets enter the 130 through depreciation, not as an expense."""
+    capital_ids = capital_asset_invoice_ids(conn)
+    return ([inv for inv in invoices if inv["id"] not in capital_ids],
+            [inv for inv in invoices if inv["id"] in capital_ids])
+
+
+def load_social_security_range(conn: sqlite3.Connection, start: str, end: str) -> list[sqlite3.Row]:
+    """RETA payments dated in ``[start, end]`` (refunds are stored negative), oldest first."""
+    return conn.execute(
+        """SELECT id, payment_date, amount_eur, description
+           FROM social_security_payments
+           WHERE payment_date >= ? AND payment_date <= ?
+           ORDER BY payment_date""",
+        (start, end),
+    ).fetchall()
+
+
+def load_fx_differences_range(conn: sqlite3.Connection, start: str, end: str) -> list[sqlite3.Row]:
+    """Exchange differences converted in ``[start, end]``: income (or loss) of the conversion date."""
+    return conn.execute(
+        """SELECT id, invoice_id, conversion_date, currency, foreign_amount,
+                  eur_obtained, booked_eur, gain_loss_eur, notes
+           FROM fx_exchange_differences
+           WHERE conversion_date >= ? AND conversion_date <= ?
+           ORDER BY conversion_date""",
+        (start, end),
+    ).fetchall()
+
+
+def platform_fee_rows(stripe_rows: list[dict]) -> list[dict]:
+    """Stripe charges whose platform (application) fee is known and non-zero."""
+    return [r for r in stripe_rows if r.get("fee_application")]
 
 
 def income_invoice_eur(inv: dict) -> float:

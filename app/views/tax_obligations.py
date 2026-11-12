@@ -21,7 +21,7 @@ from src.database import (
 )
 from src.declared_reports import get_declared_report
 from src.returns.oss_return import compute_eu_b2c_threshold
-from src.tax_deadlines import SHEET_MODELS
+from src.tax_deadlines import SHEET_MODELS, calendar_deadline
 from src.tax_engine import compute_and_persist_tax_snapshots, get_tax_calendar
 from src.tax_models import (
     MODELO130_BOX_LABELS,
@@ -421,8 +421,7 @@ def _render_oss_return(year: int, quarter: int, bundle: dict[str, tuple[Any, str
     })
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
-    oss_deadline_map = {1: "April 30", 2: "July 31", 3: "October 31", 4: "January 31 (next year)"}
-    st.caption(f"Filing due: {oss_deadline_map.get(quarter, '—')}")
+    st.caption(f"Filing due: {calendar_deadline('OSS', year, quarter):%B %d, %Y}")
 
     csv_data = pd.DataFrame([
         {"country": r.country, "base_eur": r.base_eur, "vat_rate": r.vat_rate,

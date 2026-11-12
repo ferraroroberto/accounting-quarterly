@@ -34,11 +34,10 @@ from src.declared_reports import apply_frozen_amounts
 from src.logger import get_logger
 from src.tax_codes import normalize_vat_id
 from src.tax_data import clamp_start
+from src.tax_models import THRESHOLD_347_EUR as THRESHOLD_EUR
 from src.tax_models import AuditEntry, Modelo347Result, Modelo347Row
 
 log = get_logger(__name__)
-
-THRESHOLD_EUR = 3005.06
 
 EXCLUDED_349 = "intra-EU acquisition, declared in the Modelo 349 (art. 33.2.i RGAT)"
 EXCLUDED_WITHHOLDING = "IRPF withheld, declared in the withholding returns (art. 33.2.i RGAT)"

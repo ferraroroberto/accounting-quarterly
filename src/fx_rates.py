@@ -28,6 +28,10 @@ FRANKFURTER_BASES = [
 ]
 SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF", "AUD"]
 
+# Per-attempt timeout: generous for a slow ECB-backed response, short enough that a
+# hung base gives up and the next one in FRANKFURTER_BASES is tried.
+FRANKFURTER_TIMEOUT_S = 30
+
 # A fallback rate older than this many days than the date it was requested for
 # is flagged `is_stale` — the exact date is missing (weekend/holiday
 # gaps are normal and stay unflagged), but a week-plus-old rate usually means
@@ -72,7 +76,7 @@ def _ensure_fx_schema(conn: sqlite3.Connection) -> None:
             log.warning("⚠️ DB migration skipped for fx_rates.updated_at: %s", exc)
 
 
-def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = 30) -> requests.Response:
+def _get_with_fallback(path: str, *, params: dict[str, str], timeout_s: int = FRANKFURTER_TIMEOUT_S) -> requests.Response:
     last_exc: Exception | None = None
     for base in FRANKFURTER_BASES:
         url = f"{base}/{path.lstrip('/')}"
@@ -120,7 +124,7 @@ def fetch_rates_range(
 
     log.info("ℹ️ Fetching FX rates from %s to %s for %s", start_date, end_date, to_param)
 
-    resp = _get_with_fallback(path, params=params, timeout_s=30)
+    resp = _get_with_fallback(path, params=params)
     data = resp.json()
 
     return data.get("rates", {})
@@ -140,7 +144,7 @@ def fetch_single_date(
     path = rate_date.isoformat()
     params = {"from": "EUR", "to": to_param}
 
-    resp = _get_with_fallback(path, params=params, timeout_s=30)
+    resp = _get_with_fallback(path, params=params)
     data = resp.json()
 
     return data.get("rates", {})

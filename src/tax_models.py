@@ -416,11 +416,16 @@ class Modelo347Row:
     quarter_breakdown: dict[int, float] = field(default_factory=dict)
 
 
+# A counterparty is declared in the 347 only when its annual operations exceed this
+# (art. 33.1 RD 1065/2007, "hayan superado"). Sales and purchases both read it.
+THRESHOLD_347_EUR = 3005.06
+
+
 @dataclass
 class Modelo347Result:
     year: int
     rows: list[Modelo347Row] = field(default_factory=list)
-    threshold: float = 3005.06
+    threshold: float = THRESHOLD_347_EUR
     audit: list = field(default_factory=list)  # list[AuditEntry]
     excluded: list[dict] = field(default_factory=list)  # issued invoices left out, with reason
 

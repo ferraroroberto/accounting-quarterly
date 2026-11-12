@@ -30,6 +30,11 @@ log = get_logger(__name__)
 HUB_BASE_URL = "http://127.0.0.1:8000"
 HUB_MODEL = "gemini_pro"  # stable alias — never the display name
 
+# Reply cap for one extraction: room for a multi-page invoice's line items as JSON.
+# A reply cut at the cap is invalid JSON and surfaces as a parse failure, so raise
+# this before trimming the prompt when a long invoice fails to parse.
+OCR_MAX_TOKENS = 8192
+
 _EXTRACTION_PROMPT = """
 You are an expert Spanish accountant and OCR assistant specialising in AEAT compliance.
 
@@ -215,7 +220,7 @@ def _extract_via_hub(pdf_bytes: bytes, pdf_name: str, model: Optional[str] = Non
     pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
     response = client.messages.create(
         model=model,
-        max_tokens=8192,
+        max_tokens=OCR_MAX_TOKENS,
         temperature=0,
         messages=[
             {

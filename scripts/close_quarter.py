@@ -86,9 +86,8 @@ if str(ROOT) not in sys.path:
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
-from src.classifier import eur_default_foreign_warning  # noqa: E402
+from src.close.classification_review import DEFAULT_GEO_RULES, review_classifications  # noqa: E402
 from src.close_pipeline import (  # noqa: E402
-    DEFAULT_GEO_RULES,
     STEP_ORDER,
     CloseContext,
     StepResult,
@@ -108,12 +107,13 @@ from src.close_pipeline import (  # noqa: E402
     step_vendors,
     write_stripe_report,
 )
-from src.database import init_db  # noqa: E402
+from src.database import get_connection, init_db  # noqa: E402
 from src.exceptions import InvalidSentReportError, ReportAlreadyFrozenError  # noqa: E402
 from src.payments_loader import get_classified_for_period  # noqa: E402
 from src.periods import quarter_datetime_bounds  # noqa: E402
 from src.rules_engine import load_rules, save_rules  # noqa: E402
 from src.stripe_client import fetch_charges  # noqa: E402
+from src.tax_data import load_app_config  # noqa: E402
 
 if TYPE_CHECKING:
     from src.reclassify import ReclassifyResult
@@ -246,7 +246,6 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> int:
     if args.backfill_fee_split:
         return _backfill_fee_split(args, *quarter_datetime_bounds(args.year, args.quarter))
     from src.aggregator import calculate_grand_totals
-    from src.classifier import validate_classifications
 
     start, end = quarter_datetime_bounds(args.year, args.quarter)
     payments = get_classified_for_period(
@@ -254,7 +253,12 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> int:
         input_mode="api",
     )
     grand = calculate_grand_totals(payments)
-    val = validate_classifications(payments)
+    conn = get_connection()
+    try:
+        review = review_classifications(payments, args.year, args.quarter, conn, load_app_config())
+    finally:
+        conn.close()
+    val = review.validation
 
     print(f"Q{args.quarter} {args.year}: {len(payments)} transactions, "
           f"{grand.get('total_income', 0):,.2f} EUR income, {grand.get('total_fee', 0):,.2f} EUR fees")
@@ -267,21 +271,20 @@ def cmd_stripe_fetch(args: argparse.Namespace) -> int:
         flag = " ⚠" if p.geo_rule in DEFAULT_GEO_RULES else ""
         print(f"{p.created_date.strftime('%Y-%m-%d'):<12} {p.id:<24} {p.converted_amount:>9,.2f} "
               f"{p.activity_type:<14} {p.geo_region:<14} {(p.geo_rule + flag):<28} {p.description[:40]}")
-    flagged = [p for p in payments if p.geo_rule in DEFAULT_GEO_RULES]
     print()
-    print(f"{len(flagged)} transaction(s) on a DEFAULT geo rule (no client-specific override) "
+    print(f"{len(review.on_default)} transaction(s) on a DEFAULT geo rule (no client-specific override) "
           f"— worth a manual check.")
 
-    foreign = [(p, w) for p in payments if (w := eur_default_foreign_warning(p))]
-    if foreign:
+    if review.foreign:
         print()
-        print(f"⚠ {len(foreign)} EUR charge(s) fell to eur_default for a customer that looks "
+        print(f"⚠ {len(review.foreign)} EUR charge(s) fell to eur_default for a customer that looks "
               f"foreign — add an override (add-override) if they are not in Spain:")
-        for p, warning in foreign:
+        for p, warning in review.foreign:
             print(f"  ⚠ {p.created_date.strftime('%Y-%m-%d')} {p.id} {p.converted_amount:,.2f} EUR "
                   f"— {warning}")
 
-    _print_eu_b2c_threshold(args.year, args.quarter)
+    print()
+    print(("⚠ " if review.threshold.status != "OK" else "") + review.threshold.message)
     return 0
 
 
@@ -298,20 +301,6 @@ def _backfill_fee_split(args: argparse.Namespace, q_start: datetime, q_end: date
           f"{result.not_stored} not stored (run stripe-fetch first), "
           f"{result.split_unknown} without a readable split.")
     return 0
-
-
-def _print_eu_b2c_threshold(year: int, quarter: int) -> None:
-    from src.database import get_connection
-    from src.returns.oss_return import compute_eu_b2c_threshold
-    from src.tax_data import load_app_config
-
-    conn = get_connection()
-    try:
-        tracker = compute_eu_b2c_threshold(year, quarter, conn, load_app_config())
-    finally:
-        conn.close()
-    print()
-    print(("⚠ " if tracker.status != "OK" else "") + tracker.message)
 
 
 def _print_reclassify(result: ReclassifyResult) -> None:

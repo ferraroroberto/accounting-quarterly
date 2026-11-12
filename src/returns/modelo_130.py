@@ -11,7 +11,6 @@ from typing import Optional
 
 from src.fixed_assets import (
     DepreciationResult,
-    capital_asset_invoice_ids,
     depreciation_for_period,
 )
 from src.logger import get_logger
@@ -25,8 +24,12 @@ from src.tax_data import (
     irpf_expense,
     load_classified_ytd,
     load_expense_invoices_ytd,
+    load_fx_differences_range,
     load_income_invoices_ytd,
+    load_social_security_range,
     net_amount,
+    platform_fee_rows,
+    split_capital_invoices,
     tax_settings,
 )
 from src.tax_models import MODELO130_BOX_FIELDS, AuditEntry, Modelo130Result
@@ -209,14 +212,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     col.inv_income = sum(income_invoice_eur(inv) for inv in income_invs)
     # 01 — exchange differences: converting a foreign-currency balance
     # realises a gain/loss against the EUR booked; income of the conversion period.
-    exch_rows = conn.execute(
-        """SELECT id, invoice_id, conversion_date, currency, foreign_amount,
-                  eur_obtained, booked_eur, gain_loss_eur, notes
-           FROM fx_exchange_differences
-           WHERE conversion_date >= ? AND conversion_date <= ?
-           ORDER BY conversion_date""",
-        (ytd_start, ytd_end),
-    ).fetchall()
+    exch_rows = load_fx_differences_range(conn, ytd_start, ytd_end)
     col.exch_diff_total = round(sum(float(r["gain_loss_eur"]) for r in exch_rows), 2)
 
     # 02 — expense invoices: base × deductible_pct_irpf + the input VAT the 303 does
@@ -224,9 +220,7 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     # excluded rows are filtered by the loader, capital assets enter through
     # depreciation instead.
     expense_invs = load_expense_invoices_ytd(year, quarter, conn, config)
-    capital_ids = capital_asset_invoice_ids(conn)
-    capital_invs = [inv for inv in expense_invs if inv["id"] in capital_ids]
-    expense_invs = [inv for inv in expense_invs if inv["id"] not in capital_ids]
+    expense_invs, capital_invs = split_capital_invoices(expense_invs, conn)
     col.depreciation = depreciation_for_period(year, quarter, conn, ytd=True, config=config)
     registered_ids = {line.invoice_id for line in col.depreciation.lines if line.invoice_id}
     col.unregistered_capital_ids = [inv["id"] for inv in capital_invs if inv["id"] not in registered_ids]
@@ -245,20 +239,14 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     # depreciable base is a known limitation).
     col.capital_excluded = round(sum(irpf_expense(inv).base_eur for inv in capital_invs), 2)
     # 02 — RETA cuotas as paid, net of refunds (stored negative), art. 30 LIRPF.
-    ss_rows = conn.execute(
-        """SELECT id, payment_date, amount_eur, description
-           FROM social_security_payments
-           WHERE payment_date >= ? AND payment_date <= ?
-           ORDER BY payment_date""",
-        (ytd_start, ytd_end),
-    ).fetchall()
+    ss_rows = load_social_security_range(conn, ytd_start, ytd_end)
     col.ss_gastos = round(sum(float(r["amount_eur"]) for r in ss_rows), 2)
     # 02 — application fees a connected platform kept from the same Stripe charges
     # as box 01. Stripe's own fee is already expensed from its invoices, so
     # only the application part counts; it follows the charge's balance transaction
     # (a fee the platform did not return on a refund stays an expense). Rows with
     # an unknown split (fetched before the split was stored) are counted, not guessed.
-    fee_rows = [r for r in rows if r.get("fee_application")]
+    fee_rows = platform_fee_rows(rows)
     col.platform_fees = round(sum(float(r["fee_application"]) for r in fee_rows), 2)
     col.fee_split_unknown = sum(1 for r in rows if r.get("fee_application") is None)
     if col.fee_split_unknown:

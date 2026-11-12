@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -166,6 +167,38 @@ The three defaults below configure the EUR rows 2-3 and non-EUR row 5. Name/emai
         st.success("Geographic defaults saved")
 
 
+def _mapping_editor(
+    mapping: dict, key_header: str, value_header: str, editor_key: str, button_label: str, button_key: str,
+) -> Optional[dict]:
+    """Edit a ``{key: value}`` dict in a table; on the save button return the cleaned dict, else ``None``.
+
+    Keys are lower-cased and stripped; a row with a blank key or value is dropped.
+    """
+    rows = [{key_header: k, value_header: v} for k, v in mapping.items()]
+    edited = st.data_editor(
+        pd.DataFrame(rows) if rows else pd.DataFrame(columns=[key_header, value_header]),
+        num_rows="dynamic",
+        width="stretch",
+        key=editor_key,
+    )
+    if not st.button(button_label, key=button_key):
+        return None
+    return {
+        row[key_header].lower().strip(): str(row[value_header]).strip()
+        for _, row in edited.iterrows()
+        if pd.notna(row[key_header]) and str(row[key_header]).strip()
+        and pd.notna(row[value_header]) and str(row[value_header]).strip()
+    }
+
+
+def _save_rules_section(rules: dict, section: str, value: dict, message: str) -> None:
+    """Store ``value`` under ``rules[section]``, persist the rules and confirm."""
+    rules[section] = value
+    save_rules(rules)
+    invalidate_cache()
+    st.success(message)
+
+
 def _render_client_overrides(rules: dict, geo_rules: dict) -> None:
     """Geographic Rules tab: name and email region overrides."""
     st.markdown("---")
@@ -174,45 +207,19 @@ def _render_client_overrides(rules: dict, geo_rules: dict) -> None:
     col_geo, col_email = st.columns(2)
     with col_geo:
         st.markdown("**Name/Description Overrides**")
-        geo_ov = geo_rules.get("geographic_overrides", {})
-        geo_rows = [{"Key": k, "Region": v} for k, v in geo_ov.items()]
-        edited_geo = st.data_editor(
-            pd.DataFrame(geo_rows) if geo_rows else pd.DataFrame(columns=["Key", "Region"]),
-            num_rows="dynamic",
-            width="stretch",
-            key="geo_overrides_editor",
-        )
-        if st.button("Save name overrides", key="save_name_ov"):
-            geo_rules["geographic_overrides"] = {
-                row["Key"].lower().strip(): row["Region"]
-                for _, row in edited_geo.iterrows()
-                if pd.notna(row["Key"]) and str(row["Key"]).strip()
-            }
-            rules["geographic_rules"] = geo_rules
-            save_rules(rules)
-            invalidate_cache()
-            st.success("Name overrides saved")
+        cleaned = _mapping_editor(geo_rules.get("geographic_overrides", {}), "Key", "Region",
+                                  "geo_overrides_editor", "Save name overrides", "save_name_ov")
+        if cleaned is not None:
+            geo_rules["geographic_overrides"] = cleaned
+            _save_rules_section(rules, "geographic_rules", geo_rules, "Name overrides saved")
 
     with col_email:
         st.markdown("**Email Overrides**")
-        email_ov = geo_rules.get("email_overrides", {})
-        email_rows = [{"Email": k, "Region": v} for k, v in email_ov.items()]
-        edited_email = st.data_editor(
-            pd.DataFrame(email_rows) if email_rows else pd.DataFrame(columns=["Email", "Region"]),
-            num_rows="dynamic",
-            width="stretch",
-            key="email_overrides_editor",
-        )
-        if st.button("Save email overrides", key="save_email_ov"):
-            geo_rules["email_overrides"] = {
-                row["Email"].lower().strip(): row["Region"]
-                for _, row in edited_email.iterrows()
-                if pd.notna(row["Email"]) and str(row["Email"]).strip()
-            }
-            rules["geographic_rules"] = geo_rules
-            save_rules(rules)
-            invalidate_cache()
-            st.success("Email overrides saved")
+        cleaned = _mapping_editor(geo_rules.get("email_overrides", {}), "Email", "Region",
+                                  "email_overrides_editor", "Save email overrides", "save_email_ov")
+        if cleaned is not None:
+            geo_rules["email_overrides"] = cleaned
+            _save_rules_section(rules, "geographic_rules", geo_rules, "Email overrides saved")
 
 
 def _render_customer_vat_ids(rules: dict) -> None:
@@ -228,47 +235,19 @@ def _render_customer_vat_ids(rules: dict) -> None:
     col_vat_email, col_vat_name = st.columns(2)
     with col_vat_email:
         st.markdown("**By Email**")
-        vat_email_ov = vat_id_rules.get("email_vat_ids", {})
-        vat_email_rows = [{"Email": k, "VAT ID": v} for k, v in vat_email_ov.items()]
-        edited_vat_email = st.data_editor(
-            pd.DataFrame(vat_email_rows) if vat_email_rows else pd.DataFrame(columns=["Email", "VAT ID"]),
-            num_rows="dynamic",
-            width="stretch",
-            key="vat_id_email_editor",
-        )
-        if st.button("Save email VAT IDs", key="save_vat_id_email"):
-            vat_id_rules["email_vat_ids"] = {
-                row["Email"].lower().strip(): str(row["VAT ID"]).strip()
-                for _, row in edited_vat_email.iterrows()
-                if pd.notna(row["Email"]) and str(row["Email"]).strip()
-                and pd.notna(row["VAT ID"]) and str(row["VAT ID"]).strip()
-            }
-            rules["customer_vat_ids"] = vat_id_rules
-            save_rules(rules)
-            invalidate_cache()
-            st.success("Email VAT IDs saved")
+        cleaned = _mapping_editor(vat_id_rules.get("email_vat_ids", {}), "Email", "VAT ID",
+                                  "vat_id_email_editor", "Save email VAT IDs", "save_vat_id_email")
+        if cleaned is not None:
+            vat_id_rules["email_vat_ids"] = cleaned
+            _save_rules_section(rules, "customer_vat_ids", vat_id_rules, "Email VAT IDs saved")
 
     with col_vat_name:
         st.markdown("**By Name / Description**")
-        vat_name_ov = vat_id_rules.get("name_vat_ids", {})
-        vat_name_rows = [{"Name": k, "VAT ID": v} for k, v in vat_name_ov.items()]
-        edited_vat_name = st.data_editor(
-            pd.DataFrame(vat_name_rows) if vat_name_rows else pd.DataFrame(columns=["Name", "VAT ID"]),
-            num_rows="dynamic",
-            width="stretch",
-            key="vat_id_name_editor",
-        )
-        if st.button("Save name VAT IDs", key="save_vat_id_name"):
-            vat_id_rules["name_vat_ids"] = {
-                row["Name"].lower().strip(): str(row["VAT ID"]).strip()
-                for _, row in edited_vat_name.iterrows()
-                if pd.notna(row["Name"]) and str(row["Name"]).strip()
-                and pd.notna(row["VAT ID"]) and str(row["VAT ID"]).strip()
-            }
-            rules["customer_vat_ids"] = vat_id_rules
-            save_rules(rules)
-            invalidate_cache()
-            st.success("Name VAT IDs saved")
+        cleaned = _mapping_editor(vat_id_rules.get("name_vat_ids", {}), "Name", "VAT ID",
+                                  "vat_id_name_editor", "Save name VAT IDs", "save_vat_id_name")
+        if cleaned is not None:
+            vat_id_rules["name_vat_ids"] = cleaned
+            _save_rules_section(rules, "customer_vat_ids", vat_id_rules, "Name VAT IDs saved")
 
 
 def _render_geographic_rules(rules: dict) -> None:

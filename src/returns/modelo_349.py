@@ -26,7 +26,7 @@ def _collect_349_operators(
 ) -> dict[tuple[str, str], dict]:
     """Per-operator buckets (key I acquisitions, key S sales) keyed by (key, VAT id or ?name)."""
     from src.tax_codes import normalize_vat_id
-    from src.vendor_registry import load_registry
+    from src.vendor_registry import expense_vendor_identity, load_registry
 
     ops: dict[tuple[str, str], dict] = {}   # (key, VAT id or "?name") -> bucket
 
@@ -68,12 +68,7 @@ def _collect_349_operators(
     for inv in map(dict, purchases):
         if invoice_tax_treatment("in", inv) != "INTRA_EU_RC":
             continue
-        match = registry.match_invoice(inv)
-        vendor = match.vendor if match else None
-        vat = (inv.get("vendor_vat_id_norm") or normalize_vat_id(inv.get("vendor_nif"))
-               or normalize_vat_id(vendor.vat_id if vendor else None))
-        name = (vendor.legal_entity if vendor and vendor.legal_entity else None) \
-            or inv.get("vendor_name") or (vendor.key if vendor else "")
+        vat, name = expense_vendor_identity(inv, registry)
         _add("I", vat, name, inv.get("subtotal_eur") or 0.0,
              {"source": "invoice_in", "id": inv["id"], "date": str(inv["tx_date"])[:10],
               "vendor": str(inv.get("vendor_name") or "")[:40]})

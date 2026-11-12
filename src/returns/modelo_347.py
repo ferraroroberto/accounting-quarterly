@@ -32,10 +32,10 @@ from typing import Optional
 
 from src.declared_reports import apply_frozen_amounts
 from src.logger import get_logger
-from src.tax_codes import normalize_vat_id
 from src.tax_data import clamp_start
 from src.tax_models import THRESHOLD_347_EUR as THRESHOLD_EUR
 from src.tax_models import AuditEntry, Modelo347Result, Modelo347Row
+from src.vendor_registry import expense_vendor_identity
 
 log = get_logger(__name__)
 
@@ -74,18 +74,6 @@ def _quarter(date_str: str) -> int:
     return (int(str(date_str)[5:7]) - 1) // 3 + 1
 
 
-def _spanish_nif(inv: dict, registry) -> tuple[Optional[str], str]:
-    """(normalised ES-prefixed NIF or None, display name) of an expense invoice's vendor."""
-    match = registry.match_invoice(inv) if registry is not None else None
-    vendor = match.vendor if match else None
-    nif = inv.get("vendor_vat_id_norm") or normalize_vat_id(inv.get("vendor_nif"))
-    if not nif and vendor is not None:
-        nif = normalize_vat_id(vendor.vat_id)
-    name = ((vendor.legal_entity if vendor and vendor.legal_entity else None)
-            or inv.get("vendor_name") or (vendor.key if vendor else "") or "")
-    return nif, name
-
-
 def _is_spanish(inv: dict, nif: Optional[str]) -> bool:
     if nif:
         return nif.startswith("ES")
@@ -122,7 +110,7 @@ def compute_modelo_347_purchases(year: int, db_conn: sqlite3.Connection,
     buckets: dict[str, dict] = {}
     for inv in map(dict, rows):
         amount = round((inv.get("subtotal_eur") or 0.0) + (inv.get("iva_amount") or 0.0), 2)
-        nif, name = _spanish_nif(inv, registry)
+        nif, name = expense_vendor_identity(inv, registry)
         treatment = inv.get("tax_treatment") or ""
         reason = None
         if treatment == "INTRA_EU_RC":

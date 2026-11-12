@@ -32,7 +32,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from src.classifier import eur_default_foreign_warning, validate_classifications
+from src.close.classification_review import review_classifications
 from src.close.context import (
     ROOT,
     CloseContext,
@@ -83,7 +83,6 @@ from src.reconciliation import (
     result_boxes,
     to_markdown,
 )
-from src.returns.oss_return import compute_eu_b2c_threshold
 from src.social_security import (
     bank_export_kwargs,
     get_ss_payments,
@@ -103,7 +102,6 @@ STEP_ORDER = (
     "compute", "reconcile", "sheet", "gestor-pack",
 )
 QUARTERLY_MODELS = ("303", "130", "349")
-DEFAULT_GEO_RULES = {"eur_default", "eur_newsletter_default", "non_eur_default"}
 
 
 
@@ -397,24 +395,22 @@ def step_stripe(ctx: CloseContext, fetch: Optional[Callable[[], Any]] = None) ->
     res.info.append(f"{ctx.period}: {len(payments)} transaction(s); reclassify scanned {rc.scanned}, "
                     f"changed {len(rc.changes)}.")
 
-    val = validate_classifications(payments)
-    if val["activity_errors"] or val["geo_errors"] or val["unknown_activity"]:
-        res.warnings.append(f"classification: {val['activity_errors']} activity error(s), "
-                            f"{val['geo_errors']} geo error(s), {val['unknown_activity']} unclassified")
-    on_default = [p for p in payments if p.geo_rule in DEFAULT_GEO_RULES]
-    if on_default:
-        res.info.append(f"{len(on_default)} transaction(s) on a default geo rule (no client override) — "
-                        f"review them with `stripe-fetch`.")
-    for p in payments:
-        warning = eur_default_foreign_warning(p)
-        if warning:
-            res.warnings.append(f"{p.created_date:%Y-%m-%d} {p.id} {p.converted_amount:,.2f} EUR — {warning} "
-                                f"(add-override if not in Spain)")
     conn = ctx.connect()
     try:
-        tracker = compute_eu_b2c_threshold(ctx.year, ctx.quarter, conn, ctx.config)
+        review = review_classifications(payments, ctx.year, ctx.quarter, conn, ctx.config)
     finally:
         conn.close()
+    val = review.validation
+    if review.has_validation_issues:
+        res.warnings.append(f"classification: {val['activity_errors']} activity error(s), "
+                            f"{val['geo_errors']} geo error(s), {val['unknown_activity']} unclassified")
+    if review.on_default:
+        res.info.append(f"{len(review.on_default)} transaction(s) on a default geo rule (no client override) — "
+                        f"review them with `stripe-fetch`.")
+    for p, warning in review.foreign:
+        res.warnings.append(f"{p.created_date:%Y-%m-%d} {p.id} {p.converted_amount:,.2f} EUR — {warning} "
+                            f"(add-override if not in Spain)")
+    tracker = review.threshold
     (res.info if tracker.status == "OK" else res.warnings).append(tracker.message)
     return res
 

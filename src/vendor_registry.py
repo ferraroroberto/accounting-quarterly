@@ -298,6 +298,23 @@ class VendorRegistry:
         )
 
 
+def expense_vendor_identity(inv: dict[str, Any], registry: Optional[VendorRegistry]) -> tuple[Optional[str], str]:
+    """(normalised VAT id or None, display name) of an expense invoice's vendor.
+
+    The invoice's own id wins, then the registry vendor's; the name is the
+    registry's ``legal_entity``, else the invoice vendor name, else the key. The
+    347 and 349 returns both identify vendors through this one function.
+    """
+    match = registry.match_invoice(inv) if registry is not None else None
+    vendor = match.vendor if match else None
+    vat = inv.get("vendor_vat_id_norm") or normalize_vat_id(inv.get("vendor_nif"))
+    if not vat and vendor is not None:
+        vat = normalize_vat_id(vendor.vat_id)
+    name = ((vendor.legal_entity if vendor and vendor.legal_entity else None)
+            or inv.get("vendor_name") or (vendor.key if vendor else "") or "")
+    return vat, name
+
+
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------

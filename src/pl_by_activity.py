@@ -36,7 +36,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from src.fixed_assets import capital_asset_invoice_ids, depreciation_for_period
+from src.fixed_assets import depreciation_for_period
 from src.logger import get_logger
 from src.returns.modelo_130 import compute_modelo_130
 from src.tax_data import (
@@ -47,7 +47,11 @@ from src.tax_data import (
     load_app_config,
     load_classified_ytd,
     load_expense_invoices_ytd,
+    load_fx_differences_range,
     load_income_invoices_ytd,
+    load_social_security_range,
+    platform_fee_rows,
+    split_capital_invoices,
 )
 from src.vendor_registry import ACTIVITIES, ACTIVITY_IAE
 
@@ -156,11 +160,7 @@ def _add_income_lines(year: int, db_conn: sqlite3.Connection, config: Optional[d
         add("income", "invoice_out", income_invoice_eur(inv), act, "unallocated",
             id=inv["id"], date=str(inv.get("tx_date", ""))[:10],
             description=str(inv.get("client_name") or inv.get("description") or "")[:50])
-    for r in db_conn.execute(
-        """SELECT id, invoice_id, conversion_date, gain_loss_eur FROM fx_exchange_differences
-           WHERE conversion_date >= ? AND conversion_date <= ? ORDER BY conversion_date""",
-        (f"{year}-01-01", f"{year}-12-31"),
-    ).fetchall():
+    for r in load_fx_differences_range(db_conn, f"{year}-01-01", f"{year}-12-31"):
         linked = meta.get(r["invoice_id"]) if r["invoice_id"] else None
         add("income", "fx_exchange_difference", float(r["gain_loss_eur"]),
             _norm_activity(linked.get("activity_type")) if linked else None, "unallocated",
@@ -171,10 +171,8 @@ def _add_income_lines(year: int, db_conn: sqlite3.Connection, config: Optional[d
 def _add_expense_lines(year: int, db_conn: sqlite3.Connection, config: Optional[dict], meta: dict,
                        registry, stripe_rows: list[dict], add: Callable[..., None]) -> None:
     """Expense lines (the real expenses of 130 box 02)."""
-    capital_ids = capital_asset_invoice_ids(db_conn)
-    for inv in load_expense_invoices_ytd(year, 4, db_conn, config):
-        if inv["id"] in capital_ids:
-            continue   # enters through depreciation, as in the 130
+    expensed, _ = split_capital_invoices(load_expense_invoices_ytd(year, 4, db_conn, config), db_conn)
+    for inv in expensed:   # capital assets enter through depreciation, as in the 130
         m = meta.get(inv["id"], {})
         act = _norm_activity(m.get("activity_type"))
         if act is None and registry is not None:
@@ -184,16 +182,11 @@ def _add_expense_lines(year: int, db_conn: sqlite3.Connection, config: Optional[
         add("expense", "invoice_in", amount, act, "unallocated", id=inv["id"],
             date=str(inv.get("tx_date", ""))[:10],
             description=str(inv.get("vendor_name") or inv.get("description") or "")[:50])
-    for r in db_conn.execute(
-        """SELECT id, payment_date, amount_eur FROM social_security_payments
-           WHERE payment_date >= ? AND payment_date <= ? ORDER BY payment_date""",
-        (f"{year}-01-01", f"{year}-12-31"),
-    ).fetchall():
+    for r in load_social_security_range(db_conn, f"{year}-01-01", f"{year}-12-31"):
         add("expense", "reta", float(r["amount_eur"]), None, "reta", id=r["id"], date=r["payment_date"])
-    for r in stripe_rows:
-        if r.get("fee_application"):
-            add("expense", "platform_fee", float(r["fee_application"]), _norm_activity(r.get("activity_type")),
-                "unallocated", id=r["id"], date=str(r.get("created_date", ""))[:10])
+    for r in platform_fee_rows(stripe_rows):
+        add("expense", "platform_fee", float(r["fee_application"]), _norm_activity(r.get("activity_type")),
+            "unallocated", id=r["id"], date=str(r.get("created_date", ""))[:10])
     dep = depreciation_for_period(year, 4, db_conn, ytd=True, config=config)
     for d in dep.lines:
         if d.charge_eur:

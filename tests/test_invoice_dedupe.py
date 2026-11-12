@@ -283,7 +283,10 @@ class TestKeeperRule:
 class TestLockedRowsRespected:
     def test_locked_excluded_field_excluded_from_grouping(self, db):
         a = _add(db, filename="a.pdf", file_hash="SAMEHASH", invoice_number="N1")
-        _add(db, filename="b.pdf", file_hash="SAMEHASH", invoice_number="N2")
+        b = _add(db, filename="b.pdf", file_hash="SAMEHASH", invoice_number="N2")
+        # `extracted_at` has one-second resolution and breaks the keeper tie, so pin b as
+        # the older row: b is then always the keeper and the locked a the only loser candidate.
+        _set_extracted_at(db, [b, a])
         # User reviewed row a and explicitly confirmed it is not a duplicate: toggling
         # `excluded` True then False (both real changes) leaves it locked at False.
         update_invoice_fields(a, {"excluded": True}, db_path=db)

@@ -112,7 +112,7 @@ def test_excel_download_shows_stale_error_and_removes_temp_file(monkeypatch, tmp
 
     made: list[str] = []
 
-    def boom(payments, path, year, quarter, label):
+    def boom(payments, path, year, quarter):
         made.append(path)
         raise StaleClassificationError("stale quarter")
 

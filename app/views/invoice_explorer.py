@@ -171,11 +171,19 @@ def _apply_filters(df: pd.DataFrame, f: _Filters) -> pd.DataFrame:
     if f.client_query.strip() and "client_name" in df.columns:
         mask &= df["client_name"].str.contains(f.client_query.strip(), case=False, na=False)
 
+    # A range slider at its full span is "no filter": a missing date or subtotal
+    # (typically an OCR failure) never satisfies a comparison, so applying the
+    # untouched range would hide exactly the rows a reviewer most needs to see.
     if f.date_from and f.date_to and "invoice_date" in df.columns:
-        mask &= (df["invoice_date"].dt.date >= f.date_from) & (df["invoice_date"].dt.date <= f.date_to)
+        stamps = df["invoice_date"]
+        if f.date_from > stamps.min().date() or f.date_to < stamps.max().date():
+            dates = stamps.dt.date
+            mask &= (dates >= f.date_from) & (dates <= f.date_to)
 
     if f.subtotal_range is not None and "subtotal_eur" in df.columns:
-        mask &= (df["subtotal_eur"] >= f.subtotal_range[0]) & (df["subtotal_eur"] <= f.subtotal_range[1])
+        low, high = f.subtotal_range
+        if low > df["subtotal_eur"].min() or high < df["subtotal_eur"].max():
+            mask &= (df["subtotal_eur"] >= low) & (df["subtotal_eur"] <= high)
 
     if f.rectificativas_only and "is_rectificativa" in df.columns:
         mask &= df["is_rectificativa"].astype(bool)

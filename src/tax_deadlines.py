@@ -28,6 +28,7 @@ Deadlines (``filing_deadline``) follow the AEAT taxpayer calendar:
 """
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
 from functools import lru_cache
@@ -119,7 +120,7 @@ def calendar_deadline(model: str, year: int, quarter: int = 1,
     elif model == "390":
         nominal = date(year + 1, 1, 30)
     elif model == "347":
-        nominal = date(year + 1, 2, 28)
+        nominal = date(year + 1, 2, calendar.monthrange(year + 1, 2)[1])  # last day of February
     else:
         raise ValueError(f"no calendar deadline for Modelo {model}")
     return _next_business_day(nominal, extra)

@@ -290,6 +290,22 @@ class TestModelo347:
         assert result.rows[0].total_operations == pytest.approx(3500.0)
         assert sum(result.rows[0].quarter_breakdown.values()) == pytest.approx(3500.0)
 
+    def test_nif_spelling_variants_consolidate_across_threshold(self, db_conn):
+        # One client written three ways on its invoices (and a fourth on Stripe)
+        # is one counterparty: each spelling alone is below €3,005.06.
+        _insert_invoice(db_conn, id="inv1", invoice_date="2025-01-15",
+                        client_name="Acme SL", client_nif="B12345678", subtotal_eur=1000.0)
+        _insert_invoice(db_conn, id="inv2", invoice_date="2025-04-15",
+                        client_name="Acme SL", client_nif="B-12345678", subtotal_eur=1000.0)
+        _insert_invoice(db_conn, id="inv3", invoice_date="2025-07-15",
+                        client_name="Acme SL", client_nif="ESB12345678", subtotal_eur=1000.0)
+        _insert_tx(db_conn, id="t1", created_date="2025-10-01T10:00:00",
+                   converted_amount=1000.0, geo_region="SPAIN",
+                   activity_type="COACHING", buyer_vat_id="b 12345678")
+        result = compute_modelo_347(2025, db_conn)
+        assert len(result.rows) == 1
+        assert result.rows[0].total_operations == pytest.approx(4000.0)
+
     def test_threshold_must_be_exceeded(self, db_conn):
         # RD 1065/2007 art. 33.1: declare only counterparties whose yearly total
         # has *exceeded* €3,005.06 — exactly the threshold is not declared.

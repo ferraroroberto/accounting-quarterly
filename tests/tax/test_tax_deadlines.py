@@ -46,6 +46,7 @@ def test_deadline_extra_holidays_and_easter():
     ("390", 2025, 1, date(2026, 1, 30)),
     ("390", 2026, 1, date(2027, 2, 1)),     # 30 January 2027 is a Saturday
     ("347", 2025, 1, date(2026, 3, 2)),  # 28 Feb 2026 is a Saturday
+    ("347", 2027, 1, date(2028, 2, 29)),  # 2028 is a leap year; 29 Feb is a Tuesday
 ])
 def test_calendar_deadline(model, year, quarter, expected):
     assert calendar_deadline(model, year, quarter) == expected

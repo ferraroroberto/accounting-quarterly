@@ -1,6 +1,7 @@
 """Configuration tab content."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -24,7 +25,9 @@ def _render_classification_rules(rules: dict) -> None:
     st.subheader("Activity Classification Rules")
     st.caption("Edit the classification rules below. Changes are saved to `classification_rules.json`.")
 
-    activity_rules = rules.get("activity_rules", [])
+    # `rules` is the cached object the classifier and every other save button use:
+    # the widgets edit a private copy, which is written back only by the Save button.
+    activity_rules = copy.deepcopy(rules.get("activity_rules", []))
 
     for i, rule in enumerate(activity_rules):
         with st.expander(f"Priority {rule.get('priority', i+1)}: {rule.get('name', 'rule')} -> {rule.get('activity_type', '?')}"):
@@ -55,8 +58,10 @@ def _render_classification_rules(rules: dict) -> None:
     col_add, col_save = st.columns(2)
     with col_add:
         if st.button("Add new rule", key="add_rule"):
-            new_priority = max((r.get("priority", 0) for r in activity_rules), default=0) + 1
-            activity_rules.append({
+            stored_rules = copy.deepcopy(rules)
+            stored_list = stored_rules.setdefault("activity_rules", [])
+            new_priority = max((r.get("priority", 0) for r in stored_list), default=0) + 1
+            stored_list.append({
                 "priority": new_priority,
                 "name": f"new_rule_{new_priority}",
                 "activity_type": "COACHING",
@@ -64,14 +69,14 @@ def _render_classification_rules(rules: dict) -> None:
                 "keywords": [],
                 "description": "",
             })
-            rules["activity_rules"] = activity_rules
-            save_rules(rules)
+            save_rules(stored_rules)
             st.rerun()
 
     with col_save:
         if st.button("Save classification rules", type="primary", key="save_rules"):
-            rules["activity_rules"] = activity_rules
-            save_rules(rules)
+            updated = copy.deepcopy(rules)
+            updated["activity_rules"] = activity_rules
+            save_rules(updated)
             invalidate_cache()
             st.success("Classification rules saved")
 

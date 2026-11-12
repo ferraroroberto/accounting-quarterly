@@ -32,6 +32,7 @@ from typing import Optional
 
 from src.declared_reports import apply_frozen_amounts
 from src.logger import get_logger
+from src.tax_codes import normalize_vat_id
 from src.tax_data import clamp_start
 from src.tax_models import THRESHOLD_347_EUR as THRESHOLD_EUR
 from src.tax_models import AuditEntry, Modelo347Result, Modelo347Row
@@ -250,7 +251,7 @@ def _accumulate_347(rows: list[dict], inv_rows: list) -> dict[str, dict]:
     for row in rows:
         nif = row["buyer_vat_id"] or ""
         email = row["email_meta"] or "UNKNOWN"
-        key = nif or email
+        key = normalize_vat_id(nif) or email
         gross = row["converted_amount"] - row["converted_amount_refunded"]
         month = int(row["month"])
         q = (month - 1) // 3 + 1
@@ -264,7 +265,7 @@ def _accumulate_347(rows: list[dict], inv_rows: list) -> dict[str, dict]:
     for row in inv_rows:
         nif = row["client_nif"] or ""
         name = row["counterparty"]
-        key = nif or name
+        key = normalize_vat_id(nif) or name
         gross = (row["subtotal_eur"] or 0.0) + (row["iva_amount"] or 0.0)
         month_str = row["month"]
         if not month_str:

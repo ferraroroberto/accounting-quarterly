@@ -28,8 +28,8 @@ FRANKFURTER_BASES = [
 ]
 SUPPORTED_CURRENCIES = ["USD", "GBP", "CHF", "AUD"]
 
-# Per-attempt read timeout: a Frankfurter range query answers in well under a second,
-# so 30 s only trips on a hung connection, after which the next base is tried.
+# Per-attempt timeout: generous for a slow ECB-backed response, short enough that a
+# hung base gives up and the next one in FRANKFURTER_BASES is tried.
 FRANKFURTER_TIMEOUT_S = 30
 
 # A fallback rate older than this many days than the date it was requested for

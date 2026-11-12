@@ -575,7 +575,7 @@ def _previous_303_credit(year: int, quarter: int, conn: sqlite3.Connection,
     """Box 110: credit pending from the previous period, as (amount, source, detail).
 
     Chains from the **filed** previous return (its 87 + 72) when one was
-    imported — the legally operative figure (decision of 2026-09-28). Otherwise
+    imported — the legally operative figure. Otherwise
     falls back to the app's own computation of the previous period, which in
     turn chains further back, until a filed return or the first period with data.
     """

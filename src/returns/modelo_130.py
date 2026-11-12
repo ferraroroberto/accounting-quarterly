@@ -204,10 +204,10 @@ def _collect_130_ytd(year: int, quarter: int, conn: sqlite3.Connection,
     # 01 — Stripe VAT bases (frozen declared amounts win, see _load_classified_range).
     rows = load_classified_ytd(year, quarter, conn, config)
     col.stripe_income = sum(get_vat_base(r, config) for r in rows)
-    # 01 — issued invoices, gross of the IRPF withheld (D12); eur_received wins.
+    # 01 — issued invoices, gross of the IRPF withheld (the withholding is deducted in box 06); eur_received wins.
     income_invs = load_income_invoices_ytd(year, quarter, conn, config)
     col.inv_income = sum(income_invoice_eur(inv) for inv in income_invs)
-    # 01 — exchange differences (D5): converting a foreign-currency balance
+    # 01 — exchange differences: converting a foreign-currency balance
     # realises a gain/loss against the EUR booked; income of the conversion period.
     exch_rows = conn.execute(
         """SELECT id, invoice_id, conversion_date, currency, foreign_amount,
@@ -508,7 +508,7 @@ def _modelo130_audit(r: Modelo130Result, col: _Collected130, regime: str, eligib
            "Σ positive 07 − Σ 16 of the earlier quarters of the year (filed return when imported, "
            "else the app's own quarter)", r.c05_pagos_anteriores, source=r.c05_source, periods=chain.periods),
         _a("c06_retenciones", "06 Retenciones e ingresos a cuenta YTD",
-           "SUM(irpf_amount) FROM invoices WHERE direction='out' YTD (gross-booked, D12) "
+           "SUM(irpf_amount) FROM invoices WHERE direction='out' YTD (income is booked gross of it) "
            "+ SUM(amount_eur) FROM quarterly_tax_entries WHERE entry_type='RETENCIONES_SOPORTADAS'",
            r.c06_retenciones, inv_retenciones=round(col.inv_retenciones, 2),
            manual_retenciones=round(col.manual_retenciones, 2), records=rec["withholdings"]),

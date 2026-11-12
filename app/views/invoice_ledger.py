@@ -373,7 +373,7 @@ def _exchange_prefill(inv: Optional[dict]) -> tuple[float, str, float]:
 
 
 def _render_exchange_differences(income_records: list[dict]) -> None:
-    """Record a later conversion of a foreign-currency income balance to EUR (D5).
+    """Record a later conversion of a foreign-currency income balance to EUR.
 
     The gain or loss vs. the EUR originally booked (ECB rate at accrual, or an
     earlier `eur_received`) feeds Modelo 130 box 01 (`c01_ingresos`) in the quarter of

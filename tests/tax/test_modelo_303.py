@@ -79,7 +79,7 @@ class TestGoldenQuarter:
 
     @pytest.fixture
     def result(self, db, conn):
-        # Stripe: Spain 121 gross (100 + 21), EU consumer at Spanish 21% (D7) 60.50
+        # Stripe: Spain 121 gross (100 + 21), EU consumer at Spanish 21% 60.50
         # gross (50 + 10.50), non-EU consumer 200 (not subject, box 120).
         _tx(conn, "s_es", "2025-04-10T10:00:00", 121.0)
         _tx(conn, "s_b2c", "2025-05-10T10:00:00", 60.5, geo="EU_NOT_SPAIN", activity="NEWSLETTER")

@@ -151,7 +151,7 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
         bucket["vat_eur"] += vat
         if treatment in SPANISH_21_TREATMENTS:
             # IVA_ES_21 and EU_B2C_ES21 (EU consumers under the art. 73 LIVA
-            # threshold, not in OSS — D7) both accrue Spanish 21%.
+            # threshold, not in OSS) both accrue Spanish 21%.
             col.acc["c07_base"] += base
             col.acc["c09_cuota"] += vat
         elif treatment == "IVA_EU_B2B":
@@ -160,7 +160,7 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
             col.acc["oss_base"] += base
             col.acc["oss_vat"] += vat
         elif treatment == "IVA_EXPORT":
-            # Non-EU customers: services not subject by location rules (D11).
+            # Non-EU customers: services not subject by location rules (art. 69.Uno.1º LIVA).
             col.acc["c120_no_sujetas_localizacion"] += base
 
     target = {"IVA_EU_B2B": "c59_entregas_intracom", "OSS_EU": "oss_base",
@@ -197,7 +197,7 @@ def _collect_303_sales(year: int, quarter: int, conn: sqlite3.Connection,
             base_f, cuota_f = "c120_no_sujetas_localizacion", None
         elif tt == "EXEMPT_TEACHING":
             # Art. 20.1.9º LIVA: exempt without right to deduct — no 303 box,
-            # only the pro-rata denominator (D2).
+            # only the pro-rata denominator.
             base_f, cuota_f = "exempt_base", None
         else:
             unclassified += 1
@@ -236,7 +236,7 @@ def _collect_303_platform_fees(year: int, quarter: int, conn: sqlite3.Connection
     The platforms that keep them are established outside the EU and charge no
     VAT, so the quarter's ``fee_application`` total — same classified charges as
     the 303 sales, by charge date — is accrued in 12/13 at 21% and deducted in
-    28/29 at 100% (before the pro-rata), like a ``NON_EU_RC`` invoice (D8).
+    28/29 at 100% (before the pro-rata), like a ``NON_EU_RC`` invoice.
     Charges with an unknown fee split are counted in a note, never estimated.
     """
     col.platform_fee_treatment = _platform_fee_vat_treatment(config)
@@ -399,7 +399,7 @@ def _collect_303_expense_invoices(year: int, quarter: int, conn: sqlite3.Connect
             cuota = round(base * rate / 100.0, 2)
             accr_b, accr_c, ded_b, ded_c = (
                 ("c10_base", "c11_cuota", "c36_base", "c37_cuota") if tt == "INTRA_EU_RC"
-                # Other reverse charge (art. 84.Uno.2º LIVA, D8): accrued in 12/13
+                # Other reverse charge (art. 84.Uno.2º LIVA): accrued in 12/13
                 # and deducted with the current domestic operations in 28/29.
                 else ("c12_base", "c13_cuota", "c28_base", "c29_cuota")
             )
@@ -741,7 +741,7 @@ def compute_modelo_303(
         result, year, quarter, db_conn, config, _chain_depth, option)
 
     if result.c120_no_sujetas_localizacion:
-        notes.append("Box 120 holds non-EU sales not subject by location rules (D11); "
+        notes.append("Box 120 holds non-EU sales not subject by location rules; "
                      "the external accountant reported non-EU service invoices in box 60 instead.")
     if quarter == 4 and prorrata_enabled and result.prorrata_definitive_pct is not None:
         notes.append(f"Definitive pro-rata {year}: {result.prorrata_definitive_pct:.0f}% — store it as "
@@ -790,7 +790,7 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
            "SUM(round(base × rate, 2)) of the 10 invoices, rate 21% unless a Spanish rate is stated",
            r.c11_cuota),
         _a("c12_base", "12 Otras operaciones con ISP — base",
-           "SUM(subtotal_eur) expense invoices NON_EU_RC (D8, art. 84.Uno.2º LIVA) "
+           "SUM(subtotal_eur) expense invoices NON_EU_RC (art. 84.Uno.2º LIVA) "
            "+ SUM(fee_application) FROM transactions in Q (same classified charges as the sales, by charge "
            "date) when tax.platform_fee_vat_treatment = NON_EU_RC", r.c12_base,
            records=rec["c12_base"], **fees),
@@ -842,7 +842,7 @@ def _modelo303_audit(r: Modelo303Result, col: _Collected303, provisional: float,
         _a("c60_exportaciones", "60 Exportaciones y operaciones asimiladas",
            "Exports of goods — no treatment maps here (services go to 120)", r.c60_exportaciones),
         _a("c120_no_sujetas_localizacion", "120 Operaciones no sujetas por reglas de localización",
-           "SUM(base) Stripe IVA_EXPORT + income invoices NON_EU_NOT_SUBJECT (D11; the external "
+           "SUM(base) Stripe IVA_EXPORT + income invoices NON_EU_NOT_SUBJECT (the external "
            "accountant used box 60 for these invoices)", r.c120_no_sujetas_localizacion,
            records=rec["c120_no_sujetas_localizacion"]),
         _a("oss_base", "123 / OSS — ventas UE B2C por ventanilla única",

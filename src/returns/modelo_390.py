@@ -33,7 +33,7 @@ rows were added) and the form's printed formulas (Anexo I, modelo 390):
 - Volumen de operaciones: 99 régimen general; 103 entregas intracomunitarias de bienes y
   servicios; 104 exportaciones y otras exentas con derecho a deducción; 105 exentas sin derecho
   a deducción; 110 no sujetas por reglas de localización (services to non-EU customers — the
-  303's box 120, D11); 126 no sujetas acogidas a ventanilla única (OSS);
+  303's box 120); 126 no sujetas acogidas a ventanilla única (OSS);
   108 = 99 + 653 + 103 + 104 + 105 + 110 + 100 + 101 + 102 + 125 + 126 + 127 + 128 + 227 + 228 − 106 − 107.
 - Prorratas (only when exempt operations exist): 115 importe total de las operaciones,
   116 operaciones con derecho a deducción, 117 tipo ("G" general), 118 % definitivo.
@@ -507,7 +507,7 @@ def compute_modelo_390(
 
     if b["110"]:
         notes.append("Box 110 holds services to non-EU customers not subject by location rules "
-                     "(the 303's box 120, D11); the external accountant used box 104 for them.")
+                     "(the 303's box 120); the external accountant used box 104 for them.")
     order = {box: i for i, box in enumerate(MODELO390_LABELS)}
     result.boxes = {k: b[k] for k in sorted(b, key=lambda k: order.get(k, len(order)))}
     result.notes = " ".join(notes)

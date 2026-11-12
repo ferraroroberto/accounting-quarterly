@@ -426,7 +426,7 @@ def backfill_to_today(
 # Invoice FX resolution: EUR for a foreign-currency invoice comes
 # from the ECB rate on the invoice date — not the LLM's own guess — unless the
 # document states the EUR actually charged, or (income) EUR was actually
-# received. See docs/tax-conventions.md-equivalent guidance on private decision D5.
+# received. The ECB figure is final (art. 79.Once LIVA); see docs/tax-conventions.md section 6.
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -520,9 +520,8 @@ def resolve_invoice_amounts(
     Income (``direction='out'``): resolved the same way from the ECB rate.
     ``eur_received`` (set later, once known, via the Invoice Ledger tab) is
     NOT read here — callers must prefer it over this function's result once
-    it is set. The ECB figure this function returns is final per decision D5
-    (art. 79.Once LIVA), not provisional, for money kept in a foreign-currency
-    account.
+    it is set. The ECB figure this function returns is final (art. 79.Once LIVA),
+    not provisional, for money kept in a foreign-currency account.
 
     A missing rate is never silently left unconverted: it comes back as
     ``fx_source="NO_RATE"`` with a populated ``fx_warning`` instead of a quiet
@@ -788,7 +787,7 @@ def recompute_stored_invoice_fx(
 
 
 # ---------------------------------------------------------------------------
-# Exchange differences (private decision D5): a later conversion
+# Exchange differences: a later conversion
 # of a foreign-currency balance from activity income into EUR realises a
 # gain or loss against the EUR figure originally booked. Recorded here and
 # fed into Modelo 130 box 01 (c01_ingresos) in the period of conversion.

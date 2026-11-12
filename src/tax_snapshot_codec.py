@@ -169,7 +169,7 @@ def _decode_349(data: dict[str, Any]) -> Modelo349Result:
     return _tolerant_construct(Modelo349Result, data, row_decoder=_decode_349_row)
 
 
-def encode_snapshot(model: str, obj: Any) -> str:
+def encode_snapshot(obj: Any) -> str:
     """JSON payload for ``tax_computation_snapshots.payload_json``.
 
     The ``audit`` list is stored separately in ``tax_audit_log`` and is excluded

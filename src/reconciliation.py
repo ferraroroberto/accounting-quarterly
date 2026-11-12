@@ -469,7 +469,7 @@ def _compute(model: str, year: int, quarter: Optional[int], conn: sqlite3.Connec
     return engines[model](year, quarter, conn, config)
 
 
-def result_boxes(model: str, result: Any) -> dict[str, float]:
+def result_boxes(result: Any) -> dict[str, float]:
     """AEAT box → value of one engine result's ``aeat_boxes()``."""
     return {normalize_box(k): float(v) for k, v in result.aeat_boxes().items() if v is not None}
 
@@ -542,7 +542,7 @@ def reconcile(
 
     app_ops: list[dict] = []
     result = _compute(model, year, quarter, conn, config)
-    app = result_boxes(model, result)
+    app = result_boxes(result)
     if model == "349":
         app_ops = result_operators(result)
     live_audit = _audit_dicts(getattr(result, "audit", []) or [])
@@ -564,7 +564,7 @@ def reconcile(
 # Drill-down: audit records behind an app box
 # ---------------------------------------------------------------------------
 
-def audit_entries_for_box(entries: Iterable[dict], model: str, box: str) -> list[dict]:
+def audit_entries_for_box(entries: Iterable[dict], box: str) -> list[dict]:
     """The audit entries (``tax_audit_log`` row dicts) that produced ``box``.
 
     AEAT-numbered results match cells named after the box (``c07_base``,

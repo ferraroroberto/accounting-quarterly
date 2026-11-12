@@ -157,7 +157,7 @@ def _sheet_boxes(model: str, boxes: dict[str, float]) -> list[SheetBox]:
 
 def _snapshot_boxes(model: str, payload_json: str) -> tuple[Any, dict[str, float]]:
     result = decode_snapshot(model, payload_json)
-    return result, {normalize_box(b): float(v) for b, v in result_boxes(model, result).items()}
+    return result, {normalize_box(b): float(v) for b, v in result_boxes(result).items()}
 
 
 def _eur(v: float) -> str:
@@ -317,8 +317,8 @@ def render_markdown(sheet: FilingSheet, include_zero: bool = False) -> str:
     return "\n".join(out)
 
 
-def render_filing_sheet(year: int, quarter: int, conn: sqlite3.Connection, config: dict) -> str:
-    """``close_pipeline.filing_sheet_renderer``: the non-zero boxes of the stored snapshots."""
+def render_filing_sheet(year: int, quarter: int, conn: sqlite3.Connection) -> str:
+    """The non-zero boxes of the stored snapshots, as the Markdown filing sheet."""
     return render_markdown(build_filing_sheet(year, quarter, conn))
 
 

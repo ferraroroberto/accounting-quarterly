@@ -218,7 +218,6 @@ def create_excel_report(
     output_path: str | Path,
     year: Optional[int] = None,
     quarter: Optional[int] = None,
-    label: str = "",
 ) -> Path:
     """Generate the full Excel workbook and save to output_path.
 

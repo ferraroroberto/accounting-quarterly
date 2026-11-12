@@ -416,7 +416,7 @@ class TestRectificationOfDeductions:
         _inv(conn, "cn", "in", "2025-05-10", -50.0, "DOMESTIC", iva=-10.5, rate=21)
         _doc(conn, "cn", rect=1, ref="orig")
         r = compute_modelo_303(2025, 2, conn)
-        back = decode_snapshot("303", encode_snapshot("303", r))
+        back = decode_snapshot("303", encode_snapshot(r))
         assert (back.c40_base, back.c41_cuota) == (pytest.approx(-50.0), pytest.approx(-10.5))
         assert back.aeat_boxes() == r.aeat_boxes()
 
@@ -479,7 +479,7 @@ def test_old_snapshot_field_names_still_decode():
 def test_snapshot_roundtrip(conn):
     _inv(conn, "o", "out", "2025-01-10", 100.0, "ES_21", iva=21.0, rate=21)
     r = compute_modelo_303(2025, 1, conn)
-    back = decode_snapshot("303", encode_snapshot("303", r))
+    back = decode_snapshot("303", encode_snapshot(r))
     assert back.aeat_boxes() == r.aeat_boxes()
 
 

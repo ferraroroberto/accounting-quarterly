@@ -18,7 +18,6 @@ def render_excel_download(
     quarter: Optional[int],
     filename: str,
     download_key: str,
-    label: str = "",
 ) -> None:
     """Build the workbook and offer it as a download, or show why it can't be built.
 
@@ -28,7 +27,7 @@ def render_excel_download(
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         tmp_path = tmp.name
     try:
-        create_excel_report(payments, tmp_path, year, quarter, label)
+        create_excel_report(payments, tmp_path, year, quarter)
         with open(tmp_path, "rb") as f:
             excel_bytes = f.read()
     except StaleClassificationError as exc:

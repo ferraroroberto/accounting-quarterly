@@ -68,7 +68,7 @@ def test_sheet_contains_every_non_zero_box_of_303_130_and_349(conn):
               for r in load_tax_snapshots_for_period(YEAR, QUARTER, conn)}
     checked = 0
     for model in ("303", "130", "349"):
-        boxes = result_boxes(model, stored[model])
+        boxes = result_boxes(stored[model])
         non_zero = {b: v for b, v in boxes.items() if abs(v) >= 0.005}
         assert non_zero, f"synthetic data should give Modelo {model} a non-zero box"
         section = md.split(f"## Modelo {model}", 1)[1].split("\n## ", 1)[0]
@@ -123,7 +123,7 @@ def test_mark_filed_freezes_a_new_version(conn):
     assert v[1]["justificante"] == "3031234567890" and v[1]["presented_on"] == "2025-04-18"
     status = conn.execute("SELECT status, amount_eur, filed_at FROM tax_filing_status "
                           "WHERE year = ? AND quarter = ? AND model = '303'", (YEAR, QUARTER)).fetchone()
-    box71 = result_boxes("303", decode_snapshot("303", v[1]["payload_json"]))["71"]
+    box71 = result_boxes(decode_snapshot("303", v[1]["payload_json"]))["71"]
     assert status["status"] == "FILED" and status["amount_eur"] == pytest.approx(box71)
     assert status["filed_at"] == "2025-04-18"
 

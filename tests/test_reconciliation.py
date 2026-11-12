@@ -404,7 +404,7 @@ class TestReconcile:
         assert rec.quarter is None and rec.period == "2025 annual"
         assert "05" in {ln.box for ln in rec.lines}
         # The 390 engine's audit trail backs the drill-down (cells named after the box).
-        cells = [e["cell"] for e in audit_entries_for_box(rec.live_audit, "390", "65")]
+        cells = [e["cell"] for e in audit_entries_for_box(rec.live_audit, "65")]
         assert cells == ["c65"]
 
 
@@ -420,11 +420,11 @@ class TestAuditDrillDown:
     ]
 
     def test_aeat_box_matches_cells_named_after_it(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "303", "07")]
+        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "07")]
         assert cells == ["c07_base"]
 
     def test_operator_row_matches_its_vat_id(self):
-        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "349", "op:IE1234567X:I")]
+        cells = [e["cell"] for e in audit_entries_for_box(self.ENTRIES, "op:IE1234567X:I")]
         assert cells == ["operator_IE1234567X"]
 
     def test_logged_audit_reads_the_latest_run(self, db_conn):
@@ -438,6 +438,6 @@ class TestAuditDrillDown:
 
     def test_live_audit_is_carried_on_the_reconciliation(self, db_conn):
         rec = reconcile("303", 2025, 1, db_conn, CFG)
-        hits = audit_entries_for_box(rec.live_audit, "303", "07")
+        hits = audit_entries_for_box(rec.live_audit, "07")
         assert [h["cell"] for h in hits] == ["c07_base"]
         assert hits[0]["computed_at"] == "live"

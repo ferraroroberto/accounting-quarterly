@@ -302,7 +302,7 @@ def income_invoice_eur(inv: dict) -> float:
     ``eur_received`` wins when set — the money was actually converted on
     receipt. Otherwise the stored ``subtotal_eur`` already holds the ECB rate
     at the invoice date (resolved at OCR time by
-    ``src.fx_rates.resolve_invoice_amounts``), which is final per decision D5
+    ``src.fx_rates.resolve_invoice_amounts``), which is final
     (art. 79.Once LIVA) for income kept in a foreign-currency account — not a
     provisional figure to be revisited later.
     """

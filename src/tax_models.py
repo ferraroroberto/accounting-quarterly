@@ -127,7 +127,7 @@ class Modelo303Result:
     c09_cuota: float = 0.0
     c10_base: float = 0.0                 # adquisiciones intracomunitarias (INTRA_EU_RC)
     c11_cuota: float = 0.0
-    c12_base: float = 0.0                 # otras operaciones con ISP (NON_EU_RC, D8)
+    c12_base: float = 0.0                 # otras operaciones con ISP (NON_EU_RC)
     c13_cuota: float = 0.0
     c27_total_devengado: float = 0.0      # 03 + 06 + 09 + 11 + 13
     # --- IVA deducible ---
@@ -146,7 +146,7 @@ class Modelo303Result:
     # --- Información adicional ---
     c59_entregas_intracom: float = 0.0    # EU B2B sales
     c60_exportaciones: float = 0.0        # exports of goods (none today, see notes)
-    c120_no_sujetas_localizacion: float = 0.0  # non-EU sales not subject (D11)
+    c120_no_sujetas_localizacion: float = 0.0  # non-EU sales not subject by location rules
     # --- Resultado ---
     c64_suma_resultados: float = 0.0      # 46 + 58 + 76 (58/76 not applicable) = 46
     c65_pct_atribuible_estado: float = 100.0

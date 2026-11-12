@@ -1,10 +1,9 @@
 """Shared in-memory-cached JSON file store.
 
-``src/config.py`` and ``src/rules_engine.py`` both persisted a single JSON
-file behind a module-level ``_cache | None`` with matching
-``load_/reload_/save_`` semantics — identical shape, different file path and
-missing-file handling. This module factors that pattern into one class so
-the load/reload/save semantics live in exactly one place.
+``JsonCache`` holds one JSON file behind an in-memory cache and owns the
+``load``/``reload``/``save`` semantics for ``src/config.py`` and
+``src/rules_engine.py``; each caller supplies its own file path and its own
+missing-file handling.
 """
 from __future__ import annotations
 
@@ -21,8 +20,7 @@ class JsonCache:
     ``load``/``reload`` only actually read from disk when the in-memory
     cache is empty (or on ``reload``, unconditionally); ``save`` writes
     through and refreshes the cache. A ``path`` override is honoured only
-    while the cache is empty — matching the pre-existing per-module
-    behaviour where a cached value short-circuits any explicit path.
+    while the cache is empty: a cached value short-circuits any explicit path.
 
     ``on_missing(resolved_path)``, if given, is called when the resolved
     file doesn't exist and must return the dict to use in its place. If not

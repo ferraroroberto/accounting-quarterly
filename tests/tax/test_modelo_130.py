@@ -177,7 +177,7 @@ def test_gdj_only_in_simplified_regime(conn):
 
 
 def test_withholdings_from_gross_booked_invoices(conn):
-    # Issued invoices booked gross (D12): income 450 + 337.50, withholdings 67.50 + 50.63 to the cent.
+    # Issued invoices booked gross: income 450 + 337.50, withholdings 67.50 + 50.63 to the cent.
     _invoice(conn, "o1", "out", "2025-04-01", 450.0, irpf=67.5)
     _invoice(conn, "o2", "out", "2025-05-16", 337.5, irpf=50.63)
     _invoice(conn, "o3", "out", "2025-05-17", 999.0, irpf=99.0, excluded=1)   # excluded: ignored

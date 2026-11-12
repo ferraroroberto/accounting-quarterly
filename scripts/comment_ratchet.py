@@ -8,59 +8,32 @@ is owned by the fleet's global instructions; this stage enforces it structurally
 baseline, and fails only when a file's count *rises*. Existing debt never
 blocks work, but it cannot grow.
 
-What is counted -- comment text only, extracted by a real scanner, never by
-grepping source lines:
+What is counted: comment text only, from a real scanner per language, never by
+grepping lines -- `.py` (`tokenize` COMMENT tokens), `.js`/`.mjs`/`.cjs` (`//`,
+`/* */`), `.css` (`/* */`), `.ps1`/`.psm1` (`#`, `<# #>`), `.yml`/`.yaml` (`#`
+after whitespace); strings, template literals, regex literals, `url(...)`,
+here-strings and quoted scalars are skipped. A reference is `#` plus one to five
+digits, not after `&` or `#`, ending on a word boundary; `https://` URLs are
+blanked first; `repo#NNN` counts. A file the scanner cannot finish is NOT
+CONFIRMED, never skipped. Per-language limits: docs/comment-ratchet.md.
 
-  * `.py`                 stdlib `tokenize`, COMMENT tokens (a string, f-string or
-                          docstring is not a comment)
-  * `.js` `.mjs` `.cjs`   `//` and `/* */`; strings, template literals (with
-                          `${}`) and regex literals are skipped
-  * `.css`                `/* */`; strings and unquoted `url(...)` are skipped
-  * `.ps1` `.psm1`        `#` line comments and `<# #>` blocks; single- and
-                          double-quoted strings (with `$( )`) and here-strings
-                          are skipped
-  * `.yml` `.yaml`        `#` line comments (must start the line or follow
-                          whitespace, per the YAML spec); single- and
-                          double-quoted scalars are skipped. A block scalar
-                          (`|`/`>`, e.g. a GitHub Actions `run:` step) is not
-                          special-cased -- a `#` inside one is scanned like any
-                          other, which is correct for an embedded shell/script
-                          comment and conservative for anything else.
+Opt-in rules, each under its own baseline key so a removal under one rule never
+pays for an addition under another:
 
-A reference is `#` plus one to five digits, not preceded by `&` or `#` and ending
-on a word boundary; `https://...` URLs inside a comment are blanked first so an
-anchor never counts. `repo#NNN` counts (same smell). Known false positive: a
-digit-only CSS hex colour written inside a comment -- write the
-token name instead. Inline `<script>` / `<!-- -->` in HTML is out of scope. A
-file the scanner cannot finish (unterminated string, comment, template or
-here-string; a Python file `tokenize` rejects; undecodable bytes) is NOT
-CONFIRMED, never skipped.
+  * `docstrings = true`        `#NNN` inside Python docstrings (`<path>::docstring`).
+  * `history_phrases = true`   the curated `HISTORY_PHRASES` (whole words) and
+                               `HISTORY_PATTERNS`, case-insensitive, in comments
+                               and Python docstrings (`<path>::history`). Short
+                               and precise on purpose: a broad list is noise.
+  * `extra_history_patterns`   the adopter's own regexes, same key; needs
+                               `history_phrases = true`.
 
-Two further rules, each off until the adopter turns it on, each counted under its
-own baseline key (`<path>::docstring`, `<path>::history`) so a removal under one
-rule never pays for an addition under the other:
-
-  * `docstrings = true`       `#NNN` references (same shape as above) inside
-                              module, class and function docstrings of `.py`
-                              files -- the one place the comment scan is blind.
-  * `history_phrases = true`  a short curated list of decision-history phrases
-                              (`HISTORY_PHRASES`), matched case-insensitively on
-                              whole words in comments of every language and in
-                              Python docstrings. A phrase wrapped over two
-                              comment lines is not seen (docstrings are joined
-                              first, so wrapping there is). Short and precise on
-                              purpose: a broad list is noise.
-
-Opt-in, per adopter, in its own `.fleet.toml` -- re-vendoring never breaks a
-repo that has not opted in:
+Declared in the adopter's `.fleet.toml`; re-vendoring never breaks a repo that
+has not opted in:
 
     [comment_ratchet]
-    enabled  = true
-    baseline = ".comment-ratchet-baseline.json"   # default
-    include  = ["app/", "src/"]                    # path prefixes; default: whole tree
-    exclude  = ["**/generated/**"]                 # globs, added to the built-in set
-    docstrings      = false                        # opt in: `#NNN` inside Python docstrings
-    history_phrases = false                        # opt in: curated history phrases
+    enabled = true    # optional: baseline, include, exclude, docstrings,
+                      # history_phrases, extra_history_patterns
 
 Product code only: `git ls-files --cached --others --exclude-standard` (ignored and generated folders never appear)
 minus tests (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.js`),
@@ -73,8 +46,8 @@ Exit codes (a state is never folded into a pass):
   1  a file's count rose, a new file carries references, or the baseline is
      missing / a mode was refused
   2  bad configuration, baseline or arguments -- fail loud
-  3  NOT CONFIRMED: `git` unusable or a file could not be scanned. The gate
-     fails on it.
+  3  NOT CONFIRMED: `git` unusable, a file could not be scanned, or an
+     `extra_history_patterns` entry is not a valid regex. The gate fails on it.
 
 Modes: `check` (default; what the gate runs), `--init` (write the first
 baseline, refuses to overwrite), `--update-baseline` (lower or drop entries;
@@ -135,6 +108,17 @@ HISTORY_PHRASES = (
     "previously recorded",
     "had drifted",
 )
+#: Narration needing a number or symbol; each carries its own anchors and was swept like the phrases.
+_DECISION_WORDS = r"(?:decision|decided|chose|chosen|agreed|settled)"
+_ISO_DATE = r"\d{4}-\d{2}-\d{2}"
+HISTORY_PATTERNS = (
+    r"\bepic\s*§",  # a pointer into a planning epic
+    r"\bstep[-\s]?\d+\s+decision\b",
+    r"\b(?:decided|chosen|picked|agreed|settled)\s+(?:in|at|by)\s+(?:step|phase)[-\s]?\d+\b",
+    r"\beach\s+used\s+to\b",
+    rf"\b{_DECISION_WORDS}\b[^\n]{{0,40}}?\b{_ISO_DATE}\b",  # a dated decision, either order
+    rf"\b{_ISO_DATE}\b[^\n]{{0,40}}?\b{_DECISION_WORDS}\b",
+)
 
 LANGUAGES = {
     ".py": "py",
@@ -143,11 +127,8 @@ LANGUAGES = {
     ".ps1": "ps", ".psm1": "ps",
     ".yml": "yaml", ".yaml": "yaml",
 }
-#: A `.yml.template`/`.yaml.template` copy-to-adapt source (this repo's own
-#: convention for keeping a GitHub Actions workflow inert until an adopter
-#: copies it -- see `.github/workflows/*.yml.template`) is still YAML text
-#: that comments live in; the trailing `.template` just hides it from
-#: `LANGUAGES`' plain single-suffix lookup.
+#: A copy-to-adapt workflow source (`.github/workflows/*.yml.template`) is still YAML;
+#: the trailing `.template` would hide it from `LANGUAGES`' single-suffix lookup.
 _TEMPLATE_LANGUAGE_SUFFIXES = {".yml.template": "yaml", ".yaml.template": "yaml"}
 
 
@@ -165,9 +146,12 @@ EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 # would not resolve in a consumer tree), the documented exception.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "docstrings", "history_phrases"}
+_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "docstrings", "history_phrases", "extra_history_patterns"}
 _REF = re.compile(r"(?<![&#])#(\d{1,5})\b")
-_HISTORY = re.compile(r"\b(?:" + "|".join(p.replace(" ", r"\s+") for p in HISTORY_PHRASES) + r")\b", re.IGNORECASE)
+_HISTORY = re.compile(
+    r"\b(?:" + "|".join(p.replace(" ", r"\s+") for p in HISTORY_PHRASES) + r")\b|" + "|".join(HISTORY_PATTERNS),
+    re.IGNORECASE,
+)
 _URL = re.compile(r"https?://\S+")
 
 
@@ -176,7 +160,7 @@ class ConfigError(RuntimeError):
 
 
 class NotConfirmed(RuntimeError):
-    """A file could not be scanned, so its count is unknown."""
+    """A file could not be scanned, or a history pattern compiled, so a count is unknown."""
 
 
 @dataclass(frozen=True)
@@ -186,6 +170,7 @@ class Config:
     exclude: tuple[str, ...]
     docstrings: bool = False
     history_phrases: bool = False
+    extra_history_patterns: tuple[re.Pattern[str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -208,6 +193,27 @@ def _flag(table: dict[str, object], name: str) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"[comment_ratchet] {name} must be true or false")
     return value
+
+
+def _history_patterns(table: dict[str, object], history_phrases: bool) -> tuple[re.Pattern[str], ...]:
+    """The adopter's own `extra_history_patterns`, compiled case-insensitively.
+
+    A regex that does not compile leaves the history count unknown: `NotConfirmed` (exit 3).
+    """
+    sources = _str_list(table, "extra_history_patterns")
+    if sources and not history_phrases:
+        raise ConfigError("[comment_ratchet] extra_history_patterns needs history_phrases = true")
+    compiled = []
+    for i, source in enumerate(sources):
+        where = f"[comment_ratchet] extra_history_patterns[{i}] {source!r}"
+        try:
+            pattern = re.compile(source, re.IGNORECASE)
+        except re.error as exc:
+            raise NotConfirmed(f"{where} is not a valid regex: {exc}") from exc
+        if pattern.search("") is not None:
+            raise ConfigError(f"{where} matches empty text")
+        compiled.append(pattern)
+    return tuple(compiled)
 
 
 def parse_config(toml_text: str) -> Config | None:
@@ -233,9 +239,10 @@ def parse_config(toml_text: str) -> Config | None:
     baseline = table.get("baseline", DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[comment_ratchet] baseline must be a non-empty string")
+    history_phrases = _flag(table, "history_phrases")
     return Config(
         baseline, _str_list(table, "include"), _str_list(table, "exclude"),
-        _flag(table, "docstrings"), _flag(table, "history_phrases"),
+        _flag(table, "docstrings"), history_phrases, _history_patterns(table, history_phrases),
     )
 
 
@@ -328,11 +335,22 @@ def find_refs(comment: str, first_line: int) -> list[Ref]:
     return refs
 
 
-def find_phrases(chunk: str, first_line: int) -> list[Ref]:
-    """History phrases in one comment or docstring; `first_line` is its start line."""
+def find_phrases(chunk: str, first_line: int, extra: tuple[re.Pattern[str], ...] = ()) -> list[Ref]:
+    """History phrases in one comment or docstring; `first_line` is its start line.
+
+    The shared rule and each `extra` pattern search separately; overlapping matches count once.
+    """
+    matches = sorted(
+        (m for pattern in (_HISTORY, *extra) for m in pattern.finditer(chunk) if m.end() > m.start()),
+        key=lambda m: (m.start(), -m.end()),
+    )
     lines = chunk.split("\n")
     refs = []
-    for match in _HISTORY.finditer(chunk):
+    covered = 0
+    for match in matches:
+        if match.start() < covered:
+            continue
+        covered = match.end()
         offset = chunk.count("\n", 0, match.start())
         refs.append(Ref(first_line + offset, f"{' '.join(match.group().lower().split())}  | {lines[offset].strip()}"))
     return refs
@@ -777,7 +795,7 @@ def scan_file(text: str, language: str, cfg: Config) -> dict[str, list[Ref]]:
     if cfg.docstrings:
         found[DOCSTRING_SUFFIX] = [r for line, d in docs for r in find_refs(d, line)]
     if cfg.history_phrases:
-        found[HISTORY_SUFFIX] = [r for line, c in sorted(comments + docs) for r in find_phrases(c, line)]
+        found[HISTORY_SUFFIX] = [r for line, c in sorted(comments + docs) for r in find_phrases(c, line, cfg.extra_history_patterns)]
     return {suffix: refs for suffix, refs in found.items() if refs}
 
 
@@ -893,6 +911,10 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     except ConfigError as exc:
         print(f"comment ratchet: CONFIG ERROR: {exc}")
         return EXIT_CONFIG
+    except NotConfirmed as exc:
+        print(f"comment ratchet: NOT CONFIRMED: {exc}")
+        print("  (the history count could not be established, so it is neither a pass nor a clean tree)")
+        return EXIT_NOT_CONFIRMED
     if cfg is None:
         if init or update:
             print("comment ratchet: not enabled -- set [comment_ratchet] enabled = true in .fleet.toml first")

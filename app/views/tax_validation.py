@@ -231,7 +231,7 @@ def _render_drilldown(rec: Reconciliation) -> None:
             "No stored `tax_audit_log` run for this period — showing the live computation's "
             "audit trail (click **Calculate tax** in Tax Obligations to persist it)."
         )
-    entries = audit_entries_for_box(source, rec.model, box)
+    entries = audit_entries_for_box(source, box)
     if not entries:
         st.info("No audit cell is linked to this box.")
         return

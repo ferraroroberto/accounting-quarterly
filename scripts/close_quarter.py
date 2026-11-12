@@ -390,7 +390,7 @@ def cmd_relink(args: argparse.Namespace) -> int:
     return 0 if plan.clean else 1
 
 
-def cmd_fx_backfill(args: argparse.Namespace) -> int:
+def cmd_fx_backfill(_args: argparse.Namespace) -> int:
     """Fetch and store ECB rates from the last stored date up to today.
 
     Idempotent — safe to rerun at every close-quarter. Uses every currency

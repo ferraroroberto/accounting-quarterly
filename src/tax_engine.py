@@ -155,13 +155,13 @@ def compute_and_persist_tax_snapshots(
 
     for model in ("303", "130", "OSS", "349"):
         result = results[model]
-        upsert_tax_snapshot_conn(db_conn, year, quarter, model, encode_snapshot(model, result), computed_at)
+        upsert_tax_snapshot_conn(db_conn, year, quarter, model, encode_snapshot(result), computed_at)
         upsert_audit_entries_conn(db_conn, result.audit, computed_at)
 
     r347 = results["347"]
     upsert_tax_snapshot_conn(
         db_conn, year, TAX_SNAPSHOT_QUARTER_ANNUAL, "347",
-        encode_snapshot("347", r347), computed_at,
+        encode_snapshot(r347), computed_at,
     )
     upsert_audit_entries_conn(db_conn, r347.audit, computed_at)
 

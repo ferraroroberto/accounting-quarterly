@@ -470,11 +470,6 @@ def test_sheet_renders_the_stored_snapshots(ctx):
     _assert_noop(cp.step_sheet(ctx))
 
 
-def test_sheet_renderer_is_pluggable(ctx, monkeypatch):
-    monkeypatch.setattr(cp, "filing_sheet_renderer", lambda y, q, conn, cfg: f"custom {y} Q{q}\n")
-    assert cp.step_sheet(ctx).output == "custom 2025 Q1\n"
-
-
 # ---------------------------------------------------------------------------
 # 11. gestor-pack
 # ---------------------------------------------------------------------------

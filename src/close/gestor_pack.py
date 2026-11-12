@@ -70,7 +70,7 @@ def write_stripe_report(ctx: CloseContext, freeze: bool = False, supersede: bool
         if declared and not freeze:
             filename = filename.replace(".xlsx", "_live.xlsx")  # never overwrite the sent file
         dest = ctx.quarter_dir / filename
-        create_excel_report(payments, dest, ctx.year, ctx.quarter, f"Q{ctx.quarter}_{ctx.year}")
+        create_excel_report(payments, dest, ctx.year, ctx.quarter)
         res.changes.append(f"wrote {dest}")
         if freeze:
             report = freeze_report(conn, ctx.year, ctx.quarter, payments, dest, supersede=supersede)
@@ -176,7 +176,7 @@ def _pack_stripe_report(ctx: CloseContext, freeze: bool, res: StepResult) -> tup
     if dest.exists() and state.get("report_digest") == digest:
         res.info.append(f"Draft Stripe report {dest.name} unchanged.")
     else:
-        create_excel_report(payments, dest, ctx.year, ctx.quarter, f"Q{ctx.quarter}_{ctx.year}")
+        create_excel_report(payments, dest, ctx.year, ctx.quarter)
         state["report_digest"] = digest
         save_text(state_path, json.dumps(state, indent=2))
         res.changes.append(f"wrote draft {dest} ({len(payments)} transactions)")

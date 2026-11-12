@@ -12,7 +12,7 @@ log = get_logger(__name__)
 _RULES_PATH = Path(__file__).parent.parent / "classification_rules.json"
 
 
-def _missing_rules(path: Path) -> dict[str, Any]:
+def _missing_rules(_path: Path) -> dict[str, Any]:
     log.warning("⚠️ classification_rules.json not found, using empty rules")
     return {
         "activity_rules": [],

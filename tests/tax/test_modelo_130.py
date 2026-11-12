@@ -107,10 +107,10 @@ class TestGoldenTwoQuarters:
         r = compute_modelo_130(2025, 2, year)
         entries = [{"cell": e.cell, "value": e.value} for e in r.audit]
         for box in BOXES:
-            hits = audit_entries_for_box(entries, "130", box)
+            hits = audit_entries_for_box(entries, box)
             assert hits and hits[0]["cell"] == MODELO130_BOX_FIELDS[box]
         # The box 02 split is drillable under 02.
-        cells_02 = {e["cell"] for e in audit_entries_for_box(entries, "130", "02")}
+        cells_02 = {e["cell"] for e in audit_entries_for_box(entries, "02")}
         assert {"c02_gastos_reales", "c02_gastos_dificil_justificacion", "c02_amortizaciones"} <= cells_02
 
 
@@ -258,7 +258,7 @@ def test_old_snapshot_field_names_still_decode():
 def test_snapshot_roundtrip(conn):
     _stripe(conn, "s1", "2025-02-10", 800.0)
     r = compute_modelo_130(2025, 1, conn)
-    back = decode_snapshot("130", encode_snapshot("130", r))
+    back = decode_snapshot("130", encode_snapshot(r))
     assert back.aeat_boxes() == r.aeat_boxes()
     assert back.previous_year_net_source == r.previous_year_net_source
 

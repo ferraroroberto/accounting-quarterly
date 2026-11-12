@@ -226,10 +226,6 @@ def _render_validation_and_export(payments: list[dict], val_report: dict, period
     with export_col:
         st.subheader("Export")
         export_year = period.year_for_filters or period.current_year
-        label = (
-            f"Q{period.quarter}_{export_year}" if period.quarter
-            else ("Since_Inception" if period.is_since_inception else str(export_year))
-        )
         filename = (
             "Stripe_Report_Since_Inception.xlsx"
             if period.is_since_inception
@@ -237,9 +233,7 @@ def _render_validation_and_export(payments: list[dict], val_report: dict, period
         )
 
         if st.button("Generate Excel Report", type="primary", key="qr_export"):
-            render_excel_download(
-                payments, export_year, period.quarter, filename, download_key="qr_download", label=label,
-            )
+            render_excel_download(payments, export_year, period.quarter, filename, download_key="qr_download")
 
 
 def render() -> None:

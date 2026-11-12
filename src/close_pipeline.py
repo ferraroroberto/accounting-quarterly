@@ -16,7 +16,7 @@
 7. ``reta``        import a bank export of RETA (TGSS) debits.
 8. ``compute``     303/130/OSS/349/347 snapshots — persisted only when a payload changed.
 9. ``reconcile``   filed vs app for this quarter if filed, else the previous quarter.
-10. ``sheet``      filing sheet through ``filing_sheet_renderer`` (``src.filing_sheet``).
+10. ``sheet``      filing sheet through ``render_filing_sheet`` (``src.filing_sheet``).
 11. ``gestor-pack`` Stripe report (frozen with ``freeze``), the quarter's ledger invoices,
                    notes and a draft email.
 
@@ -452,7 +452,7 @@ def step_reta(ctx: CloseContext, export_file: str | Path) -> StepResult:
 # ---------------------------------------------------------------------------
 
 def _box_summary(model: str, result: Any) -> str:
-    boxes = {b: v for b, v in result_boxes(model, result).items() if abs(v) >= 0.005}
+    boxes = {b: v for b, v in result_boxes(result).items() if abs(v) >= 0.005}
     if not boxes:
         return f"Modelo {model}: all boxes 0"
     return f"Modelo {model}: " + ", ".join(f"[{b}] {v:,.2f}" for b, v in sorted(boxes.items(), key=_box_key))
@@ -471,7 +471,7 @@ def step_compute(ctx: CloseContext) -> StepResult:
         results = compute_tax_results(ctx.year, ctx.quarter, conn, ctx.config)
         stored = {row["model"]: row for row in load_tax_snapshots_for_period(ctx.year, ctx.quarter, conn)}
         changed = [m for m, r in results.items()
-                   if stored.get(m) is None or stored[m]["payload_json"] != encode_snapshot(m, r)]
+                   if stored.get(m) is None or stored[m]["payload_json"] != encode_snapshot(r)]
         if changed:
             computed_at = compute_and_persist_tax_snapshots(
                 ctx.year, ctx.quarter, conn, ctx.config, results=results)
@@ -540,11 +540,8 @@ def step_reconcile(ctx: CloseContext) -> StepResult:
 
 
 # ---------------------------------------------------------------------------
-# 10. sheet — pluggable renderer, default ``src.filing_sheet.render_filing_sheet``
+# 10. sheet — ``src.filing_sheet.render_filing_sheet`` over the stored snapshots
 # ---------------------------------------------------------------------------
-
-FilingSheetRenderer = Callable[[int, int, sqlite3.Connection, dict], str]
-
 
 def _stored_results(year: int, quarter: int, conn: sqlite3.Connection) -> dict[str, Any]:
     rows = load_tax_snapshots_for_period(year, quarter, conn)
@@ -552,18 +549,13 @@ def _stored_results(year: int, quarter: int, conn: sqlite3.Connection) -> dict[s
             if r["model"] in QUARTERLY_MODELS}
 
 
-# The real filing sheet: AEAT form order, credit chain, deadlines,
-# filed-version diff. Swappable (tests and callers may plug in another).
-filing_sheet_renderer: FilingSheetRenderer = render_filing_sheet
-
-
-def step_sheet(ctx: CloseContext, renderer: Optional[FilingSheetRenderer] = None) -> StepResult:
+def step_sheet(ctx: CloseContext) -> StepResult:
     """Render the filing sheet from the stored snapshots into ``filing_sheet_<Y>_Q<Q>.md``."""
     res = StepResult("sheet")
     conn = ctx.connect()
     try:
         missing = [m for m in QUARTERLY_MODELS if m not in _stored_results(ctx.year, ctx.quarter, conn)]
-        text = (renderer or filing_sheet_renderer)(ctx.year, ctx.quarter, conn, ctx.config)
+        text = render_filing_sheet(ctx.year, ctx.quarter, conn)
     finally:
         conn.close()
     if missing:

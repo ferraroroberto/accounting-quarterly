@@ -161,7 +161,7 @@ class TestAuditAndSnapshot:
         _purchase(conn, "p1", "2026-04-10", 30.00, vat="IE0000000XX")
         _purchase(conn, "p2", "2026-04-11", 5.00, vat=None, vendor="No Id")
         r = compute_modelo_349(2026, 2, conn, {"tax": {}})
-        back = decode_snapshot("349", encode_snapshot("349", r))
+        back = decode_snapshot("349", encode_snapshot(r))
         assert back.rows == r.rows and back.unidentified == r.unidentified
         assert back.aeat_boxes() == r.aeat_boxes() and back.operators() == r.operators()
 

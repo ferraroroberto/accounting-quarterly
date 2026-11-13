@@ -117,6 +117,15 @@ enabled         = true
 baseline        = ".comment-ratchet-baseline.json"
 docstrings      = true   # #NNN inside Python docstrings
 history_phrases = true   # curated history phrases in comments and docstrings
+# A tax-engine comment states its rule in place and never cites an id defined nowhere in
+# the repo: a bare D<n> id (the scoped (?-i:D) keeps it case-sensitive, so a lowercase d5
+# stays legal; the lookarounds skip dotted names) and two phrases that narrate how a
+# module came to be. "each used to" is already a shared pattern.
+extra_history_patterns = [
+    '(?<![\w.])(?-i:D)\d{1,2}(?![\w.])',
+    '\bfactors\s+that\s+pattern\b',
+    '\bprivate\s+decision\b',
+]
 
 # [conventions_ratchet] -- the scaffold's fleet-convention ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/conventions_ratchet.py, which counts

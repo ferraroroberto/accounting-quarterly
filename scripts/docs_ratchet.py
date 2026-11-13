@@ -23,8 +23,16 @@ Two measures, both per file:
       - dated headings: an ATX heading line holding an ISO date (`2026-06-24`).
       - changelog headings: a heading that opens with `Changelog`, `Release
         notes`, `Release history` or `What's new`.
+      - bare commands, only in a repo whose root `.gitignore` lists `.venv`: a
+        line in a fenced shell block (untagged, `bash`, `sh`, `powershell`,
+        `ps1`, `bat`, `cmd`, `console`, ...) whose command, or one after `&&`,
+        `||` or `;`, is bare `python`, `pip` or a venv-installed tool
+        (`pytest`, `ruff`, `streamlit`, ...). It resolves to the system
+        interpreter. Legal: the venv interpreter by path and `python -m venv`.
+        A block is exempt when the line above it holds
+        `<!-- bare-command-exempt: <reason> -->`.
 
-Not counted: fenced code blocks (backtick and tilde; the closing fence is at
+Not counted as history: fenced code blocks (backtick and tilde; the closing fence is at
 least as long as the opener), HTML comments, bare URLs and autolinks, link and
 image targets, reference-definition URLs, `href`/`src` attribute values and
 numeric character entities. A link whose text is a bare reference therefore counts once, through its text.
@@ -115,6 +123,26 @@ _CHANGELOG = re.compile(
     re.IGNORECASE,
 )
 
+#: Fence info words read as shell; an untagged fence is read too, since most command blocks carry no tag.
+_SHELL_TAGS = frozenset({
+    "", "bash", "sh", "shell", "zsh", "powershell", "pwsh", "ps", "ps1", "bat", "batch", "cmd", "console",
+    "shell-session",
+})
+#: Commands that resolve to the system interpreter unless called by their `.venv` path.
+_BARE_COMMANDS = frozenset({
+    "python", "python3", "pip", "pip3", "pytest", "ruff", "mypy", "streamlit", "uvicorn", "hypercorn",
+    "playwright", "pre-commit",
+})
+_PROMPT = re.compile(r"^(?:\$|PS(?: [^>]*)?>|[A-Za-z]:\\[^>]*>|>)[ \t]+")
+_CHAIN = re.compile(r"&&|\|\||;")
+_ENV_PREFIX = re.compile(r"^(?:[A-Za-z_]\w*=\S*[ \t]+)+")
+_CALL_OPERATOR = re.compile(r"^&[ \t]+")
+_SHELL_COMMENT = re.compile(r"^(?:#|::|rem\b)", re.IGNORECASE)
+_VENV_CREATE = re.compile(r"\s-m\s+venv\b")
+_CONTINUATION = ("\\", "`", "^")
+_EXEMPT = re.compile(r"<!--.*\bbare-command-exempt:[ \t]*\S.*-->")
+_VENV_IGNORE = re.compile(r"^/?\.venv(?:/|/\*\*?)?$")
+
 
 class ConfigError(RuntimeError):
     """The `[docs_ratchet]` table or the baseline file is unusable."""
@@ -136,7 +164,7 @@ class Config:
 @dataclass(frozen=True)
 class Marker:
     line: int
-    kind: str  # "ref", "dated-heading" or "changelog-heading"
+    kind: str  # "ref", "dated-heading", "changelog-heading" or "bare-command"
     text: str  # what matched, plus the line it sits on, for messages
 
 
@@ -333,22 +361,77 @@ def _heading_marker(line: str, no: int) -> Marker | None:
     return None
 
 
-def scan_text(text: str, allow_refs: tuple[str, ...] = ()) -> list[Marker]:
-    """Every history marker in one Markdown file's text; raises `NotConfirmed` on an unclosed block."""
+@dataclass(frozen=True)
+class _Fence:
+    char: str
+    length: int
+    opened: int
+    commands: bool  # read its lines for bare venv commands
+    quoted: bool  # opened inside a block quote, so its lines carry a `>` prefix
+    console: bool  # a session transcript: only prompt lines are commands
+
+
+def _bare_command(raw: str, fence: _Fence, continued: bool) -> tuple[str | None, bool]:
+    """(the bare command on this fenced line or None, whether the next line continues this one)."""
+    line = re.sub(r"^[ \t]*(?:> ?)*", "", raw) if fence.quoted else raw
+    line = line.strip()
+    if not line:
+        return None, False
+    continues = line.endswith(_CONTINUATION)
+    if continued:
+        return None, continues  # an argument of the line above, not a command
+    prompt = _PROMPT.match(line)
+    if fence.console and not prompt:
+        return None, False  # command output
+    if prompt:
+        line = line[prompt.end():]
+    if _SHELL_COMMENT.match(line):
+        return None, continues
+    for segment in _CHAIN.split(line):
+        segment = _ENV_PREFIX.sub("", _CALL_OPERATOR.sub("", segment.strip()))
+        if not segment:
+            continue
+        token = segment.split(maxsplit=1)[0].strip("\"'").lower().removesuffix(".exe")
+        if token in _BARE_COMMANDS and not (token.startswith("python") and _VENV_CREATE.search(" " + segment)):
+            return segment, continues
+    return None, continues
+
+
+def scan_text(text: str, allow_refs: tuple[str, ...] = (), venv_commands: bool = False) -> list[Marker]:
+    """Every marker in one Markdown file's text; raises `NotConfirmed` on an unclosed block.
+
+    `venv_commands` turns on the `bare-command` rule for fenced shell blocks.
+    """
     markers: list[Marker] = []
-    fence: tuple[str, int, int] | None = None  # (fence char, run length, line it opened on)
+    fence: _Fence | None = None
     comment_opened: int | None = None
+    previous = ""  # the last non-blank line outside a fence, where an exemption comment sits
+    continued = False
     for no, raw in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
         if fence:
             close = _FENCE_CLOSE.match(raw)
-            if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= fence[1]:
-                fence = None
+            if close and close.group(1)[0] == fence.char and len(close.group(1)) >= fence.length:
+                fence, previous = None, ""
+            elif fence.commands:
+                command, continued = _bare_command(raw, fence, continued)
+                if command:
+                    markers.append(Marker(no, "bare-command", f"{command}  | call the .venv interpreter by path"))
             continue
         if comment_opened is None:
             opener = _FENCE_OPEN.match(raw)
             if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
-                fence = (opener.group(1)[0], len(opener.group(1)), no)
+                info = re.match(r"[\w-]*", opener.group(2).strip())
+                tag = info.group().lower() if info else ""
+                fence = _Fence(
+                    opener.group(1)[0], len(opener.group(1)), no,
+                    commands=venv_commands and tag in _SHELL_TAGS and not _EXEMPT.search(previous),
+                    quoted=">" in raw[:opener.start(1)],
+                    console=tag in ("console", "shell-session"),
+                )
+                continued = False
                 continue
+        if raw.strip():
+            previous = raw
         line, inside = _blank_html_comments(raw, comment_opened is not None)
         if inside and comment_opened is None:
             comment_opened = no
@@ -363,7 +446,7 @@ def scan_text(text: str, allow_refs: tuple[str, ...] = ()) -> list[Marker]:
             if written not in allow_refs:
                 markers.append(Marker(no, "ref", f"{written}  | {line.strip()}"))
     if fence:
-        raise NotConfirmed(f"the fenced block opened on line {fence[2]} never closes")
+        raise NotConfirmed(f"the fenced block opened on line {fence.opened} never closes")
     if comment_opened is not None:
         raise NotConfirmed(f"the HTML comment opened on line {comment_opened} never closes")
     return markers
@@ -389,8 +472,20 @@ def tracked_files(root: Path) -> list[str]:
     return sorted(p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p)
 
 
+def venv_convention(root: Path) -> bool:
+    """Does the repo ignore a root `.venv`? That is the signal its commands call the venv by path."""
+    try:
+        text = (root / ".gitignore").read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise NotConfirmed(f".gitignore: cannot be read: {exc}") from exc
+    return any(_VENV_IGNORE.match(line.strip()) for line in text.splitlines())
+
+
 def count_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> Scan:
     """Markers per in-scope file, plus the root README's size in bytes."""
+    venv_commands = venv_convention(root)
     found: dict[str, list[Marker]] = {}
     readme_size: int | None = None
     for path in tracked_files(root):
@@ -411,7 +506,7 @@ def count_tree(root: Path, cfg: Config, vendored: tuple[str, ...]) -> Scan:
         if path == README:
             readme_size = len(raw.replace(b"\r\n", b"\n"))
         try:
-            markers = scan_text(text, cfg.allow_refs)
+            markers = scan_text(text, cfg.allow_refs, venv_commands)
         except NotConfirmed as exc:
             raise NotConfirmed(f"{path}: {exc}") from exc
         if markers:
@@ -567,6 +662,10 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
         print("  A doc states what is true and why, in the present tense; how it got here belongs in git, the PR "
               "and the issue (docs/readme-and-docs.md). Reword it, or move the detail to docs/<topic>.md for a "
               "README; or (reviewed) raise the baseline with `--update-baseline --allow-additions`.")
+        if any(m.kind == "bare-command" for path in rose for m in scan.markers.get(path, [])):
+            print("  A fenced command calls the .venv interpreter by path (`.venv/Scripts/python.exe -m pytest`, "
+                  "`./.venv/bin/python -m pip ...`); a block that must stay bare gets "
+                  "`<!-- bare-command-exempt: <reason> -->` on the line above it.")
         return EXIT_RISE
     readme = f"; README {scan.readme_size:,} of {cfg.readme_max_bytes:,} bytes" if scan.readme_size is not None else ""
     print(f"docs ratchet: PASS ({_total(current)} marker(s) in {len(scan.markers)} file(s), none above the baseline{readme})")

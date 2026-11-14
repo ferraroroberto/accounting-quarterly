@@ -568,10 +568,10 @@ def _js_pairs(toks: list[Tok]) -> dict[int, int]:
     return pairs
 
 
-_NO_TOK = Tok("", "", 0)
+NO_TOK = Tok("", "", 0)
 _JS_FLAG_LITERALS = frozenset({"true", "false", "null", "undefined"})
 _UPPER = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_JS_DECLARES = frozenset({"const", "let", "var", "function", "class", "enum", "interface", "type"})
+JS_DECLARES = frozenset({"const", "let", "var", "function", "class", "enum", "interface", "type"})
 
 
 class _JsReader:
@@ -582,7 +582,7 @@ class _JsReader:
         self.facts = Facts()
 
     def at(self, k: int) -> Tok:
-        return self.t[k] if 0 <= k < len(self.t) else _NO_TOK
+        return self.t[k] if 0 <= k < len(self.t) else NO_TOK
 
     def punct(self, k: int, *texts: str) -> bool:
         tok = self.at(k)
@@ -794,74 +794,11 @@ def js_module_names(source: bytes | str) -> set[str]:
             depth += 1
         elif tok.kind == "punct" and tok.text in (")", "]", "}"):
             depth -= 1
-        elif depth == 0 and tok.kind == "name" and tok.text in _JS_DECLARES:
+        elif depth == 0 and tok.kind == "name" and tok.text in JS_DECLARES:
             nxt = k + 2 if k + 1 < len(toks) and toks[k + 1].text == "*" else k + 1
             if nxt < len(toks) and toks[nxt].kind == "name":
                 names.add(toks[nxt].text)
     return names
-
-
-def _js_body_names(toks: list[Tok], pairs: dict[int, int], opener: int) -> set[str]:
-    """The member names and string values directly inside one `{...}` or `[...]`: enum, object, class body or array."""
-    close, found, j = pairs[opener], set[str](), opener + 1
-    while j < close:
-        tok, nxt = toks[j], toks[j + 1]
-        if tok.kind == "punct" and tok.text in ("(", "[", "{"):
-            j = pairs[j] + 1  # a method, a nested value: not a member of this body
-            continue
-        if tok.kind == "str" and toks[opener].text == "[":
-            found.add(tok.text)
-        elif tok.kind in ("name", "str") and nxt.kind == "punct" and nxt.text in (":", "="):
-            found.add(tok.text)
-            if toks[j + 2].kind == "str":
-                found.add(toks[j + 2].text)
-        elif tok.kind == "name" and toks[opener].text == "{" and toks[j - 1].text in ("{", ",") and (
-                j + 1 == close or nxt.text == ","):
-            found.add(tok.text)  # a bare enum member: `enum S { A, B }`
-        j += 1
-    return found
-
-
-def _js_declared_values(toks: list[Tok], pairs: dict[int, int], k: int) -> set[str]:
-    """The state names of the declaration whose keyword is at `k` and whose name follows it."""
-    keyword, j = toks[k].text, k + 2
-    if keyword == "type":  # `type S = 'a' | 'b'`: the string literals of one union
-        found = set[str]()
-        while j < len(toks) and (toks[j].kind == "str" or toks[j].text in ("=", "|")):
-            if toks[j].kind == "str":
-                found.add(toks[j].text)
-            j += 1
-        return found
-    while j < len(toks) and toks[j].text not in ("{", "[", ";"):
-        if toks[j].text in ("(", "=", ".", "new", "extends", "implements") or toks[j].kind == "name":
-            j += 1
-        else:
-            return set()  # `const S = compute(...)`: no literal body to read
-    return _js_body_names(toks, pairs, j) if j < len(toks) and toks[j].text != ";" else set()
-
-
-def js_state_names(source: bytes | str, type_name: str) -> list[str]:
-    """The lower-cased state names a JS/TS owner module gives its declared type; empty when unreadable.
-
-    Mirrors the Python reader: an `enum`, a `class`, an object or array bound by `const`, `let` or `var`
-    contributes its member names and string values, a `type` alias its string-literal union.
-    """
-    try:
-        toks, pairs = js_parse(source)
-    except ValueError:
-        return []
-    toks = [*toks, _NO_TOK, _NO_TOK, _NO_TOK]
-    found: set[str] = set()
-    depth = 0
-    for k, tok in enumerate(toks):
-        if tok.kind == "punct" and tok.text in ("(", "[", "{"):
-            depth += 1
-        elif tok.kind == "punct" and tok.text in (")", "]", "}"):
-            depth -= 1
-        elif depth == 0 and tok.kind == "name" and tok.text in _JS_DECLARES - {"function", "interface"} \
-                and toks[k + 1].kind == "name" and toks[k + 1].text == type_name:
-            found |= _js_declared_values(toks, pairs, k)
-    return sorted({s.lower() for s in found if s.isidentifier() and not s.startswith("_")})
 
 
 def is_js_source(path: str) -> bool:

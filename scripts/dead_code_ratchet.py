@@ -564,8 +564,12 @@ def dead_tree(root: Path, cfg: Config, vendored: tuple[str, ...],
             except OSError as exc:
                 raise NotConfirmed(f"{path}: cannot be read: {exc}") from exc
             scans[path] = scan_source(source, path)
-        elif path != cfg.baseline and PurePosixPath(path).suffix.lower() in MENTION_SUFFIXES:
-            # The baseline lists the dead names; reading it would make each one look referenced.
+        elif (
+            path != cfg.baseline
+            and not path.endswith("-ratchet-baseline.json")
+            and PurePosixPath(path).suffix.lower() in MENTION_SUFFIXES
+        ):
+            # Every ratchet baseline lists names or source lines; reading one would make a dead name look referenced.
             mentions |= _mention_words(root, path)
     names: set[str] = set()
     classes: dict[str, tuple[str, ...]] = {}

@@ -23,11 +23,12 @@ What is a reference (outside fenced blocks and HTML comments):
     checked only when `.fleet.toml` declares the app's own `port`.
 
 A path resolves when it is a tracked file or a folder holding one, or when git
-ignores it (`.env`, a build output: machine-local by design). Not checked:
-placeholders (`<name>`, `*`, `{a,b}`, `$VAR`), absolute and home paths, URLs,
-links that leave the repo, fenced blocks, bare file names, and paths whose
-first segment is not a tracked root folder (another repo's tree reads the same
-as a typo). `allow_refs` lists
+ignores it (`.env`, a build output: machine-local by design). With `trees = true`
+a fenced layout tree (`├──` / `└──` lines) is read too, each entry resolved under
+the tree's root. Not checked: placeholders (`<name>`, `*`, `{a,b}`, `$VAR`),
+absolute and home paths, URLs, links that leave the repo, other fenced blocks,
+bare file names, and paths whose first segment is not a tracked root folder
+(another repo's tree reads the same as a typo). `allow_refs` lists
 intentional pointers as globs over the reported reference.
 
 A repo can also list names it has retired (`retired`): a removed `--flag`, a
@@ -45,6 +46,7 @@ Opt-in, per adopter, in its own `.fleet.toml`:
     exclude    = ["docs/reports/**"]                 # globs
     allow_refs = ["docs/layout.md", ":8000"]         # globs over the reported text
     retired    = [{ term = "--old-flag", why = "flag removed; use --new-flag" }]
+    trees      = false                               # true: also check fenced layout trees
 
 Exit codes: 0 pass or not enabled; 1 a new dangling reference, or the baseline is
 missing / a mode was refused; 2 bad configuration, baseline or arguments; 3 NOT
@@ -90,7 +92,7 @@ EXIT_PASS, EXIT_RISE, EXIT_CONFIG, EXIT_NOT_CONFIRMED = 0, 1, 2, 3
 # would not resolve in a consumer tree), the documented exception.
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "allow_refs", "retired"}
+_CONFIG_KEYS = {"enabled", "baseline", "include", "exclude", "allow_refs", "retired", "trees"}
 _RETIRED_KEYS = {"term", "why"}
 #: A retired term matches only as a whole name: a longer word or kebab-case name containing it is another name.
 _NAME_CHARS = r"\w-"
@@ -99,6 +101,12 @@ RETIRED_PREFIX = "retired:"
 
 _FENCE_OPEN = re.compile(r"^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)*(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE = re.compile(r"^[ \t>]*(`{3,}|~{3,})[ \t]*$")
+#: Info strings of a fence that can hold a layout tree; a `python` or `mermaid` fence never does.
+_TREE_INFO = frozenset({"", "text", "txt", "tree", "plain", "plaintext"})
+#: The two-dash connector is required: a one-dash `└─` is a DOM or flow diagram, not a file tree.
+_TREE_ENTRY = re.compile(r"^(?P<lead>[ \t>│]*)[├└]── +(?P<rest>\S.*)$")
+_TREE_LEAD = re.compile(r"^[ \t>│]*")
+_TREE_NAME = re.compile(r"^[\w.@+-]+(?:/[\w.@+-]+)*/?$")
 _HTML_TOKEN = re.compile(r"`+|<!--|-->")
 _BACKTICKS = re.compile(r"`+")
 _LINK_TARGET = re.compile(r"\]\(\s*(<[^>]*>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
@@ -141,12 +149,13 @@ class Config:
     exclude: tuple[str, ...]
     allow_refs: tuple[str, ...]
     retired: tuple[Retired, ...] = ()
+    trees: bool = False
 
 
 @dataclass(frozen=True)
 class Ref:
     line: int
-    kind: str  # "path", "link", "module", "port" or "retired"
+    kind: str  # "path", "link", "tree", "module", "port" or "retired"
     key: str  # what is resolved and recorded: a repo-relative path, `-m <module>`, `:<port>` or `retired:<term>`
     text: str  # the line it sits on, for messages
     why: str = ""  # a retired term's replacement, printed with the hit
@@ -218,12 +227,16 @@ def parse_config(toml_text: str) -> Config | None:
     baseline = table.get("baseline", DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[doc_refs_ratchet] baseline must be a non-empty string")
+    trees = table.get("trees", False)
+    if not isinstance(trees, bool):
+        raise ConfigError("[doc_refs_ratchet] trees must be true or false")
     return Config(
         baseline,
         _str_list(table, "include", DEFAULT_INCLUDE),
         _str_list(table, "exclude", ()),
         _str_list(table, "allow_refs", ()),
         _retired_list(table),
+        trees,
     )
 
 
@@ -462,17 +475,71 @@ def _retired_refs(no: int, text: str, retired: tuple[Retired, ...], context: str
     ]
 
 
+def _tree_name(rest: str) -> str | None:
+    """The path an entry's first token names (the rest is a comment or an alternate), or None if not a plain path."""
+    token = rest.split()[0]
+    if not _TREE_NAME.match(token) or any(re.fullmatch(r"\.+", seg) for seg in token.split("/")):
+        return None
+    return token.rstrip("/")
+
+
+def _tree_root(block: list[tuple[int, str]], layout: Tree) -> str:
+    """The tracked folder a tree's first line names (`tests/`), else the repo root (``)."""
+    for _, raw in block:
+        if _TREE_ENTRY.match(raw):
+            break
+        label = _TREE_LEAD.sub("", raw).strip()
+        if label:
+            token = label.split()[0].replace("\\", "/").removeprefix("./").strip("/")
+            return token if token in layout.dirs else ""
+    return ""
+
+
+def _tree_refs(block: list[tuple[int, str]], layout: Tree, stats: Counter[str] | None) -> list[Ref]:
+    """One `tree` Ref per entry of a fenced layout tree that does not exist under its root.
+
+    Depth is the connector's column. A placeholder or missing entry takes its subtree with
+    it (a gone folder cannot be resolved below). A tree whose top level matches nothing on
+    disk is another repo's tree, an excerpt or a diagram: skipped and counted, never passed.
+    """
+    entries = [(no, raw, m) for no, raw in block if (m := _TREE_ENTRY.match(raw))]
+    if len(entries) < 2:
+        return []
+    base = _tree_root(block, layout)
+    stack: list[tuple[int, str | None]] = []  # (connector column, path; None = unresolvable)
+    missing: list[Ref] = []
+    anchored = False
+    for no, raw, m in entries:
+        col = len(m["lead"])
+        while stack and stack[-1][0] >= col:
+            stack.pop()
+        parent = stack[-1][1] if stack else base
+        name = _tree_name(m["rest"])
+        path = None if parent is None or name is None else f"{parent}/{name}" if parent else name
+        found = path is not None and (path in layout.files or path in layout.dirs)
+        anchored = anchored or (not stack and found)
+        if path is not None and not found:
+            missing.append(Ref(no, "tree", path, raw.strip()))
+        stack.append((col, path if found else None))
+    if stats is not None:
+        stats["checked" if anchored else "unanchored"] += 1
+    return missing if anchored else []
+
+
 def scan_text(text: str, doc_path: str, top_dirs: frozenset[str], root_py: frozenset[str] = frozenset(),
-              check_ports: bool = True, retired: tuple[Retired, ...] = (), check_refs: bool = True) -> list[Ref]:
+              check_ports: bool = True, retired: tuple[Retired, ...] = (), check_refs: bool = True,
+              layout: Tree | None = None, stats: Counter[str] | None = None) -> list[Ref]:
     """Every reference in one Markdown file; raises `NotConfirmed` on an unclosed block.
 
     `retired` terms are read everywhere outside HTML comments, fenced blocks included.
     `check_refs=False` reads nothing else (the `SKILL.md` files a repo adds for retired terms only).
+    A `layout` makes fenced layout trees count too, tallied in `stats`.
     """
     refs: list[Ref] = []
     parent = str(PurePosixPath(doc_path).parent)
     doc_dir = "" if parent == "." else parent
     fence: tuple[str, int, int] | None = None  # (fence char, run length, line it opened on)
+    block: list[tuple[int, str]] | None = None  # lines of an open fence that may be a layout tree
     comment_opened: int | None = None
     prev_tail = ""
     for no, raw in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
@@ -480,12 +547,18 @@ def scan_text(text: str, doc_path: str, top_dirs: frozenset[str], root_py: froze
             refs.extend(_retired_refs(no, raw, retired, raw.strip()))
             close = _FENCE_CLOSE.match(raw)
             if close and close.group(1)[0] == fence[0] and len(close.group(1)) >= fence[1]:
-                fence = None
+                if block is not None and layout is not None:
+                    refs.extend(_tree_refs(block, layout, stats))
+                fence, block = None, None
+            elif block is not None:
+                block.append((no, raw))
             continue
         if comment_opened is None:
             opener = _FENCE_OPEN.match(raw)
             if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
                 fence = (opener.group(1)[0], len(opener.group(1)), no)
+                tree_fence = layout is not None and (opener.group(2).split() or [""])[0].lower() in _TREE_INFO
+                block = [] if tree_fence else None
                 refs.extend(_retired_refs(no, raw, retired, raw.strip()))
                 continue
         line, inside = _blank_html_comments(raw, comment_opened is not None)
@@ -619,8 +692,9 @@ def skill_scope(root: Path, files: list[str], cfg: Config, vendored: tuple[str, 
     return picked
 
 
-def dangling_tree(root: Path, cfg: Config, vendored: tuple[str, ...], port: int | None) -> dict[str, list[Ref]]:
-    """Dangling, non-allowed references per in-scope file (only files with at least one)."""
+def dangling_tree(root: Path, cfg: Config, vendored: tuple[str, ...], port: int | None,
+                  stats: Counter[str] | None = None) -> dict[str, list[Ref]]:
+    """Dangling, non-allowed references per in-scope file; `stats` tallies layout trees checked and skipped."""
     files = tracked_files(root)
     tree = build_tree(files, port)
     root_py = frozenset(f[:-3] for f in files if "/" not in f and f.endswith(".py"))
@@ -635,13 +709,14 @@ def dangling_tree(root: Path, cfg: Config, vendored: tuple[str, ...], port: int 
             continue
         try:
             refs = scan_text(text, path, tree.top_dirs, root_py, check_ports=port is not None,
-                             retired=cfg.retired, check_refs=full)
+                             retired=cfg.retired, check_refs=full,
+                             layout=tree if full and cfg.trees else None, stats=stats)
         except NotConfirmed as exc:
             raise NotConfirmed(f"{path}: {exc}") from exc
         bad = [r for r in refs if not resolves(r, tree) and not matches_any(r.key, cfg.allow_refs)]
         if bad:
             candidates[path] = bad
-    keys = sorted({r.key for refs in candidates.values() for r in refs if r.kind in ("path", "link")})
+    keys = sorted({r.key for refs in candidates.values() for r in refs if r.kind in ("path", "link", "tree")})
     # The probe child catches a folder whose contents are ignored (`certs/*`) but not the folder itself.
     hits = ignored(root, [k for key in keys for k in (key, f"{key}/{_PROBE}")])
     local = {k.removesuffix(f"/{_PROBE}") for k in hits}
@@ -755,8 +830,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
               "run `python scripts/doc_refs_ratchet.py --init`")
         return EXIT_RISE
 
+    tree_stats: Counter[str] = Counter()
     try:
-        found = dangling_tree(root, cfg, vendored, port)
+        found = dangling_tree(root, cfg, vendored, port, tree_stats)
     except NotConfirmed as exc:
         print(f"doc refs ratchet: NOT CONFIRMED: {exc}")
         print("  (the references could not be resolved, so this is neither a pass nor a clean tree)")
@@ -790,8 +866,10 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
               "with `--update-baseline --allow-additions`.")
         return EXIT_RISE
     ports = f"; port :{port}" if port is not None else "; no port declared, ports unchecked"
+    trees = (f"; {tree_stats['checked']} layout tree(s) checked, {tree_stats['unanchored']} not anchored, skipped"
+             if cfg.trees else "")
     print(f"doc refs ratchet: PASS ({_total(current)} baselined dangling reference(s) in {len(current)} file(s), "
-          f"none new{ports})")
+          f"none new{ports}{trees})")
     if gone:
         print(f"  {gone} baselined reference(s) now resolve or are gone -- run "
               "`python scripts/doc_refs_ratchet.py --update-baseline` to lower it")

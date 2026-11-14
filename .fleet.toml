@@ -14,7 +14,7 @@ depends_on  = ["local-llm-hub"]
 [vendored]
 docs_ratchet = { src = "scripts/docs_ratchet.py", sha = "78635aa74a92b9622326cb53992e0634fbaf6246", dest = "scripts/docs_ratchet.py" }
 dead_code_ratchet = { src = "scripts/dead_code_ratchet.py", sha = "4d0b0ff30e23eb95c73c4b0b1517ec6a43d3a836", dest = "scripts/dead_code_ratchet.py" }
-doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/doc_refs_ratchet.py" }
+doc_refs_ratchet = { src = "scripts/doc_refs_ratchet.py", sha = "a68f6e49393f0ef0b94ab3c79f4338a50d89fa49", dest = "scripts/doc_refs_ratchet.py" }
 instruction_ratchet = { src = "scripts/instruction_ratchet.py", sha = "fe8cc1bdbd038ed65947186248df13072eceb25a", dest = "scripts/instruction_ratchet.py" }
 structure_ratchet = { src = "scripts/structure_ratchet.py", sha = "4a06ca84fc9c5005d4be7fa505c9d0e7c0472dba", dest = "scripts/structure_ratchet.py" }
 structure_layout = { src = "scripts/structure_layout.py", sha = "dae6225912362ecb165cf0e02d7698fad9789bba", dest = "scripts/structure_layout.py" }
@@ -81,6 +81,7 @@ repeated_text_words = 12
 # fails on any non-zero exit. Procedure: project-scaffolding docs/doc-refs-ratchet.md.
 [doc_refs_ratchet]
 enabled    = true
+trees    = true
 baseline   = ".doc-refs-ratchet-baseline.json"
 allow_refs = [":8000", "data/backups"]
 

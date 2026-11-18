@@ -127,6 +127,104 @@ def _calls_retry_after(handler: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
+#: Playwright's browser-type objects, and the pytest-playwright fixture that hands one out.
+_BROWSER_TYPES = frozenset({"chromium", "firefox", "webkit", "browser_type"})
+
+
+def _browser_open(call: ast.Call) -> str:
+    """`x.new_context(...)`, `browser.new_page(...)` or `<browser type>.launch*(...)`: the spelling, else ''.
+
+    Read by method and receiver name, because no type is known here: `new_context` is Playwright's
+    alone, `launch` only counts on a browser type, and `new_page` only on a receiver named `browser`
+    (on a `context` it adds a tab to the one context, which is the pattern the rule asks for).
+    """
+    func = call.func
+    if not isinstance(func, ast.Attribute):
+        return ""
+    base = func.value
+    receiver = base.attr if isinstance(base, ast.Attribute) else base.id if isinstance(base, ast.Name) else ""
+    if func.attr == "new_context" or (func.attr == "new_page" and receiver == "browser") or (
+            func.attr in ("launch", "launch_persistent_context") and receiver in _BROWSER_TYPES):
+        return f"{receiver}.{func.attr}" if receiver else func.attr
+    return ""
+
+
+BROWSER_LOOP_RULE = "browser-per-iteration"
+
+
+class _BrowserLoops(ast.NodeVisitor):
+    """Collects the browser or context opens that sit inside a loop body or comprehension."""
+
+    def __init__(self) -> None:
+        self.depth = 0  # loops around the node being visited, within the current function
+        self.hits: list[tuple[ast.AST, str, str]] = []
+
+    def _looped(self, nodes: list[ast.AST], once: list[ast.AST] | None = None) -> None:
+        """Visit what runs every pass one loop deeper, and what runs once (`once`) where it stands."""
+        for child in once or []:
+            self.visit(child)
+        self.depth += 1
+        for child in nodes:
+            self.visit(child)
+        self.depth -= 1
+
+    def visit_For(self, node: ast.For) -> None:
+        self._looped([node.target, *node.body], [node.iter, *node.orelse])
+
+    visit_AsyncFor = visit_For  # type: ignore[assignment]
+
+    def visit_While(self, node: ast.While) -> None:
+        self._looped([node.test, *node.body], list(node.orelse))
+
+    def _comprehension(self, node: ast.AST) -> None:
+        self._looped(list(ast.iter_child_nodes(node)))
+
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    def _def(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        loops, self.depth = self.depth, 0  # a function defined in a loop does not run once per pass
+        self.generic_visit(node)
+        self.depth = loops
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _def
+
+    def visit_Call(self, node: ast.Call) -> None:
+        opened = _browser_open(node) if self.depth else ""
+        if opened:
+            self.hits.append((node, BROWSER_LOOP_RULE,
+                              f"`{opened}(...)` inside a loop opens a fresh browser or context per pass; "
+                              "open one before the loop and reuse it (tests/e2e/_paced_browser.py)"))
+        self.generic_visit(node)
+
+
+def browser_loop_hits(tree: ast.Module, rules: frozenset[str]) -> list[tuple[ast.AST, str, str]]:
+    """`(node, rule, message)` for every browser or context opened per pass of a loop, when the rule is on."""
+    walker = _BrowserLoops()
+    if BROWSER_LOOP_RULE in rules:
+        walker.visit(tree)
+    return walker.hits
+
+
+#: The vendored lock-out module's name, wherever the app copied it.
+LOCKOUT_MODULE = "login_lockout"
+
+
+def login_lockout_hits(
+    routes: list[tuple[ast.expr, ast.FunctionDef | ast.AsyncFunctionDef]], imports_lockout: bool,
+) -> list[tuple[ast.AST, str, str]]:
+    """A login route with no lock-out: the module never imports it, or the handler never checks it."""
+    found: list[tuple[ast.AST, str, str]] = []
+    for decorator, handler in routes:
+        if not imports_lockout:
+            message = f"login route `{handler.name}` in a module that does not import {LOCKOUT_MODULE}"
+        elif not _calls_retry_after(handler):
+            message = f"login route `{handler.name}` never calls retry_after() before the password check"
+        else:
+            continue
+        found.append((decorator, "login-lockout", message))
+    return found
+
+
 def _writes_to_a_file(call: ast.Call) -> bool:
     """`print(x, file=fh)` writes data, not a log line; `file=sys.stdout/stderr` is still console output."""
     for kw in call.keywords:
@@ -172,7 +270,13 @@ def _web_comment_line(text: str) -> bool:
     return text.endswith(("-->", "*/")) and "<!--" not in text and "/*" not in text
 
 
-def web_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, str]]:
+def web_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, str, str]]:
+    """(line, rule, message) of every web-rule hit in one HTML or JS file."""
+    return sorted([*((n, "password-input-vendored", m) for n, m in password_findings(source, rules)),
+                   *((n, NAV_HEAD_RULE, m) for n, m in nav_head_findings(source, rules))])
+
+
+def password_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, str]]:
     """(line, message) of every password input in one HTML or JS file, read line by line."""
     if "password-input-vendored" not in rules:
         return []
@@ -180,15 +284,63 @@ def web_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, 
     lines = text.splitlines()
     hits = []
     for number, line in enumerate(lines, start=1):
-        if not _PASSWORD_INPUT.search(line):
-            continue
-        above = number - 1
-        while above > 0 and _web_comment_line(lines[above - 1]):
-            above -= 1
-        # A web marker sits in `<!-- ... -->` or `/* ... */`: the closing punctuation is not a reason.
-        if not _exempt("password-input-vendored", lines[above:number], " :#/*-<>!\t"):
+        if _PASSWORD_INPUT.search(line) and not _web_marked("password-input-vendored", lines, number):
             hits.append((number, f"password input outside the vendored sign-in component ({SIGN_IN_DIR}/)"))
     return hits
+
+
+NAV_HEAD_RULE = "nav-standalone-head"
+#: A page that links the vendored nav's stylesheet: only such a page owes the nav its page head.
+_NAV_STYLESHEET = re.compile(r"""<link\b[^>]*\bhref\s*=\s*["'][^"']*nav-tabs\.css""", re.IGNORECASE)
+_HEAD_META = re.compile(
+    r"""<meta\b[^>]*\bname\s*=\s*["'](viewport|apple-mobile-web-app-status-bar-style)["'][^>]*>""", re.IGNORECASE
+)
+_META_CONTENT = re.compile(r"""\bcontent\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+
+
+def _web_marked(rule: str, lines: list[str], number: int) -> bool:
+    """A `<rule>-exempt: <reason>` marker on the line or in the comment block right above it.
+
+    A web marker sits in `<!-- ... -->` or `/* ... */`: the closing punctuation is not a reason.
+    """
+    above = number - 1
+    while above > 0 and _web_comment_line(lines[above - 1]):
+        above -= 1
+    return _exempt(rule, lines[above:number], " :#/*-<>!\t")
+
+
+def nav_head_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, str]]:
+    """(line, message) of every page-head miss in a page that links the vendored nav's stylesheet.
+
+    The nav's pill offset and top glass are written for `viewport-fit=auto` plus the
+    `black-translucent` status bar; under `viewport-fit=cover` the installed iPhone app's web view
+    runs under the home indicator and the pill lands on the screen's bottom edge.
+    """
+    if NAV_HEAD_RULE not in rules:
+        return []
+    text = source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+    link = _NAV_STYLESHEET.search(text)
+    if not link:
+        return []
+    lines = text.splitlines()
+    link_line = text.count("\n", 0, link.start()) + 1
+    found: list[tuple[int, str]] = []
+    seen = {"viewport": False, "apple-mobile-web-app-status-bar-style": False}
+    for meta in _HEAD_META.finditer(text):
+        name = meta.group(1).lower()
+        seen[name] = True
+        content_match = _META_CONTENT.search(meta.group(0))
+        content = (content_match.group(1) if content_match else "").replace(" ", "").lower()
+        number = text.count("\n", 0, meta.start()) + 1
+        if name == "viewport" and "viewport-fit=auto" not in content.split(","):
+            found.append((number, "the vendored nav needs `viewport-fit=auto` in the viewport meta"))
+        elif name != "viewport" and content != "black-translucent":
+            found.append((number, "the vendored nav needs the `black-translucent` status-bar meta"))
+    if not seen["viewport"]:
+        found.append((link_line, "page links the vendored nav but has no viewport meta (`viewport-fit=auto`)"))
+    if not seen["apple-mobile-web-app-status-bar-style"]:
+        found.append((link_line, "page links the vendored nav but has no `black-translucent` status-bar meta"))
+    return sorted(hit for hit in found if not _web_marked(NAV_HEAD_RULE, lines, hit[0]))
 
 
 def text_findings(source: bytes | str, rules: frozenset[str]) -> list[tuple[int, str]]:

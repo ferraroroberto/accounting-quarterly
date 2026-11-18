@@ -141,7 +141,7 @@ extra_history_patterns = [
 [conventions_ratchet]
 enabled  = true
 baseline = ".conventions-ratchet-baseline.json"
-rules    = ["no-window", "logging-not-print", "no-drive-path", "subprocess-timeout", "state-literal", "state-set-repeat", "state-write"]
+rules    = ["no-window", "logging-not-print", "no-drive-path", "subprocess-timeout", "browser-per-iteration", "state-literal", "state-set-repeat", "state-write"]
 
 # Outbound HTTP goes through the pooled session, not a bare requests call.
 [[conventions_ratchet.must_use]]

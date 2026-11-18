@@ -62,8 +62,9 @@ TYPES: dict[str, frozenset[str] | None] = {
     "patch": frozenset({".patch"}),
     "any": None,
 }
-#: A file with this name is allowed in every typed folder: a package's own readme.
-ANY_FOLDER_NAMES = ("README.md",)
+#: A file with this name is allowed in every typed folder: a package's own readme, and the UX surface map, a
+#: structured document that lives in `docs/` beside the page generated from it (docs/ux-surface-map.md).
+ANY_FOLDER_NAMES = ("README.md", "ux-surfaces.yaml")
 #: Folder types every shape has; a shape's own entries add folders or override one. The longest folder wins.
 #: `tests/e2e/shots` is the vendored `shot_baseline` default, where the screenshot baselines live.
 COMMON_FOLDER_TYPES = (

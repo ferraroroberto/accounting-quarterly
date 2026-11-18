@@ -154,7 +154,8 @@ PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "R-07": [re.compile(r"\bthink step[- ]by[- ]step\b|\bstep[- ]by[- ]step (?:reasoning|thinking)\b"
                         r"|\breason step[- ]by[- ]step\b", re.I),
              re.compile(r"^\s*\d+[.)]\s+(?:think|reason|reflect)\b", re.I)],
-    "R-08": [re.compile(r"\b(?:do not|don't|never)\s+(?:think|reason)\b(?!\s+(?:about|of|that)\b)", re.I)],
+    "R-08": [re.compile(r"\b(?:do not|don't|never)\s+(?:think|reason)\b(?!\s+(?:about|of|that)\b)"
+                        r"|\bwithout deliberating\b|\banswer directly without\b", re.I)],
     "R-09": [re.compile(r"\bonly report (?:high|critical)[- ]severity\b|\bbe conservative\b"
                         r"|\b(?:do not|don't) nitpick\b", re.I)],
     "R-10": [re.compile(r"\bprefill(?:ed|s|ing)?\b|\bbudget_tokens\b", re.I)],

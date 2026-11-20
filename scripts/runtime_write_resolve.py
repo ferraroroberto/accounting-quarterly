@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import PurePosixPath
+from typing import Optional, Union
 
 #: Calls whose result is a location outside the checkout: temp dirs and the home folder.
 BUILTIN_SAFE_CALLS = frozenset({
@@ -53,7 +54,7 @@ _MAX_DEPTH = 12
 #: A path the resolver knows: a tuple of parts is repo-relative; OUTSIDE is off the checkout; None is unknown.
 #: A `?` part stands for a name the source does not spell: it stays under its parent but cannot be popped.
 OUTSIDE = "outside"
-Resolved = tuple[str, ...] | str | None
+Resolved = Optional[Union[tuple[str, ...], str]]  # noqa: UP007, UP045 -- Python 3.9 evaluates this alias at import, where `X | Y` raises
 
 
 def _dotted(node: ast.expr) -> str:

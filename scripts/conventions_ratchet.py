@@ -111,7 +111,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
-from typing import Any
+from typing import Any, Union
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -134,8 +134,8 @@ def _load_sibling(name: str) -> ModuleType:
 
 # The pure readers (syntax-tree predicates, the web and text line rules) live in the sibling.
 _readers = _load_sibling("conventions_readers")
-_Findings = Callable[[bytes | str, frozenset[str]], list[tuple[int, str]]]
-_RuleFindings = Callable[[bytes | str, frozenset[str]], list[tuple[int, str, str]]]
+_Findings = Callable[[Union[bytes, str], frozenset[str]], list[tuple[int, str]]]  # noqa: UP007, UP045 -- Python 3.9 evaluates this alias at import, where `X | Y` raises
+_RuleFindings = Callable[[Union[bytes, str], frozenset[str]], list[tuple[int, str, str]]]  # noqa: UP007, UP045 -- Python 3.9 evaluates this alias at import, where `X | Y` raises
 SIGN_IN_DIR: str = _readers.SIGN_IN_DIR
 _docstring_ids: Callable[[ast.Module], set[int]] = _readers._docstring_ids
 _is_main_guard: Callable[[ast.If], bool] = _readers._is_main_guard

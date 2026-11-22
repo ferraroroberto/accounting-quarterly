@@ -58,15 +58,16 @@ def _tree(tmp_path: Path, name: str, files: dict[str, str], extra_config: str = 
     (tmp_path / "scripts").mkdir()
     script = f"scripts/{name}_ratchet.py"
     (tmp_path / script).write_bytes((REPO_ROOT / script).read_bytes())
-    for suffix in ("readers", "state"):  # the conventions ratchet loads these siblings
+    for suffix in ("readers", "state", "scan"):  # the conventions and request-budget ratchets load these siblings
         sibling = REPO_ROOT / f"scripts/{name}_{suffix}.py"
         if sibling.is_file():
             (tmp_path / "scripts" / sibling.name).write_bytes(sibling.read_bytes())
     config = f"[{name}_ratchet]\nenabled = true\n" + extra_config
     (tmp_path / ".fleet.toml").write_text(config, encoding="utf-8")
-    baseline = f".{name}-ratchet-baseline.json"
+    baseline = f".{name.replace('_', '-')}-ratchet-baseline.json"
     (tmp_path / baseline).write_text('{"version": 1, "entries": []}\n', encoding="utf-8")
     for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text, encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, creationflags=NO_WINDOW)
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, creationflags=NO_WINDOW)
@@ -137,5 +138,38 @@ def test_the_compliant_spawn_passes_conventions(tmp_path):
 def test_an_unparseable_file_is_not_confirmed_for_conventions(tmp_path):
     tree = _tree(tmp_path, "conventions", {"broken.py": "x = (\n"}, _CONVENTION_RULES)
     result = _run(tree, "conventions")
+    assert result.returncode == 3
+    assert "NOT CONFIRMED" in result.stdout
+
+
+def test_the_gate_runs_the_request_budget_ratchet_on_the_whole_tree():
+    stages = [line for line in _gate_stage_lines() if "request_budget_ratchet.py" in line]
+    assert len(stages) == 1
+    assert '"request budget ratchet"' in stages[0]
+    assert re.search(r'&\s+\$py\s+"scripts/request_budget_ratchet.py"\s*}', stages[0])
+
+
+def test_the_request_budget_scripts_are_vendored_and_enabled():
+    config = tomllib.loads((REPO_ROOT / ".fleet.toml").read_text(encoding="utf-8"))
+    for key in ("request_budget_ratchet", "request_budget_scan"):
+        entry = config["vendored"][key]
+        assert entry["dest"] == f"scripts/{key}.py"
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["sha"])
+        assert (REPO_ROOT / entry["dest"]).is_file()
+    assert config["request_budget_ratchet"]["enabled"] is True
+
+
+def test_a_seeded_fast_loop_fails_request_budget_by_rule(tmp_path):
+    seeded = "import time\n\n\ndef watch():\n    while True:\n        time.sleep(1)\n"
+    tree = _tree(tmp_path, "request_budget", {"src/seeded.py": seeded})
+    result = _run(tree, "request_budget")
+    assert result.returncode == 1
+    assert "src/seeded.py" in result.stdout
+    assert "unwatched-loop" in result.stdout
+
+
+def test_an_unparseable_file_is_not_confirmed_for_request_budget(tmp_path):
+    tree = _tree(tmp_path, "request_budget", {"src/broken.py": "x = (\n"})
+    result = _run(tree, "request_budget")
     assert result.returncode == 3
     assert "NOT CONFIRMED" in result.stdout

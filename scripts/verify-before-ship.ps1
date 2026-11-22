@@ -47,6 +47,12 @@
                          the repo refers to, beyond .dead-code-ratchet-baseline.json,
                          fails. Whole tree, never routed; exit 3 (not confirmed)
                          fails, never a pass.
+      9b. request budget ratchet - a fixed-rate browser poll that reaches the server, a
+                         poll under the 2 s floor, an undeclared fast server loop, a
+                         submit to the shared default pool, or a web app without the
+                         request-timing middleware, beyond
+                         .request-budget-ratchet-baseline.json, fails. Whole tree,
+                         never routed; exit 3 (not confirmed) fails, never a pass.
       10. runtime write ratchet - a Python write target resolving under a code
                          folder, beyond .runtime-write-ratchet-baseline.json, fails;
                          a new target it cannot resolve is exit 3 (not confirmed),
@@ -140,6 +146,8 @@ Invoke-Stage "instruction ratchet" { & $py "scripts/instruction_ratchet.py" }
 Invoke-Stage "doc-refs ratchet" { & $py "scripts/doc_refs_ratchet.py" }
 # Not path-routed: deleting the last caller in one file strands a definition in another.
 Invoke-Stage "dead-code ratchet" { & $py "scripts/dead_code_ratchet.py" }
+# Not path-routed: a loop or poll added in one file counts against the whole tree.
+Invoke-Stage "request budget ratchet" { & $py "scripts/request_budget_ratchet.py" }
 # Runtime write probe, first half: what already sits untracked or ignored under
 # the code folders, so the probe after the tests names only what they wrote.
 $runtimeSnapshot = Join-Path ([IO.Path]::GetTempPath()) "runtime-write-snapshot-$PID.json"

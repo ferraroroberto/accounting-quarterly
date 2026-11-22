@@ -80,6 +80,8 @@ The doc-refs ratchet fails when `README.md`, `CLAUDE.md` or a file under `docs/`
 
 The dead-code ratchet fails when a new Python function, class or method appears that nothing in the repo refers to, beyond `.dead-code-ratchet-baseline.json`. Delete it or call it rather than baselining it; exit 3 also fails as not confirmed.
 
+The request-budget ratchet fails when a fixed-rate browser poll that reaches the server, a poll under 2 s, an undeclared fast server loop, a directory walk in a request handler, a submit to the shared default pool or a web app without the request-timing middleware is new beyond `.request-budget-ratchet-baseline.json`. This Streamlit app serves no JavaScript of its own, so there is no poll helper or middleware to vendor and `scan-per-request` prints OFF (no `handler_dirs`). A loop that must run while nobody is viewing is declared under `[[request_budget.loops]]` in `.fleet.toml` with its reason; exit 3 also fails as not confirmed.
+
 ---
 
 ## Data Flow

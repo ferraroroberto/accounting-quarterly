@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 RULES = ("fixed-rate-poll", "poll-floor", "unwatched-loop", "scan-per-request", "default-pool",
@@ -112,13 +113,27 @@ _REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", 
 def mask_js(text: str, path: str) -> str:
     """`text` with every string, comment, template and regex literal blanked; offsets and newlines kept."""
     out = list(text)
-    i, n = 0, len(text)
-    last = ""  # the last significant code token's final character (or a keyword)
 
     def blank(start: int, end: int) -> None:
         for k in range(start, end):
             if out[k] != "\n":
                 out[k] = " "
+
+    _read_code(text, 0, path, blank, in_substitution=False)
+    return "".join(out)
+
+
+def _read_code(text: str, start: int, path: str, blank: Callable[[int, int], None] | None,
+               in_substitution: bool) -> int:
+    """Read JS from `start`, blanking literals through `blank`; returns the offset where it stopped.
+
+    At the top level that is the end of the text. Inside a template's `${ ... }` it is the offset of the
+    `}` that closes the substitution, so a backtick in there opens a nested template instead of closing the
+    outer one. `blank` is None for a substitution: the enclosing template is blanked whole by its caller.
+    """
+    i, n = start, len(text)
+    last = ""  # the last significant code token's final character (or a keyword)
+    depth = 0  # `{` opened inside a substitution and not yet closed
 
     while i < n:
         ch = text[i]
@@ -127,21 +142,25 @@ def mask_js(text: str, path: str) -> str:
         elif text.startswith("//", i):
             end = text.find("\n", i)
             end = n if end < 0 else end
-            blank(i, end)
+            if blank:
+                blank(i, end)
             i = end
         elif text.startswith("/*", i):
             end = text.find("*/", i + 2)
             if end < 0:
                 raise NotConfirmed(f"{path}: a /* comment does not close")
-            blank(i, end + 2)
+            if blank:
+                blank(i, end + 2)
             i = end + 2
         elif ch in "'\"`":
             end = _string_end(text, i, path)
-            blank(i + 1, end - 1)
+            if blank:
+                blank(i + 1, end - 1)
             i, last = end, "x"
         elif ch == "/" and (last == "" or last in _REGEX_AFTER or last in _REGEX_KEYWORDS):
             end = _regex_end(text, i, path)
-            blank(i + 1, end - 1)
+            if blank:
+                blank(i + 1, end - 1)
             i, last = end, "x"
         elif ch.isalnum() or ch in "_$":
             m = re.match(r"[\w$]+", text[i:])
@@ -149,10 +168,17 @@ def mask_js(text: str, path: str) -> str:
             word = m.group(0)
             last = word if word in _REGEX_KEYWORDS else "x"
             i += len(word)
+        elif in_substitution and ch == "}" and depth == 0:
+            return i
         else:
+            if in_substitution:
+                depth += (ch == "{") - (ch == "}")
             last = ch
             i += 1
-    return "".join(out)
+    if in_substitution:
+        line = text.count("\n", 0, start) + 1
+        raise NotConfirmed(f"{path}:{line}: a ${{ substitution does not close")
+    return i
 
 
 def _string_end(text: str, start: int, path: str) -> int:
@@ -164,6 +190,9 @@ def _string_end(text: str, start: int, path: str) -> int:
             continue
         if ch == quote:
             return i + 1
+        if quote == "`" and text.startswith("${", i):
+            i = _read_code(text, i + 2, path, None, in_substitution=True) + 1
+            continue
         if ch == "\n" and quote != "`":
             break
         i += 1

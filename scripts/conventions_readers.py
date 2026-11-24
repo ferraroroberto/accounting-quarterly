@@ -205,6 +205,245 @@ def browser_loop_hits(tree: ast.Module, rules: frozenset[str]) -> list[tuple[ast
     return walker.hits
 
 
+HOST_IDENTITY_RULE = "host-identity"
+#: Calls that answer with the account running the process; no environment override reaches the last two.
+_ACCOUNT_CALLS = frozenset({"getpass.getuser", "os.getlogin"})
+#: The environment variables that name the account or its home folder, on Windows and POSIX.
+HOST_IDENTITY_VARS = frozenset({"USERNAME", "USER", "LOGNAME", "LNAME", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"})
+_HOST_MODULES = frozenset({"getpass", "os", "os.path", "pwd", "pathlib"})
+_HOST_FIX = "read it through the synthetic_host fixture (tests/host/_synthetic_host.py)"
+
+
+def _str_arg(call: ast.Call) -> str | None:
+    first = call.args[0] if call.args else None
+    return first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else None
+
+
+class _HostIdentity(ast.NodeVisitor):
+    """Reads of the real account name or home folder: calls, `~` expansions and environment lookups."""
+
+    def __init__(self) -> None:
+        self.aliases: dict[str, str] = {}  # local name -> `module` or `module.attr`
+        self.hits: list[tuple[ast.AST, str, str]] = []
+
+    def _resolve(self, node: ast.expr) -> str:
+        head, _, rest = _dotted(node).partition(".")
+        target = self.aliases.get(head)
+        if target is None:
+            return ""
+        return f"{target}.{rest}" if rest else target
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.asname and alias.name in _HOST_MODULES:
+                self.aliases[alias.asname] = alias.name
+            elif not alias.asname and alias.name.split(".")[0] in _HOST_MODULES:
+                self.aliases[alias.name.split(".")[0]] = alias.name.split(".")[0]
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.module in _HOST_MODULES and not node.level:
+            for alias in node.names:
+                self.aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+
+    def _hit(self, node: ast.AST, what: str) -> None:
+        self.hits.append((node, HOST_IDENTITY_RULE, f"{what} reads the real host's identity; {_HOST_FIX}"))
+
+    def _env_name(self, node: ast.expr) -> str | None:
+        name = node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+        return name if name is not None and name.upper() in HOST_IDENTITY_VARS else None
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        if isinstance(node.ctx, ast.Load) and self._resolve(node.value) == "os.environ":
+            name = self._env_name(node.slice)
+            if name:
+                self._hit(node, f"`os.environ[{name!r}]`")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = self._resolve(node.func)
+        func = node.func
+        env = node.args[0] if node.args else None
+        if name in _ACCOUNT_CALLS or name.startswith("pwd.getpw"):
+            self._hit(node, f"`{name}()`")
+        elif name.startswith("pathlib.") and name.endswith(".home"):
+            self._hit(node, f"`{name.split('.', 1)[1]}()`")
+        elif name == "os.path.expanduser" and (_str_arg(node) or "").startswith("~"):
+            self._hit(node, f"`os.path.expanduser({_str_arg(node)!r})`")
+        elif (isinstance(func, ast.Attribute) and func.attr == "expanduser" and isinstance(func.value, ast.Call)
+              and (_str_arg(func.value) or "").startswith("~")):
+            self._hit(node, f"`.expanduser()` on {_str_arg(func.value)!r}")
+        elif env is not None and (name == "os.getenv" or name == "os.environ.get") and self._env_name(env):
+            self._hit(node, f"`{name}({self._env_name(env)!r})`")
+        self.generic_visit(node)
+
+
+def host_identity_hits(tree: ast.Module, rules: frozenset[str]) -> list[tuple[ast.AST, str, str]]:
+    """`(node, rule, message)` for every direct read of the account name or home folder, when the rule is on.
+
+    Writes are not reads: `monkeypatch.setenv("HOME", ...)` and `os.environ["HOME"] = ...` are how a test
+    fakes the host. A value the code cannot see (a variable passed to `expanduser`, a copied `env` dict)
+    is missed, never invented.
+    """
+    walker = _HostIdentity()
+    if HOST_IDENTITY_RULE in rules:
+        walker.visit(tree)
+    return walker.hits
+
+
+PATH_SEP_RULE = "path-sep"
+#: Calls whose result is text a regex parsed out of another format: a `.bat` writes `scripts\run.py`. A
+#: whole-file read is not one, because the files read that way are pointers the host writes (`gitdir:`).
+_TEXT_SOURCES = frozenset({"group", "groups", "groupdict", "findall", "expand"})
+#: `str` methods whose result keeps the receiver's separators.
+_STR_KEEPS = frozenset({"strip", "lstrip", "rstrip", "split", "rsplit", "splitlines", "partition", "rpartition",
+                        "removeprefix", "removesuffix", "lower", "upper", "casefold", "replace", "format"})
+#: Path constructors that read a backslash as a file-name character on POSIX.
+_PATH_TYPES = frozenset({"Path", "PurePath", "PurePosixPath", "PosixPath"})
+_PATH_SEP_FIX = 'normalise it first (`.replace("\\\\", "/")` or `PureWindowsPath(...)`): POSIX keeps the backslash'
+
+
+def _separator_fixed(call: ast.Call) -> bool:
+    """`s.replace("\\\\", "/")` or `s.split("\\\\")`: the backslash cannot reach the path."""
+    func = call.func
+    if not isinstance(func, ast.Attribute) or not call.args:
+        return False
+    first = call.args[0]
+    backslash = isinstance(first, ast.Constant) and isinstance(first.value, str) and "\\" in first.value
+    if func.attr in ("split", "rsplit"):
+        return backslash
+    second = call.args[1] if len(call.args) > 1 else None
+    return (func.attr == "replace" and backslash
+            and isinstance(second, ast.Constant) and second.value == "/")
+
+
+class _PathSep(ast.NodeVisitor):
+    """Path joins whose right side is text a regex parsed in the same function, never normalised.
+
+    Names are followed in statement order: an assignment from tainted text taints the name, one from a
+    clean value clears it. A nested function starts clean; a value the walker cannot follow is clean.
+    """
+
+    def __init__(self) -> None:
+        self.tainted: set[str] = set()
+        self.hits: list[tuple[ast.AST, str, str]] = []
+
+    def _text(self, node: ast.AST | None) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in self.tainted
+        if isinstance(node, (ast.Subscript, ast.Starred, ast.NamedExpr)):
+            return self._text(node.value)
+        if isinstance(node, ast.JoinedStr):
+            return any(self._text(v.value) for v in node.values if isinstance(v, ast.FormattedValue))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+            return self._text(node.left) or self._text(node.right)
+        if isinstance(node, ast.IfExp):
+            return self._text(node.body) or self._text(node.orelse)
+        if isinstance(node, ast.BoolOp):
+            return any(self._text(v) for v in node.values)
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id == "str" and any(self._text(a) for a in node.args)
+        if not isinstance(func, ast.Attribute) or _separator_fixed(node):
+            return False
+        if func.attr in _TEXT_SOURCES:
+            return True
+        if func.attr in ("sub", "subn", "join"):  # a regex `.sub(repl, text)`, `"".join(parts)`
+            return any(self._text(a) for a in node.args)
+        return func.attr in _STR_KEEPS and self._text(func.value)
+
+    def _bind(self, target: ast.AST, text: bool) -> None:
+        if isinstance(target, ast.Name):
+            (self.tainted.add if text else self.tainted.discard)(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                self._bind(elt.value if isinstance(elt, ast.Starred) else elt, text)
+
+    def _hit(self, node: ast.AST, spelled: str) -> None:
+        self.hits.append((node, PATH_SEP_RULE, f"{spelled} joins text a regex parsed onto a path; "
+                                               f"{_PATH_SEP_FIX}"))
+
+    def _def(self, node: ast.AST) -> None:
+        outer, self.tainted = self.tainted, set()
+        self.generic_visit(node)
+        self.tainted = outer
+
+    visit_FunctionDef = visit_AsyncFunctionDef = visit_Lambda = _def
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        for target in node.targets:
+            self._bind(target, self._text(node.value))
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+            self._bind(node.target, self._text(node.value))
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self._bind(node.target, self._text(node.value))
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.visit(node.value)
+        if isinstance(node.op, ast.Div) and self._text(node.value):
+            self._hit(node, "`/=`")
+        elif isinstance(node.op, ast.Add) and self._text(node.value):
+            self._bind(node.target, True)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.visit(node.iter)
+        self._bind(node.target, self._text(node.iter))
+        for child in [*node.body, *node.orelse]:
+            self.visit(child)
+
+    visit_AsyncFor = visit_For  # type: ignore[assignment]
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        self.visit(node.iter)
+        self._bind(node.target, self._text(node.iter))
+        for cond in node.ifs:
+            self.visit(cond)
+
+    def _comprehension(self, node: ast.AST) -> None:
+        for gen in getattr(node, "generators", []):
+            self.visit(gen)
+        for field in ("key", "value", "elt"):
+            if getattr(node, field, None) is not None:
+                self.visit(getattr(node, field))
+
+    visit_ListComp = visit_SetComp = visit_DictComp = visit_GeneratorExp = _comprehension
+
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        if isinstance(node.op, ast.Div) and self._text(node.right):
+            self._hit(node, "`<path> / <text>`")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        name = _dotted(func)
+        last = func.attr if isinstance(func, ast.Attribute) else name
+        joins = (last in _PATH_TYPES or last == "joinpath"
+                 or name in ("os.path.join", "path.join"))  # `posixpath.join` joins URL paths on purpose
+        if joins and any(self._text(a) for a in node.args):
+            self._hit(node, f"`{name or last}(...)`")
+        self.generic_visit(node)
+
+
+def path_sep_hits(tree: ast.Module, rules: frozenset[str]) -> list[tuple[ast.AST, str, str]]:
+    """`(node, rule, message)` for every path joined from un-normalised regex-parsed text, when the rule is on."""
+    walker = _PathSep()
+    if PATH_SEP_RULE in rules:
+        walker.visit(tree)
+    return walker.hits
+
+
+def tree_hits(tree: ast.Module, rules: frozenset[str]) -> list[tuple[ast.AST, str, str]]:
+    """The hits of every rule here that reads a whole module's syntax tree."""
+    return [*browser_loop_hits(tree, rules), *host_identity_hits(tree, rules), *path_sep_hits(tree, rules)]
+
+
 #: The vendored lock-out module's name, wherever the app copied it.
 LOCKOUT_MODULE = "login_lockout"
 
@@ -393,3 +632,21 @@ def matches_any(text: str, globs: tuple[str, ...]) -> bool:
 def _under(path: str, prefix: str) -> bool:
     prefix = prefix.replace("\\", "/").strip("/")
     return path == prefix or path.startswith(prefix + "/")
+
+
+def parse_exclude_by_rule(raw: object, enabled: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`exclude_by_rule = { rule = [globs] }` -> (rule, globs) pairs; a typo'd or unlisted rule is a `ValueError`."""
+    where = "[conventions_ratchet] exclude_by_rule"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where} must be a table of rule = [globs]")
+    for rule, globs in raw.items():
+        if rule not in enabled:
+            raise ValueError(f"{where}: {rule!r} is not a rule listed in rules ({', '.join(enabled)})")
+        if not isinstance(globs, list) or not all(isinstance(g, str) and g for g in globs):
+            raise ValueError(f"{where}: {rule} must be a list of non-empty strings")
+    return tuple((rule, tuple(g.replace("\\", "/") for g in globs)) for rule, globs in raw.items())
+
+
+def rules_skipped(path: str, by_rule: tuple[tuple[str, tuple[str, ...]], ...]) -> set[str]:
+    """The rules whose `exclude_by_rule` globs match `path`."""
+    return {rule for rule, globs in by_rule if matches_any(path, globs)}

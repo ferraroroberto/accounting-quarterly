@@ -31,7 +31,7 @@ Opt-in, per adopter, in its own `.fleet.toml`:
 
     [dead_code_ratchet]
     enabled          = true
-    baseline         = ".dead-code-ratchet-baseline.json"  # default
+    baseline         = ".ratchets/dead-code.json"  # default
     include          = ["src/", "app/"]                    # path prefixes; default: the whole repo
     exclude          = ["src/generated/**"]                # globs; never reported, still read for references
     min_confidence   = 100                                 # default; 60 also reports possible dynamic use
@@ -52,6 +52,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -62,11 +64,31 @@ import warnings
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+    try:
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print(f"dead code ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
+              "(manifest keys dead_code_ratchet and ratchet_baseline)")
+        sys.exit(3)
+
+
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".dead-code-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/dead-code.json"
 DEFAULT_MIN_CONFIDENCE = 100
 CONFIDENCE_DYNAMIC = 60
 #: Always excluded, whatever the adopter's own `exclude` adds.
@@ -201,7 +223,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[dead_code_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[dead_code_ratchet] baseline must be a non-empty string")
     floor = table.get("min_confidence", DEFAULT_MIN_CONFIDENCE)
@@ -566,6 +588,7 @@ def dead_tree(root: Path, cfg: Config, vendored: tuple[str, ...],
             scans[path] = scan_source(source, path)
         elif (
             path != cfg.baseline
+            and not path.startswith(".ratchets/")
             and not path.endswith("-ratchet-baseline.json")
             and PurePosixPath(path).suffix.lower() in MENTION_SUFFIXES
         ):
@@ -663,7 +686,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("dead code ratchet: not enabled (no [dead_code_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "dead code ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
 
     baseline: dict[str, Counter[str]] = {}
     if init:

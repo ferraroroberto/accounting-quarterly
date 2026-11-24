@@ -36,7 +36,7 @@ Opt-in, per adopter, in its own `.fleet.toml`:
 
     [request_budget_ratchet]
     enabled        = true
-    baseline       = ".request-budget-ratchet-baseline.json"           # default
+    baseline       = ".ratchets/request-budget.json"           # default
     rules          = [...]                                             # default: all
     browser_paths  = ["app/webapp/static/**", "app/webapp/templates/**"]  # default
     server_paths   = ["src/**", "app/**"]                              # default
@@ -91,12 +91,13 @@ def _load_sibling(name: str) -> ModuleType:
         spec.loader.exec_module(module)
         return module
     except (ImportError, OSError, SyntaxError):
-        print(f"request budget ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
-              "(manifest keys request_budget_ratchet and request_budget_scan)")
+        print(f"request budget ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all three "
+              "(manifest keys request_budget_ratchet, request_budget_scan and ratchet_baseline)")
         sys.exit(3)
 
 
 scan = _load_sibling("request_budget_scan")
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 ConfigError: type[RuntimeError] = scan.ConfigError
 NotConfirmed: type[RuntimeError] = scan.NotConfirmed
 RULES: tuple[str, ...] = scan.RULES
@@ -104,7 +105,7 @@ RULES: tuple[str, ...] = scan.RULES
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".request-budget-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/request-budget.json"
 DEFAULT_BROWSER_PATHS = ("app/webapp/static/**", "app/webapp/templates/**")
 DEFAULT_SERVER_PATHS = ("src/**", "app/**")
 #: Always excluded, whatever the adopter's own `exclude` adds; a minified file is third-party output.
@@ -218,7 +219,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError(f"[{section}] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError(f"[{section}] baseline must be a non-empty string")
     rules = _str_list(table, section, "rules", RULES)
@@ -550,7 +551,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("request budget ratchet: not enabled (no [request_budget_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "request budget ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
     baseline = _load_baseline(baseline_path, cfg, init)
     if isinstance(baseline, int):
         return baseline

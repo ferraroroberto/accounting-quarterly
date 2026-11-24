@@ -45,7 +45,7 @@ repo that has not opted in:
 
     [docs_ratchet]
     enabled         = true
-    baseline        = ".docs-ratchet-baseline.json"   # default
+    baseline        = ".ratchets/docs.json"   # default
     include         = ["README.md", "docs/"]           # path prefixes; the default
     exclude         = ["docs/reports/**"]              # globs, e.g. generated per-run reports
     readme_max_bytes = 40960                           # default: 40 KiB
@@ -76,6 +76,8 @@ Vendor-verbatim: copied byte-for-byte into adopters (manifest key
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -84,11 +86,31 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+    try:
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print(f"docs ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
+              "(manifest keys docs_ratchet and ratchet_baseline)")
+        sys.exit(3)
+
+
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".docs-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/docs.json"
 DEFAULT_INCLUDE = ("README.md", "docs/")
 DEFAULT_README_MAX_BYTES = 40960
 README = "README.md"
@@ -213,7 +235,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[docs_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[docs_ratchet] baseline must be a non-empty string")
     budget = table.get("readme_max_bytes", DEFAULT_README_MAX_BYTES)
@@ -613,7 +635,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("docs ratchet: not enabled (no [docs_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "docs ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
 
     baseline: dict[str, Entry] = {}
     if init:

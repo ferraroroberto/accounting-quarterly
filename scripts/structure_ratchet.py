@@ -49,17 +49,18 @@ def _load_sibling(name: str) -> ModuleType:
         spec.loader.exec_module(module)
         return module
     except (ImportError, OSError, SyntaxError):
-        print(f"structure ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all three (manifest keys structure_ratchet, structure_layout and structure_band)")
+        print(f"structure ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all four (manifest keys structure_ratchet, structure_layout, structure_band and ratchet_baseline)")
         sys.exit(3)
 
 
 layout = _load_sibling("structure_layout")
 near_band = _load_sibling("structure_band")
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".structure-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/structure.json"
 DEFAULT_MAX_FILE_LINES = 1000
 DEFAULT_MAX_FUNCTION_LINES = 100
 DEFAULT_MAX_DIR_MODULES = 40
@@ -194,7 +195,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[structure_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[structure_ratchet] baseline must be a non-empty string")
     exclude = table.get("exclude", [])
@@ -910,7 +911,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
               f"{', '.join(SHAPES)}")
         print("  (the layout cannot be held to a tree that does not exist, so it is neither a pass nor a skip)")
         return EXIT_NOT_CONFIRMED
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "structure ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
     loaded = _read_or_refuse(baseline_path, cfg, init)
     if isinstance(loaded, int):
         return loaded

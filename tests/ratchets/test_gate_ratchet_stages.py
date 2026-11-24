@@ -62,6 +62,8 @@ def _tree(tmp_path: Path, name: str, files: dict[str, str], extra_config: str = 
         sibling = REPO_ROOT / f"scripts/{name}_{suffix}.py"
         if sibling.is_file():
             (tmp_path / "scripts" / sibling.name).write_bytes(sibling.read_bytes())
+    shared = REPO_ROOT / "scripts" / "ratchet_baseline.py"  # every ratchet loads it to find its baseline
+    (tmp_path / "scripts" / shared.name).write_bytes(shared.read_bytes())
     config = f"[{name}_ratchet]\nenabled = true\n" + extra_config
     (tmp_path / ".fleet.toml").write_text(config, encoding="utf-8")
     baseline = f".{name.replace('_', '-')}-ratchet-baseline.json"

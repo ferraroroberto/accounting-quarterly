@@ -37,7 +37,7 @@ repo that has not opted in:
 
     [static_ratchet]
     enabled    = true
-    baseline   = ".static-ratchet-baseline.json"   # default
+    baseline   = ".ratchets/static.json"   # default
     min_lines  = 10                                  # default
     min_tokens = 100                                 # default
     exclude    = ["**/_vendored/**"]                 # added to the built-in set
@@ -76,6 +76,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.util
 import json
 import re
 import shutil
@@ -84,8 +86,29 @@ import sys
 import tempfile
 import tomllib
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import ModuleType
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+    try:
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print(f"static ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
+              "(manifest keys static_ratchet and ratchet_baseline)")
+        sys.exit(3)
+
+
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -94,7 +117,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 JSCPD_VERSION = "5.4.0"
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".static-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/static.json"
 DEFAULT_MIN_LINES = 10
 DEFAULT_MIN_TOKENS = 100
 #: Always excluded, whatever the adopter's own `exclude` adds.
@@ -223,7 +246,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[static_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[static_ratchet] baseline must be a non-empty string")
     ints: dict[str, int] = {}
@@ -421,29 +444,66 @@ def _tail(text: str) -> str:
     return " | ".join(lines[-3:]) if lines else "(no output)"
 
 
-def run_jscpd(root: Path, cfg: Config) -> list[Finding]:
+Runner = Callable[[list[str], Path, str], subprocess.CompletedProcess[str]]
+
+#: Exit codes that mean the process died instead of answering: a negative code
+#: (POSIX signal), a Windows NTSTATUS error (0xC0000000 and up, e.g. an access
+#: violation) or a shell-style 128+signal for SIGILL/SIGABRT/SIGBUS/SIGFPE/SIGSEGV.
+#: jscpd's own failures exit 1, which is deliberately not a crash.
+_SHELL_CRASH_CODES = frozenset(128 + sig for sig in (4, 6, 7, 8, 11))
+_NTSTATUS_ERROR_FLOOR = 0xC0000000
+
+
+def is_native_crash(returncode: int) -> bool:
+    """True when `returncode` says the process was killed, not that jscpd gave an answer."""
+    return returncode < 0 or returncode >= _NTSTATUS_ERROR_FLOOR or returncode in _SHELL_CRASH_CODES
+
+
+def _jscpd_attempt(
+    cmd: list[str], root: Path, runner: Runner,
+) -> tuple[subprocess.CompletedProcess[str], object | None]:
+    """One jscpd run in a fresh output folder -> (process, parsed report, None when absent)."""
+    with tempfile.TemporaryDirectory(prefix="static-ratchet-") as out_dir:
+        proc = runner([*cmd, "--output", out_dir], root, "jscpd")
+        report_path = Path(out_dir) / "jscpd-report.json"
+        if not report_path.is_file():
+            return proc, None
+        try:
+            return proc, json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise NotConfirmed(f"jscpd report unreadable: {exc}") from exc
+
+
+def run_jscpd(root: Path, cfg: Config, runner: Runner = _run) -> list[Finding]:
     npx = shutil.which("npx")
     if npx is None:
         raise NotConfirmed("npx not found -- Node is a prerequisite for the duplication check")
     excludes = BUILTIN_EXCLUDES + cfg.exclude
-    with tempfile.TemporaryDirectory(prefix="static-ratchet-") as out_dir:
-        proc = _run(
-            [
-                npx, "--yes", f"jscpd@{JSCPD_VERSION}", ".",
-                "--reporters", "json", "--output", out_dir, "--silent",
-                "--format", JSCPD_FORMATS,
-                "--min-lines", str(cfg.min_lines), "--min-tokens", str(cfg.min_tokens),
-                "--ignore", ",".join(excludes),
-            ],
-            root, "jscpd",
+    cmd = [
+        npx, "--yes", f"jscpd@{JSCPD_VERSION}", ".",
+        "--reporters", "json", "--silent",
+        "--format", JSCPD_FORMATS,
+        "--min-lines", str(cfg.min_lines), "--min-tokens", str(cfg.min_tokens),
+        "--ignore", ",".join(excludes),
+    ]
+    proc, report = _jscpd_attempt(cmd, root, runner)
+    if report is None and is_native_crash(proc.returncode):
+        # A native crash is intermittent and says nothing about the tree: retry once,
+        # keeping the first exit code and stderr tail so the cause survives either way.
+        first = proc.returncode
+        print(
+            f"static ratchet: jscpd crashed (exit {first}, no report): "
+            f"{_tail(proc.stderr or proc.stdout)} -- retrying once",
+            file=sys.stderr,
         )
-        report_path = Path(out_dir) / "jscpd-report.json"
-        if proc.returncode != 0 or not report_path.is_file():
-            raise NotConfirmed(f"jscpd exited {proc.returncode} without a report: {_tail(proc.stderr or proc.stdout)}")
-        try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise NotConfirmed(f"jscpd report unreadable: {exc}") from exc
+        proc, report = _jscpd_attempt(cmd, root, runner)
+        if report is None:
+            raise NotConfirmed(
+                f"jscpd crashed twice without a report (exit {first}, then {proc.returncode}): "
+                f"{_tail(proc.stderr or proc.stdout)}"
+            )
+    if report is None or proc.returncode != 0:
+        raise NotConfirmed(f"jscpd exited {proc.returncode} without a report: {_tail(proc.stderr or proc.stdout)}")
     return parse_jscpd(report, root, excludes)
 
 
@@ -570,7 +630,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("static ratchet: not enabled (no [static_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "static ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
     for name in cfg.off_checks():
         print(f"static ratchet: {name}: OFF ({name} = false in .fleet.toml) -- not checked, not clean")
 

@@ -29,7 +29,7 @@ Opt-in, per adopter, in its own `.fleet.toml`:
 
     [runtime_write_ratchet]
     enabled      = true
-    baseline     = ".runtime-write-ratchet-baseline.json"  # default
+    baseline     = ".ratchets/runtime-write.json"  # default
     code_folders = ["src", "app", "scripts", "hooks", "skills"]  # default
     exclude      = ["src/generated/**"]                     # globs; never scanned
     safe_calls   = ["my_runtime_dir"]                       # calls returning a path outside the tree
@@ -76,18 +76,19 @@ def _load_sibling(name: str) -> ModuleType:
         spec.loader.exec_module(module)
         return module
     except (ImportError, OSError, SyntaxError):
-        print(f"runtime write ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
-              "(manifest keys runtime_write_ratchet and runtime_write_resolve)")
+        print(f"runtime write ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor all three "
+              "(manifest keys runtime_write_ratchet, runtime_write_resolve and ratchet_baseline)")
         sys.exit(3)
 
 
 resolve = _load_sibling("runtime_write_resolve")
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
 SNAPSHOT_VERSION = 1
-DEFAULT_BASELINE = ".runtime-write-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/runtime-write.json"
 DEFAULT_CODE_FOLDERS = ("src", "app", "scripts", "hooks", "skills")
 #: Always excluded, whatever the adopter's own `exclude` adds.
 BUILTIN_EXCLUDES = ("**/node_modules/**", "**/.venv/**", "**/venv/**")
@@ -159,7 +160,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[runtime_write_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[runtime_write_ratchet] baseline must be a non-empty string")
     folders = _str_list(table, "code_folders", DEFAULT_CODE_FOLDERS)
@@ -431,7 +432,9 @@ def _load(root: Path, *, init: bool, update: bool) -> tuple[Config, Counts, tupl
             return EXIT_CONFIG
         print("runtime write ratchet: not enabled (no [runtime_write_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "runtime write ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
     if init:
         if baseline_path.exists():
             print(f"runtime write ratchet: {cfg.baseline} already exists; --init never overwrites it")
@@ -453,7 +456,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
     if isinstance(loaded, int):
         return loaded
     cfg, baseline, vendored = loaded
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "runtime write ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
     try:
         found = scan_tree(root, cfg, vendored)
     except NotConfirmed as exc:

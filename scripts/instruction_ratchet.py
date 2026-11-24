@@ -47,18 +47,19 @@ def _load_sibling(name: str) -> ModuleType:
         return module
     except (ImportError, OSError, SyntaxError):
         print(f"instruction ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor the siblings "
-              "with it (manifest keys instruction_ratchet, instruction_frontmatter and instruction_repeats)")
+              "with it (manifest keys instruction_ratchet, instruction_frontmatter, instruction_repeats and ratchet_baseline)")
         sys.exit(3)
 
 
 _frontmatter = _load_sibling("instruction_frontmatter")
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 frontmatter_error = _frontmatter.frontmatter_error
 frontmatter_field = _frontmatter.frontmatter_field
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".instruction-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/instruction.json"
 DEFAULT_SKILL_DIRS = (".claude/skills",)
 GIT_TIMEOUT_S = 120
 
@@ -274,7 +275,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[instruction_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[instruction_ratchet] baseline must be a non-empty string")
     extra = _str_list(table, "extra_files", ())
@@ -907,7 +908,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("instruction ratchet: not enabled (no [instruction_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "instruction ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
 
     baseline: dict[str, Entry] = {}
     if init:

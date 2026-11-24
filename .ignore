@@ -10,6 +10,7 @@
 /scripts/instruction_frontmatter.py
 /scripts/instruction_ratchet.py
 /scripts/instruction_repeats.py
+/scripts/ratchet_baseline.py
 /scripts/request_budget_ratchet.py
 /scripts/request_budget_scan.py
 /scripts/runtime_write_ratchet.py

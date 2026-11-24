@@ -1,67 +1,45 @@
 """Ratchet on issue references inside product-code comments.
 
-A comment that cites an issue number to carry the story of how the code got here teaches
-the next change to add another one. The story belongs in the issue, the PR and
-`git log`; a comment states why the code is the way it is *now*. The rule text
-is owned by the fleet's global instructions; this stage enforces it structurally: it counts
-`#NNN` references inside comments, per file, compares them with a committed
-baseline, and fails only when a file's count *rises*. Existing debt never
-blocks work, but it cannot grow.
+A comment that cites an issue number to carry the story of how the code got here teaches the next
+change to add another one. The story belongs in the issue, the PR and `git log`; a comment states why the
+code is the way it is *now*. The rule text is owned by the fleet's global instructions; this stage counts
+`#NNN` references inside comments, per file, against a committed baseline, and fails only when a file's
+count *rises*. Existing debt never blocks work, but it cannot grow.
 
-What is counted: comment text only, from a real scanner per language, never by
-grepping lines -- `.py` (`tokenize` COMMENT tokens), `.js`/`.mjs`/`.cjs` (`//`,
-`/* */`), `.css` (`/* */`), `.ps1`/`.psm1` (`#`, `<# #>`), `.yml`/`.yaml` (`#`
-after whitespace); strings, template literals, regex literals, `url(...)`,
-here-strings and quoted scalars are skipped. A reference is `#` plus one to five
-digits, not after `&` or `#`, ending on a word boundary; `https://` URLs are
-blanked first; `repo#NNN` counts. A file the scanner cannot finish is NOT
-CONFIRMED, never skipped. Per-language limits: docs/comment-ratchet.md.
+What is counted: comment text only, from a real scanner per language (`.py`, `.js`/`.mjs`/`.cjs`, `.css`,
+`.ps1`/`.psm1`, `.yml`/`.yaml`), never by grepping lines; a file the scanner cannot finish is NOT CONFIRMED,
+never skipped. What a reference is and the per-language limits: docs/comment-ratchet.md.
 
-Opt-in rules, each under its own baseline key so a removal under one rule never
-pays for an addition under another:
+Opt-in rules, each under its own baseline key so a removal under one rule never pays for an addition under
+another: `docstrings` (`#NNN` in Python docstrings, `<path>::docstring`), `history_phrases` (the curated
+`HISTORY_PHRASES` and `HISTORY_PATTERNS`, `<path>::history`) and `extra_history_patterns` (the adopter's own
+regexes under the same key).
 
-  * `docstrings = true`        `#NNN` inside Python docstrings (`<path>::docstring`).
-  * `history_phrases = true`   the curated `HISTORY_PHRASES` (whole words) and
-                               `HISTORY_PATTERNS`, case-insensitive, in comments
-                               and Python docstrings (`<path>::history`). Short
-                               and precise on purpose: a broad list is noise.
-  * `extra_history_patterns`   the adopter's own regexes, same key; needs
-                               `history_phrases = true`.
-
-Declared in the adopter's `.fleet.toml`; re-vendoring never breaks a repo that
-has not opted in:
-
-    [comment_ratchet]
-    enabled = true    # optional: baseline, include, exclude, docstrings,
-                      # history_phrases, extra_history_patterns
+Declared in the adopter's `.fleet.toml` (`[comment_ratchet] enabled = true`; optional keys `_CONFIG_KEYS`);
+re-vendoring never breaks a repo that has not opted in.
 
 Product code only: `git ls-files --cached --others --exclude-standard` (ignored and generated folders never appear)
 minus tests (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.js`),
 `*.min.*`, `node_modules`, venvs, files whose first lines say `DO NOT EDIT` or
 `@generated`, and every `dest` in the adopter's own `[vendored]` table.
 
-Exit codes (a state is never folded into a pass):
+Exit codes (a state is never folded into a pass): 0 pass, or not enabled; 1 a count rose, a new file
+carries references, or the baseline is missing / a mode was refused; 2 bad configuration, baseline or
+arguments; 3 NOT CONFIRMED (`git` unusable, a file could not be scanned, or an `extra_history_patterns`
+entry is not a valid regex), which the gate fails on.
 
-  0  pass, or the stage is not enabled (declared, not inferred)
-  1  a file's count rose, a new file carries references, or the baseline is
-     missing / a mode was refused
-  2  bad configuration, baseline or arguments -- fail loud
-  3  NOT CONFIRMED: `git` unusable, a file could not be scanned, or an
-     `extra_history_patterns` entry is not a valid regex. The gate fails on it.
+Modes: `check` (default; what the gate runs), `--init`, `--update-baseline` (shrink only) and
+`--update-baseline --allow-additions` (raises or adds; shows in review). The baseline lives in `.ratchets/`.
 
-Modes: `check` (default; what the gate runs), `--init` (write the first
-baseline, refuses to overwrite), `--update-baseline` (lower or drop entries;
-exits 1 and writes nothing while any count rose), `--update-baseline
---allow-additions` (the explicit flag that raises or adds -- shows in review).
-
-Vendor-verbatim: copied byte-for-byte into adopters (manifest key
-`comment_ratchet`), stdlib-only. Full procedure and limits: docs/comment-ratchet.md.
+Vendor-verbatim (manifest key `comment_ratchet`, sibling `ratchet_baseline`), stdlib-only. Full procedure: docs/comment-ratchet.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import importlib
+import importlib.util
 import io
 import json
 import os
@@ -73,11 +51,31 @@ import tomllib
 import warnings
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+
+
+def _load_sibling(name: str) -> ModuleType:
+    """A sibling module, loaded by path so `python -P` (scripts/ off `sys.path`) finds it."""
+    try:
+        if __package__:  # imported as a package member (the tests)
+            return importlib.import_module(f"{__package__}.{name}")
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
+        assert spec is not None and spec.loader is not None
+        module = sys.modules[spec.name] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (ImportError, OSError, SyntaxError):
+        print(f"comment ratchet: NOT CONFIRMED: {name}.py is missing beside this script -- vendor both "
+              "(manifest keys comment_ratchet and ratchet_baseline)")
+        sys.exit(3)
+
+
+_baseline = _load_sibling("ratchet_baseline")  # where the baseline lives, and its move into .ratchets/
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 BASELINE_VERSION = 1
-DEFAULT_BASELINE = ".comment-ratchet-baseline.json"
+DEFAULT_BASELINE = ".ratchets/comment.json"
 #: Always excluded, whatever the adopter's own `exclude` adds.
 BUILTIN_EXCLUDES = (
     "**/tests/**",
@@ -236,7 +234,7 @@ def parse_config(toml_text: str) -> Config | None:
         raise ConfigError("[comment_ratchet] enabled must be true or false")
     if not enabled:
         return None
-    baseline = table.get("baseline", DEFAULT_BASELINE)
+    baseline = _baseline.configured(table.get("baseline", DEFAULT_BASELINE), DEFAULT_BASELINE)
     if not isinstance(baseline, str) or not baseline:
         raise ConfigError("[comment_ratchet] baseline must be a non-empty string")
     history_phrases = _flag(table, "history_phrases")
@@ -921,7 +919,9 @@ def run(root: Path, *, init: bool, update: bool, allow_additions: bool) -> int:
             return EXIT_CONFIG
         print("comment ratchet: not enabled (no [comment_ratchet] enabled = true in .fleet.toml)")
         return EXIT_PASS
-    baseline_path = root / cfg.baseline
+    baseline_path = _baseline.resolve(root, cfg.baseline, DEFAULT_BASELINE, "comment ratchet")
+    if baseline_path is None:
+        return EXIT_CONFIG
 
     baseline: dict[str, int] = {}
     if init:

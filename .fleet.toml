@@ -43,7 +43,7 @@ ratchet_baseline = { src = "scripts/ratchet_baseline.py", sha = "48db2132dab2dfc
 
 [docs_ratchet]
 enabled  = true
-baseline = ".docs-ratchet-baseline.json"
+baseline = ".ratchets/docs.json"
 
 # [structure_ratchet] -- the scaffold's baseline-and-ratchet layout stage. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/structure_ratchet.py, which fails when
@@ -56,7 +56,7 @@ baseline = ".docs-ratchet-baseline.json"
 # project-scaffolding docs/structure-ratchet.md.
 [structure_ratchet]
 enabled  = true
-baseline = ".structure-ratchet-baseline.json"
+baseline = ".ratchets/structure.json"
 
 # [instruction_ratchet] -- the scaffold's prompt-audit lint over the instruction files
 # (CLAUDE.md, AGENTS.md, .claude/rules, every SKILL.md and the docs a skill links to).
@@ -68,7 +68,7 @@ baseline = ".structure-ratchet-baseline.json"
 # docs/instruction-ratchet.md.
 [instruction_ratchet]
 enabled  = true
-baseline = ".instruction-ratchet-baseline.json"
+baseline = ".ratchets/instruction.json"
 # File-shape and repeated-text rules (docs/instruction-ratchet.md in project-scaffolding).
 ci_expectations     = true
 agents_pointer      = true
@@ -86,7 +86,7 @@ repeated_text_words = 12
 [doc_refs_ratchet]
 enabled    = true
 trees    = true
-baseline   = ".doc-refs-ratchet-baseline.json"
+baseline   = ".ratchets/doc-refs.json"
 allow_refs = [":8000", "data/backups"]
 
 # [dead_code_ratchet] -- the scaffold's unreferenced-definition ratchet. The gate
@@ -97,7 +97,7 @@ allow_refs = [":8000", "data/backups"]
 # any non-zero exit. Procedure: project-scaffolding docs/dead-code-ratchet.md.
 [dead_code_ratchet]
 enabled  = true
-baseline = ".dead-code-ratchet-baseline.json"
+baseline = ".ratchets/dead-code.json"
 
 # [static_ratchet] -- the scaffold's duplicate-block, unused-name and bug/security-pattern
 # ratchet. The gate (scripts/verify-before-ship.ps1) runs scripts/static_ratchet.py, which
@@ -108,7 +108,7 @@ baseline = ".dead-code-ratchet-baseline.json"
 # on any non-zero exit. Procedure: project-scaffolding docs/static-ratchet.md.
 [static_ratchet]
 enabled  = true
-baseline = ".static-ratchet-baseline.json"
+baseline = ".ratchets/static.json"
 
 # [comment_ratchet] -- the scaffold's history-in-comments ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/comment_ratchet.py, which counts #NNN
@@ -119,7 +119,7 @@ baseline = ".static-ratchet-baseline.json"
 # project-scaffolding docs/comment-ratchet.md.
 [comment_ratchet]
 enabled         = true
-baseline        = ".comment-ratchet-baseline.json"
+baseline        = ".ratchets/comment.json"
 docstrings      = true   # #NNN inside Python docstrings
 history_phrases = true   # curated history phrases in comments and docstrings
 # A tax-engine comment states its rule in place and never cites an id defined nowhere in
@@ -144,7 +144,7 @@ extra_history_patterns = [
 # fails on any non-zero exit. Procedure: project-scaffolding docs/conventions-ratchet.md.
 [conventions_ratchet]
 enabled  = true
-baseline = ".conventions-ratchet-baseline.json"
+baseline = ".ratchets/conventions.json"
 rules    = ["no-window", "logging-not-print", "no-drive-path", "subprocess-timeout", "browser-per-iteration", "state-literal", "state-set-repeat", "state-write", "path-sep"]
 
 # Outbound HTTP goes through the pooled session, not a bare requests call.
@@ -170,7 +170,7 @@ paths  = ["app/", "src/"]
 # run left under a code folder. Mechanism: project-scaffolding docs/runtime-write-ratchet.md.
 [runtime_write_ratchet]
 enabled  = true
-baseline = ".runtime-write-ratchet-baseline.json"
+baseline = ".ratchets/runtime-write.json"
 
 # [request_budget_ratchet] -- the scaffold's request-budget ratchet. The gate
 # (scripts/verify-before-ship.ps1) runs scripts/request_budget_ratchet.py, which fails

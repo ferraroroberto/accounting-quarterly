@@ -121,7 +121,7 @@ _LINE_SUFFIX = re.compile(r"(?:::.*|:\d+(?:[-:]\d+)?|:[A-Za-z_][\w.]*|#L\d+(?:-L
 #: Characters that mark a template, a glob, a variable or an argument, never a literal path.
 _PLACEHOLDER = set("<>*?{}[]$%|=…")
 #: A possessive, a pronoun or a repo slug right before a span hands it to another owner:
-#: `fleet-config`'s `docs/x.md`, its `docs/x.md`, local-llm-hub `docs/x.md`, `| task-os | src/x.py |`.
+#: `fleet-config`'s `docs/x.md`, its `docs/x.md`, repo-a `docs/x.md`, `| repo-b | src/x.py |`.
 _QUALIFIER = re.compile(r"(?:['’]s|\bits|\btheir|(?<![\w/.-])[a-z0-9]+(?:-[a-z0-9]+)+)\Z", re.IGNORECASE)
 _QUALIFIER_TRIM = " \t>*_[(`+:|"
 _TRIM = "\"'`,;()"

@@ -37,10 +37,10 @@ SURFACE_ENTRY = "server.py"
 #: The folder name of a component channel (`app/webapp/static/_vendored/`): the components, their readme and gallery.
 CHANNEL = "_vendored"
 
-#: Root files every shape allows, as names or globs: instructions, licence, tool config, the ratchet baselines.
+#: Root files every shape allows, as names or globs: instructions, licence, tool config. Ratchet baselines live in `.ratchets/`.
 COMMON_ROOT_FILES = (
     "README.md", "CLAUDE.md", "AGENTS.md", "LICENSE", ".fleet.toml", ".gitignore", ".gitattributes", ".ignore",
-    ".env.example", ".*-baseline.json", "requirements*.txt", "pyproject.toml", "pytest.ini", "package*.json",
+    ".env.example", "requirements*.txt", "pyproject.toml", "pytest.ini", "package*.json",
 )
 
 _IMAGES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"})
